@@ -1,0 +1,100 @@
+# Стек «Съедобно»: postgres + api (Go) + web (nginx-статика) + caddy (реверс-прокси/TLS).
+# Отдельный compose-проект от ClipsGold (§4 SPEC).
+name: sostav
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Одноразовый прогон миграций перед стартом api.
+  migrate:
+    build:
+      context: ../api
+    env_file: ../.env
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Одноразовая загрузка словаря добавок (§6). Не запускается на `up` (профиль tools),
+  # вызывается через `make seed`. Entrypoint задан здесь, чтобы избежать путей в CLI.
+  seed:
+    build:
+      context: ../api
+    profiles: ["tools"]
+    env_file: ../.env
+    entrypoint: ["/usr/local/bin/seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ../api
+    restart: unless-stopped
+    env_file: ../.env
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: ../web
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

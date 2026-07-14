@@ -1,0 +1,25 @@
+# Коэффициенты детерминированного скоринга (§5 SPEC). Тюнятся без изменения кода.
+base: 100
+
+# Вычеты по классу риска добавки (не-маркера) и потолок суммарного вычета по классу.
+risk3_each: 25
+risk3_cap: 50
+risk2_each: 10
+risk2_cap: 30
+risk1_each: 3
+risk1_cap: 9
+
+# Спец-правила по маркерам (§5). Позиция считается от 1; top_positions = сколько
+# первых позиций считаются «первыми» (сахар/соль в топ-N).
+top_positions: 3
+sugar_top: 15      # сахар/сироп/патока в первых top_positions
+sugar_other: 5     # сахар не в топе
+transfat: 20       # маркеры трансжиров
+palm: 5            # пальмовое масло
+salt_top: 8        # соль в первых top_positions
+
+# Наборы кодов-маркеров (slug из словаря, category="маркер").
+transfat_markers: [hydrogenated_fat, partially_hydrogenated_fat, margarine]
+palm_markers: [palm_oil, palm_olein]
+sugar_markers: [sugar, glucose_fructose_syrup, invert_syrup, molasses, glucose_syrup, fructose, maltose_syrup, dextrose]
+salt_markers: [salt]

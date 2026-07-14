@@ -1,0 +1,14 @@
+# SITE_ADDRESS: локально ":80" (простой HTTP), в проде — домен (Caddy сам возьмёт TLS).
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	# API — на Go-сервис.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	# Всё остальное — статика mini-app.
+	handle {
+		reverse_proxy web:80
+	}
+}

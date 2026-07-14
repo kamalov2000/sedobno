@@ -1,0 +1,137 @@
+// Package tg — тонкий клиент Telegram Bot API (§8, §9): создание Stars-инвойсов,
+// а на Этапе 3.4 — ответы на pre_checkout_query и sendMessage (вебхук, форвардинг
+// обратной связи). Свой транспорт на net/http, без SDK — как у llm-провайдеров.
+package tg
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Client вызывает методы Bot API по адресу <base>/bot<token>/<method>.
+type Client struct {
+	http    *http.Client
+	baseURL string // без хвостового слэша, напр. https://api.telegram.org
+	token   string
+}
+
+// New собирает клиент. base по умолчанию https://api.telegram.org (переопределяется
+// в тестах на httptest-сервер). token — TELEGRAM_BOT_TOKEN.
+func New(base, token string) *Client {
+	return &Client{
+		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL: strings.TrimRight(base, "/"),
+		token:   token,
+	}
+}
+
+// apiResponse — конверт ответа Bot API: {ok, result} либо {ok:false, error_code, description}.
+type apiResponse struct {
+	OK          bool            `json:"ok"`
+	Result      json.RawMessage `json:"result"`
+	ErrorCode   int             `json:"error_code"`
+	Description string          `json:"description"`
+}
+
+// call выполняет POST-метод Bot API с JSON-параметрами и разбирает конверт ответа.
+// Возвращает сырое поле result для метод-специфичного разбора у вызывающего.
+func (c *Client) call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+	payload, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.token, method)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tg %s: %w", method, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var ar apiResponse
+	if err := json.Unmarshal(body, &ar); err != nil {
+		return nil, fmt.Errorf("tg %s: разбор ответа (http %d): %w", method, resp.StatusCode, err)
+	}
+	if !ar.OK {
+		// Telegram кладёт человекочитаемую причину в description (напр. Unauthorized).
+		return nil, fmt.Errorf("tg %s: error_code=%d %s", method, ar.ErrorCode, ar.Description)
+	}
+	return ar.Result, nil
+}
+
+// InvoiceParams — параметры Stars-инвойса подписки (§9).
+type InvoiceParams struct {
+	Title       string
+	Description string
+	Payload     string // внутренняя привязка платежа к пользователю (вебхук 3.4)
+	Stars       int    // цена в Telegram Stars
+	PeriodSec   int    // период подписки в секундах (для Stars-подписки строго 2592000)
+}
+
+// CreateInvoiceLink создаёт ссылку на оплату подписки через Telegram Stars и
+// возвращает её. Для Stars currency="XTR", provider_token пустой; subscription_period
+// делает инвойс рекуррентным (авто-продление средствами Stars).
+func (c *Client) CreateInvoiceLink(ctx context.Context, p InvoiceParams) (string, error) {
+	params := map[string]any{
+		"title":               p.Title,
+		"description":         p.Description,
+		"payload":             p.Payload,
+		"provider_token":      "", // Stars — без внешнего провайдера
+		"currency":            "XTR",
+		"prices":              []map[string]any{{"label": p.Title, "amount": p.Stars}},
+		"subscription_period": p.PeriodSec,
+	}
+	raw, err := c.call(ctx, "createInvoiceLink", params)
+	if err != nil {
+		return "", err
+	}
+	var link string
+	if err := json.Unmarshal(raw, &link); err != nil {
+		return "", fmt.Errorf("tg createInvoiceLink: результат не строка: %w", err)
+	}
+	return link, nil
+}
+
+// SendMessage отправляет текст в чат. replyMarkup — опциональная разметка (напр.
+// inline-кнопка web_app для /start); nil — без разметки.
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, replyMarkup any) error {
+	params := map[string]any{"chat_id": chatID, "text": text}
+	if replyMarkup != nil {
+		params["reply_markup"] = replyMarkup
+	}
+	_, err := c.call(ctx, "sendMessage", params)
+	return err
+}
+
+// AnswerPreCheckoutQuery отвечает на pre_checkout_query (§9). Уложиться в 10-секундное
+// окно Telegram обязательно, иначе платёж срывается — вызывать без тяжёлой работы рядом.
+// ok=false требует errMsg (причина для пользователя).
+func (c *Client) AnswerPreCheckoutQuery(ctx context.Context, queryID string, ok bool, errMsg string) error {
+	params := map[string]any{"pre_checkout_query_id": queryID, "ok": ok}
+	if !ok {
+		params["error_message"] = errMsg
+	}
+	_, err := c.call(ctx, "answerPreCheckoutQuery", params)
+	return err
+}
+
+// WebAppButton собирает inline-клавиатуру с одной кнопкой, открывающей mini-app.
+func WebAppButton(text, url string) map[string]any {
+	return map[string]any{
+		"inline_keyboard": [][]map[string]any{{
+			{"text": text, "web_app": map[string]any{"url": url}},
+		}},
+	}
+}

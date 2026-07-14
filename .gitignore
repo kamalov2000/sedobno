@@ -1,0 +1,19 @@
+# секреты: любые .env* (прод, тестовый контур, бэкапы) — кроме шаблона
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+
+# Go
+/api/bin/
+*.exe
+*.out
+
+# web
+node_modules/
+dist/
+
+# прочее
+.DS_Store

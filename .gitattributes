@@ -1,0 +1,14 @@
+# Репозиторий разрабатывается на Windows, а собирается и деплоится на Linux-VPS:
+# храним и выкладываем всё с LF. CRLF в Makefile, Dockerfile или Caddyfile ломает
+# сборку на той стороне, и ловится это уже на деплое.
+* text=auto eol=lf
+
+# Бинарники не трогать.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

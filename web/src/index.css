@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/* Дизайн-токены Съедобно — перенесены дословно из Claude Design
+   («Съедобно - экраны.dc.html»). Утилитарный слой (§14 SPEC): нейтральные экраны
+   на Golos Text; семантические цвета только в ценнике/бейджах/пейволле.
+   Тема переключается атрибутом data-theme на <html> из tg.colorScheme (см. telegram.ts). */
+
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-soft: #f6f5f1;
+  --text: #1c1c1e;
+  --text2: #6e6d68;
+  --text3: #9c9b95;
+  --border: #e8e6e1;
+  --accent: #1e7a50;
+  --accent-press: #17603f;
+  --on-accent: #ffffff;
+  --chip-bg: #f6f5f1;
+  /* бренд-слой (только пейволл-хиро и иконка) */
+  --brand1: #66765a;
+  --brand2: #818f6e;
+  --brand-ink: #fbf7ec;
+  --brand-ink-soft: rgba(251, 247, 236, 0.72);
+  --brand-sprig: rgba(251, 247, 236, 0.85);
+  --brand-chip-bg: rgba(255, 255, 255, 0.16);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1c1c1e;
+  --bg-soft: #2a2a2c;
+  --text: #f2f1ed;
+  --text2: #a6a5a0;
+  --text3: #767570;
+  --border: #3a3a3c;
+  --accent: #2e9364;
+  --accent-press: #25784f;
+  --on-accent: #ffffff;
+  --chip-bg: #2a2a2c;
+  --brand1: #242b20;
+  --brand2: #333d2b;
+  --brand-ink: #f3efe3;
+  --brand-ink-soft: rgba(243, 239, 227, 0.66);
+  --brand-sprig: rgba(243, 239, 227, 0.62);
+  --brand-chip-bg: rgba(255, 255, 255, 0.09);
+}
+
+/* Вердикт-палитра ценника оценки — вешается на карточку через data-verdict (bad|mid|good). */
+[data-verdict="bad"] {
+  --sc-bg: #fdf0ef;
+  --sc-border: #f0c7c4;
+  --sc-num: #c6403c;
+  --sc-verdict: #b93a36;
+  --sc-sub: #a96b68;
+}
+[data-verdict="mid"] {
+  --sc-bg: #fbf4e3;
+  --sc-border: #ead8ab;
+  --sc-num: #a4720f;
+  --sc-verdict: #96660f;
+  --sc-sub: #a98f55;
+}
+[data-verdict="good"] {
+  --sc-bg: #eaf4ee;
+  --sc-border: #bfdccb;
+  --sc-num: #1e7a50;
+  --sc-verdict: #1e7a50;
+  --sc-sub: #6f9a82;
+}
+[data-theme="dark"] [data-verdict="bad"] {
+  --sc-bg: #38221f;
+  --sc-border: #5c332f;
+  --sc-num: #ec7a72;
+  --sc-verdict: #e9827b;
+  --sc-sub: #b08480;
+}
+[data-theme="dark"] [data-verdict="mid"] {
+  --sc-bg: #392f16;
+  --sc-border: #5c4a22;
+  --sc-num: #e3b45c;
+  --sc-verdict: #dca94b;
+  --sc-sub: #a98f58;
+}
+[data-theme="dark"] [data-verdict="good"] {
+  --sc-bg: #1e3328;
+  --sc-border: #2f5540;
+  --sc-num: #5fc08e;
+  --sc-verdict: #57b584;
+  --sc-sub: #7fa98f;
+}
+
+/* Бейджи риска (флаги) и доты ингредиентов — единая шкала §14, свет/тьма. */
+:root {
+  --badge-high-bg: #fbe9e8;
+  --badge-high-fg: #b93a36;
+  --badge-mid-bg: #fbf1df;
+  --badge-mid-fg: #96660f;
+  --badge-low-bg: #f0efea;
+  --badge-low-fg: #6e6d68;
+  --dot-ok: #1e7a50;
+  --dot-low: #b7b6b0;
+  --dot-mid: #b07e1f;
+  --dot-high: #c6403c;
+}
+[data-theme="dark"] {
+  --badge-high-bg: #47221f;
+  --badge-high-fg: #ec9b95;
+  --badge-mid-bg: #3f331b;
+  --badge-mid-fg: #d9a85b;
+  --badge-low-bg: #33332f;
+  --badge-low-fg: #a6a5a0;
+  --dot-ok: #5fc08e;
+  --dot-low: #8a8981;
+  --dot-mid: #d9a85b;
+  --dot-high: #ec7a72;
+}
+
+@keyframes sjspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes sjpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#root {
+  min-height: 100dvh;
+}
+
+/* Акцентная CTA — состояние нажатия из дизайна (style-active). */
+.sj-cta {
+  transition: transform 0.05s ease, background 0.15s ease;
+}
+.sj-cta:active {
+  transform: translateY(1px);
+  background: var(--accent-press);
+}

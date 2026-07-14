@@ -1,0 +1,26 @@
+# Локальный DNS-обход (Windows/Docker Desktop). Встроенный DNS Docker (127.0.0.11)
+# периодически флапает, и контейнер api не резолвит внешние хосты
+# (api.telegram.org для вебхука/ответов, api.groq.com для LLM-скана).
+# Публичный резолвер только для egress-контейнера api. Применять локально:
+#   docker compose -f deploy/docker-compose.yml -f deploy/dns.override.yml --env-file .env up -d api
+# На VPS не нужен — там работает host DNS.
+#
+# extra_hosts: в сети без IPv6 (напр. AmneziaVPN на роутере) контейнер резолвит
+# api.telegram.org в AAAA, пытается IPv6 и ~15с ждёт таймаута перед откатом на IPv4 —
+# бот отвечает с задержкой, а pre_checkout (лимит ~10с) вовсе ломается. Пин на IPv4
+# убирает AAAA из резолва. IPv4 Telegram довольно стабилен; при смене — обновить адрес.
+services:
+  api:
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "api.telegram.org:149.154.166.110"
+      # LLM-скан: тот же обход флапающего 127.0.0.11 (Docker Desktop) — статическая
+      # запись читается резолвером ДО embedded DNS. Без неё редкий DNS-таймаут ронял
+      # скан в 502. IP собственной сети Anthropic (не CF), стабилен; при смене — обновить.
+      - "api.anthropic.com:160.79.104.10"
+    # Дебаг-захват кадров скана (DEBUG_SAVE_SCANS): нормализованные фото падают сюда,
+    # на хост — deploy/debug_scans/. ТОЛЬКО локально (override не едет на прод).
+    volumes:
+      - ./debug_scans:/debug

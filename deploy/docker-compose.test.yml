@@ -1,0 +1,63 @@
+# Тестовый контур для сквозного прогона СБП/ЮKassa (§14.1) на ТЕСТОВЫХ ключах.
+# Полностью изолирован от прода: свой compose-проект (sostav-test), свой Postgres
+# со своим томом, своя пустая БД. Прод-стек (sostav) не затрагивается.
+# Запуск:
+#   docker compose -p sostav-test -f deploy/docker-compose.test.yml --env-file .env.test up -d
+# Снос вместе с данными (тестовые данные не жалко):
+#   docker compose -p sostav-test -f deploy/docker-compose.test.yml --env-file .env.test down -v
+name: sostav-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: sostav-migrate
+    env_file: ../.env.test
+    # Образ несёт дефолтный entrypoint api — миграции запускаются только явным
+    # переопределением (как в прод-компоузе). Без этого сервис поднимает второй api.
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: sostav-api
+    container_name: sostav-test-api # по этому имени prod-Caddy проксирует test.sedobno-pay.ru
+    restart: unless-stopped
+    env_file: ../.env.test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - default # своя сеть проекта (postgres)
+      - prod # сеть прод-стека: чтобы Caddy достучался до этого контейнера
+    healthcheck:
+      test: ["CMD", "/api", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata_test:
+
+networks:
+  prod:
+    external: true
+    name: sostav_default
