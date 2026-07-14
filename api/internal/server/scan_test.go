@@ -49,6 +49,23 @@ func errorCode(t *testing.T, resp *http.Response) string {
 	return body["error"]
 }
 
+// Текст «не вижу состав» зависит от причины: советовать «переснимите ближе» тому,
+// кто сфотографировал лицевую сторону пачки, — бесполезно. Пустая причина (старый
+// пайплайн) должна давать осмысленный текст, а не пустую строку.
+func TestLabelNotFoundMessage(t *testing.T) {
+	cases := map[string]string{
+		pipeline.ReasonNotALabel:  "Это не похоже на состав продукта. Сфотографируйте блок «Состав» на упаковке.",
+		pipeline.ReasonWrongBlock: "Кажется, в кадре не тот блок. Нужен именно список ингредиентов.",
+		pipeline.ReasonUnreadable: "Не получилось прочитать текст. Переснимите ближе и при хорошем свете.",
+		"":                        "Не получилось прочитать текст. Переснимите ближе и при хорошем свете.",
+	}
+	for reason, want := range cases {
+		if got := labelNotFoundMessage(reason); got != want {
+			t.Errorf("reason=%q: message=%q, ждали %q", reason, got, want)
+		}
+	}
+}
+
 // buildScanResponse должен пробрасывать вердикт (explanation) в каждую сматченную
 // строку и оставлять его пустым у несматченных (§доверие: объяснение по тапу).
 func TestBuildScanResponse_ExplanationPropagated(t *testing.T) {

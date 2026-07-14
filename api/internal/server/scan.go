@@ -70,7 +70,11 @@ type scanNutritionView struct {
 }
 
 type scanResponse struct {
-	Status      string               `json:"status"`
+	Status string `json:"status"`
+	// Reason — уточнение статуса label_not_found (not_a_label | wrong_block |
+	// unreadable): по нему фронт выбирает текст подсказки. Пусто — фронт падает
+	// на общий текст (обратная совместимость со старым клиентом).
+	Reason      string               `json:"reason,omitempty"`
 	Score       int                  `json:"score"`
 	Flags       []scanFlagView       `json:"flags"`
 	Ingredients []scanIngredientView `json:"ingredients"`
@@ -84,6 +88,20 @@ type scanResponse struct {
 	// должен показывать «∞»/скрывать счётчик, а НЕ «-1 проверок» (Этап 4). Тот же
 	// контракт, что и в meView (/api/auth, /api/me).
 	ScansLeft int `json:"scans_left"`
+}
+
+// labelNotFoundMessage — текст под причину «не вижу состав». Дублирует тексты
+// фронта осознанно: фронт рисует их сам (заголовок+подсказка), а message остаётся
+// для клиентов без своей копирайт-таблицы и для старых версий mini-app.
+func labelNotFoundMessage(reason string) string {
+	switch reason {
+	case pipeline.ReasonNotALabel:
+		return "Это не похоже на состав продукта. Сфотографируйте блок «Состав» на упаковке."
+	case pipeline.ReasonWrongBlock:
+		return "Кажется, в кадре не тот блок. Нужен именно список ингредиентов."
+	default: // unreadable и пустая причина
+		return "Не получилось прочитать текст. Переснимите ближе и при хорошем свете."
+	}
 }
 
 // handleScan — POST /api/scan (multipart, поле photo). Порядок (§8, §3):
@@ -210,7 +228,8 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found", nil)
 		writeJSON(w, http.StatusOK, scanResponse{
 			Status:    res.Status,
-			Message:   "Не разглядел состав. Снимите блок «Состав» крупно и при хорошем свете.",
+			Reason:    res.Reason,
+			Message:   labelNotFoundMessage(res.Reason),
 			ScansLeft: remainingScans(u), // не списано
 		})
 

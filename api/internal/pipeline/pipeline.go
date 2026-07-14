@@ -50,9 +50,40 @@ type MatchedIngredient struct {
 	Basis string `json:"basis,omitempty"`
 }
 
+// Причина label_not_found (§4). Различается по сигналам, которые фаза 1 уже
+// возвращает, — новых полей у модели не просим.
+const (
+	// ReasonNotALabel — в кадре вообще не этикетка (лицевая сторона, случайный кадр).
+	ReasonNotALabel = "not_a_label"
+	// ReasonWrongBlock — этикетка есть, но в кадр попал не тот блок: таблицу пищевой
+	// ценности модель видит (Nutrition.Visible), а списка ингредиентов — нет.
+	ReasonWrongBlock = "wrong_block"
+	// ReasonUnreadable — этикетка есть, состава не видно и КБЖУ в кадре тоже нет:
+	// текст не прочитался (мелко/смазано/блик). Остаточный случай.
+	ReasonUnreadable = "unreadable"
+)
+
+// labelNotFoundReason раскладывает «не вижу состав» на три различимых случая —
+// по тем же сигналам, что участвуют в эскалации на сильную модель (IsLabel,
+// Nutrition.Visible). Отдельного признака «штрихкод» у нас нет: кадр со штрихкодом
+// без состава попадает в unreadable либо wrong_block — тексты обоих это допускают.
+func labelNotFoundReason(e *llm.Extraction) string {
+	switch {
+	case !e.IsLabel:
+		return ReasonNotALabel
+	case e.Nutrition != nil && e.Nutrition.Visible:
+		return ReasonWrongBlock
+	default:
+		return ReasonUnreadable
+	}
+}
+
 // Result — итог прогона пайплайна.
 type Result struct {
-	Status         string              `json:"status"`
+	Status string `json:"status"`
+	// Reason — уточнение статуса. Сейчас заполняется только для label_not_found
+	// (см. константы Reason*); для прочих статусов пусто.
+	Reason         string              `json:"reason,omitempty"`
 	Score          int                 `json:"score"`
 	Flags          []scoring.Flag      `json:"flags"`
 	IngredientsRaw []string            `json:"ingredients_raw"`
@@ -195,6 +226,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	if !ext.IsLabel || len(ext.Ingredients) == 0 {
 		// «Не вижу состав» — лимит не списывается (§3). Ошибки нет.
 		res.Status = StatusLabelNotFound
+		res.Reason = labelNotFoundReason(ext)
 		p.finalize(res, vUsage, tUsage, fbUsage, start)
 		return res, nil
 	}

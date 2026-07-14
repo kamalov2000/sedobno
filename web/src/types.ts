@@ -49,8 +49,13 @@ export interface ScanNutrition {
   net_unit?: "g" | "ml" | string;
 }
 
+/** Причина label_not_found: по ней экран ошибки выбирает подсказку.
+ *  Приходит только при status=label_not_found; у старого бэка отсутствует. */
+export type ScanReason = "not_a_label" | "unreadable" | "wrong_block";
+
 export interface ScanResult {
   status: ScanStatus;
+  reason?: ScanReason;
   score: number;
   flags: ScanFlag[];
   ingredients: ScanIngredient[];

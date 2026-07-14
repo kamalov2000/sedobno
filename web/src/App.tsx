@@ -18,7 +18,26 @@ interface ErrorCopy {
 }
 
 // Копия экрана ошибки для «не распознал состав» (label_not_found) — дизайн-текст.
-const LABEL_ERROR: ErrorCopy = {
+// Подсказка зависит от того, ЧТО именно модель увидела в кадре (reason с бэка):
+// советовать «снимите ближе и при свете» бессмысленно, если человек вообще
+// сфотографировал лицевую сторону пачки.
+const LABEL_ERRORS: Record<string, ErrorCopy> = {
+  not_a_label: {
+    title: "Это не похоже на состав продукта",
+    subtitle: "Сфотографируйте блок «Состав» на упаковке.",
+  },
+  unreadable: {
+    title: "Не получилось прочитать текст",
+    subtitle: "Переснимите ближе и при хорошем свете.",
+  },
+  wrong_block: {
+    title: "Кажется, в кадре не тот блок",
+    subtitle: "Нужен именно список ингредиентов.",
+  },
+};
+
+// Старый бэк без reason (и неожиданный error в теле 200) — прежний общий текст.
+const LABEL_ERROR_FALLBACK: ErrorCopy = {
   title: "Не разглядел состав",
   subtitle: "На фото не нашлось читаемого списка ингредиентов.",
 };
@@ -29,7 +48,7 @@ export default function App() {
   const [bootError, setBootError] = useState<string>("");
   const [view, setView] = useState<View>("home");
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR);
+  const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
 
   const boot = useCallback(async () => {
     setPhase("booting");
@@ -98,7 +117,7 @@ export default function App() {
       } else {
         // label_not_found (или неожиданный error в теле 200) — попытка не списана.
         notify("warning");
-        setErrorCopy(LABEL_ERROR);
+        setErrorCopy(LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK);
         setView("error");
       }
     } catch (err) {

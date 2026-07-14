@@ -184,6 +184,48 @@ func TestPipeline_LabelNotFound(t *testing.T) {
 	}
 }
 
+// «Не вижу состав» — не одно событие, а три разных: человеку нужен разный совет.
+// Причина выводится из сигналов фазы 1 (is_label, nutrition.visible), новых полей у
+// модели не просим.
+func TestPipeline_LabelNotFoundReason(t *testing.T) {
+	cases := []struct {
+		name string
+		ext  *llm.Extraction
+		want string
+	}{
+		{
+			name: "лицевая сторона пачки — этикетки в кадре нет вообще",
+			ext:  &llm.Extraction{IsLabel: false},
+			want: ReasonNotALabel,
+		},
+		{
+			name: "в кадре таблица КБЖУ, а списка ингредиентов нет — не тот блок",
+			ext:  &llm.Extraction{IsLabel: true, Nutrition: &llm.Nutrition{Visible: true}},
+			want: ReasonWrongBlock,
+		},
+		{
+			name: "этикетка есть, но текст не прочитался (мелко/смазано)",
+			ext:  &llm.Extraction{IsLabel: true, Confidence: 0.2},
+			want: ReasonUnreadable,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := newPipeWith(t, fakeProvider{name: "primary", ext: c.ext})
+			res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.Status != StatusLabelNotFound {
+				t.Fatalf("статус=%s, ждали label_not_found", res.Status)
+			}
+			if res.Reason != c.want {
+				t.Errorf("reason=%q, ждали %q", res.Reason, c.want)
+			}
+		})
+	}
+}
+
 // fakeProvider — управляемый провайдер для проверки fallback фазы 1. Считает вызовы
 // извлечения и возвращает заранее заданный результат.
 type fakeProvider struct {
