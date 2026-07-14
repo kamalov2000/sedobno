@@ -39,6 +39,15 @@ type scanFlagView struct {
 	Risk    int    `json:"risk"`
 }
 
+// scanDeductionView — применённый вычет для сводки «почему такой балл». В отличие
+// от flags (топ-3, вычет ДО потолка) — полный список и реально вычтенные числа:
+// их сумма равна 100 − score, поэтому по ним можно показывать арифметику.
+type scanDeductionView struct {
+	Title   string `json:"title"`
+	Penalty int    `json:"penalty"`
+	Capped  bool   `json:"capped,omitempty"`
+}
+
 // scanIngredientView — строка состава для фронта.
 type scanIngredientView struct {
 	Raw      string `json:"raw"`
@@ -77,6 +86,7 @@ type scanResponse struct {
 	Reason      string               `json:"reason,omitempty"`
 	Score       int                  `json:"score"`
 	Flags       []scanFlagView       `json:"flags"`
+	Deductions  []scanDeductionView  `json:"deductions,omitempty"`
 	Ingredients []scanIngredientView `json:"ingredients"`
 	Nutrition   *scanNutritionView   `json:"nutrition,omitempty"`
 	Explanation string               `json:"explanation,omitempty"`
@@ -269,8 +279,13 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 			Explanation: m.Explanation, Basis: m.Basis,
 		})
 	}
+	deds := make([]scanDeductionView, 0, len(res.Breakdown))
+	for _, d := range res.Breakdown {
+		deds = append(deds, scanDeductionView{Title: d.Title, Penalty: d.Penalty, Capped: d.Capped})
+	}
 	return scanResponse{
 		Status: res.Status, Score: res.Score, Flags: flags, Ingredients: ings,
+		Deductions:  deds,
 		Nutrition:   nutritionView(res.Nutrition),
 		Explanation: res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}

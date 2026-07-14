@@ -88,3 +88,72 @@ func TestScore_TopFlagsByPenalty(t *testing.T) {
 		t.Errorf("порядок флагов по вычету неверный: %+v", got.Flags)
 	}
 }
+
+// Разбивка «почему такой балл» обязана СХОДИТЬСЯ: сумма показанных вычетов равна
+// base − score. Иначе внимательный пользователь ловит нас на арифметике — а на
+// прозрачности вычетов держится доверие к баллу (§11).
+func TestScore_BreakdownСходитсяСБаллом(t *testing.T) {
+	c := load(t)
+	cases := []struct {
+		name  string
+		items []Ingredient
+	}{
+		{"чисто — вычетов нет", nil},
+		{"одна добавка", []Ingredient{add("E621", 1, 1)}},
+		{"потолок risk1 (5 штук по −3 при cap 9)", []Ingredient{
+			add("E330", 1, 1), add("E322", 1, 2), add("E621", 1, 3), add("E471", 1, 4), add("E476", 1, 5),
+		}},
+		{"потолок risk2", []Ingredient{add("E211", 2, 1), add("E212", 2, 2), add("E213", 2, 3), add("E214", 2, 4)}},
+		{"маркеры + добавки вперемешку", []Ingredient{
+			mark("sugar", 1), mark("palm_oil", 2), mark("salt", 3),
+			add("E171", 3, 4), add("E621", 1, 5),
+		}},
+		{"балл упёрся в 0", []Ingredient{
+			add("E171", 3, 1), add("E123", 3, 2), mark("sugar", 3),
+			mark("partially_hydrogenated_fat", 4), mark("palm_oil", 5), mark("salt", 6),
+			add("E211", 2, 7), add("E212", 2, 8), add("E213", 2, 9),
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := c.Score(tc.items)
+			sum := 0
+			for _, d := range res.Breakdown {
+				if d.Penalty <= 0 {
+					t.Errorf("вычет %q = %d: в разбивке не должно быть нулевых/отрицательных строк", d.Title, d.Penalty)
+				}
+				sum += d.Penalty
+			}
+			// Балл, упёршийся в 0, — единственный законный случай расхождения:
+			// вычеты перебили базу, показать «−120 из 100» нельзя.
+			if res.Score == 0 {
+				if sum < c.Base {
+					t.Errorf("балл 0, но сумма вычетов %d < base %d", sum, c.Base)
+				}
+				return
+			}
+			if want := c.Base - res.Score; sum != want {
+				t.Errorf("сумма разбивки %d, а из балла вычтено %d (score=%d)\nразбивка: %+v", sum, want, res.Score, res.Breakdown)
+			}
+		})
+	}
+}
+
+// При сработавшем потолке класс схлопывается в одну строку с пометкой capped —
+// поимённый список «5 × (−3)» соврал бы: реально вычтено 9, а не 15.
+func TestScore_BreakdownГруппируетПотолок(t *testing.T) {
+	c := load(t)
+	res := c.Score([]Ingredient{
+		add("E330", 1, 1), add("E322", 1, 2), add("E621", 1, 3), add("E471", 1, 4), add("E476", 1, 5),
+	})
+	if len(res.Breakdown) != 1 {
+		t.Fatalf("строк разбивки %d, ждали 1 (класс схлопнут в группу): %+v", len(res.Breakdown), res.Breakdown)
+	}
+	d := res.Breakdown[0]
+	if !d.Capped {
+		t.Error("строка не помечена capped — фронт не покажет «потолок», и арифметика не сойдётся в глазах пользователя")
+	}
+	if d.Penalty != c.Risk1Cap {
+		t.Errorf("вычет %d, ждали потолок risk1 = %d", d.Penalty, c.Risk1Cap)
+	}
+}

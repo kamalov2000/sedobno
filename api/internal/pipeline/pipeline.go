@@ -86,6 +86,7 @@ type Result struct {
 	Reason         string              `json:"reason,omitempty"`
 	Score          int                 `json:"score"`
 	Flags          []scoring.Flag      `json:"flags"`
+	Breakdown      []scoring.Deduction `json:"breakdown"`
 	IngredientsRaw []string            `json:"ingredients_raw"`
 	Matched        []MatchedIngredient `json:"ingredients_matched"`
 	Explanation    string              `json:"explanation"`
@@ -276,6 +277,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	sc := p.scorer.Score(items)
 	res.Score = sc.Score
 	res.Flags = sc.Flags
+	res.Breakdown = sc.Breakdown
 
 	// Фаза 4 — объяснение (строго из вердиктов).
 	explanation, u4 := p.explain(ctx, sc)

@@ -26,6 +26,16 @@ export interface ScanFlag {
   risk: number; // 0..3 (§6)
 }
 
+/** Применённый вычет для сводки «Балл снижен из-за: …». Не путать с ScanFlag:
+ *  flags — топ-3 карточек с вычетом ДО потолка по классу риска, а deductions —
+ *  полный список реально вычтенного (сумма = 100 − score).
+ *  capped: класс упёрся в потолок и схлопнут в одну строку («добавки … , 4 шт.»). */
+export interface ScanDeduction {
+  title: string;
+  penalty: number;
+  capped?: boolean;
+}
+
 export interface ScanIngredient {
   raw: string;
   name?: string;
@@ -58,6 +68,7 @@ export interface ScanResult {
   reason?: ScanReason;
   score: number;
   flags: ScanFlag[];
+  deductions?: ScanDeduction[]; // пусто/нет — вычетов не было, сводку не показываем
   ingredients: ScanIngredient[];
   nutrition?: ScanNutrition;
   explanation?: string;

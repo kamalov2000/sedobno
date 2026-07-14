@@ -29,6 +29,8 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
     .map((f) => ({ ...f, level: riskToLevel(f.risk) }))
     .filter((f) => isFlagLevel(f.level) || f.penalty >= 10);
 
+  const deductions = result.deductions ?? [];
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px", minHeight: 0 }}>
@@ -70,6 +72,23 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
             <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 4, lineHeight: 1.45 }}>
               Короткий состав без добавок — хороший знак.
             </div>
+          </div>
+        )}
+
+        {/* «Почему такой балл» — сводка над составом. Числа приходят с бэка уже
+            применёнными (с учётом потолка по классу риска), поэтому их сумма
+            сходится с баллом; собирать её из flags было бы враньём — там топ-3 и
+            вычеты ДО потолка. Вычетов нет — строки нет вообще. */}
+        {deductions.length > 0 && (
+          <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text2)", marginTop: 14 }}>
+            <span style={{ color: "var(--text)", fontWeight: 500 }}>Балл снижен из-за:</span>{" "}
+            {deductions.map((d, i) => (
+              <span key={i}>
+                {i > 0 && ", "}
+                {d.title} (−{d.penalty}
+                {d.capped && ", потолок"})
+              </span>
+            ))}
           </div>
         )}
 
