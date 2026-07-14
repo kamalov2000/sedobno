@@ -49,6 +49,10 @@ web-build: ## сборка фронта
 fmt: ## форматирование и статанализ Go
 	cd api && gofmt -w . && go vet ./...
 
+# ВАЖНО (миграции): api в compose зависит от migrate (service_completed_successfully),
+# поэтому обычный `up -d api` МОЛЧА накатил бы goose. Деплой кода и изменение схемы
+# смешивать нельзя, поэтому здесь строго `up -d --no-deps`: migrate не запускается,
+# а про новые миграции deploy только предупреждает (накат — отдельной make migrate).
 deploy: ## ПРОД: выкатить main (pull → фронт → образы → рестарт → health). Миграции — отдельно, make migrate
 	@set -e; \
 	BEFORE=$$(git rev-parse HEAD); \
@@ -61,7 +65,7 @@ deploy: ## ПРОД: выкатить main (pull → фронт → образы
 	echo "→ 3/5 пересборка образов api+web"; \
 	$(COMPOSE) build api web; \
 	echo "→ 4/5 рестарт изменившихся контейнеров"; \
-	$(COMPOSE) up -d api web; \
+	$(COMPOSE) up -d --no-deps api web; \
 	$(COMPOSE) exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
 	  && echo "   caddy: конфиг перечитан (Caddyfile и landing/ смонтированы, пересборка не нужна)" \
 	  || echo "   caddy: reload пропущен (контейнер не поднят?)"; \
