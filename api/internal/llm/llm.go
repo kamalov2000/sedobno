@@ -53,9 +53,9 @@ func extractInstruction(n int) string {
 
 // Extraction — результат фазы 1 (извлечение состава из фото).
 type Extraction struct {
-	Ingredients []string   `json:"ingredients"`
-	Confidence  float64    `json:"confidence"`
-	IsLabel     bool       `json:"is_label"`
+	Ingredients []string `json:"ingredients"`
+	Confidence  float64  `json:"confidence"`
+	IsLabel     bool     `json:"is_label"`
 	// IsFood — продукт съедобен (еда/напиток). Указатель: nil (поле не пришло / mock)
 	// трактуем как «еда» — permissive, чтобы не блокировать реальную еду. Скан-гейт
 	// отсекает только ЯВНЫЙ false (косметика/химия/лекарства с INCI-составом).
