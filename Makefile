@@ -2,7 +2,10 @@
 ENV_FILE := .env
 COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt
+# HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
+HEALTH_URL ?= https://sedobno-pay.ru/api/health
+
+.PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt deploy
 
 help: ## список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -45,3 +48,35 @@ web-build: ## сборка фронта
 
 fmt: ## форматирование и статанализ Go
 	cd api && gofmt -w . && go vet ./...
+
+deploy: ## ПРОД: выкатить main (pull → фронт → образы → рестарт → health). Миграции — отдельно, make migrate
+	@set -e; \
+	BEFORE=$$(git rev-parse HEAD); \
+	echo "→ 1/5 git pull"; \
+	git pull --ff-only origin main; \
+	AFTER=$$(git rev-parse HEAD); \
+	if [ "$$BEFORE" = "$$AFTER" ]; then echo "   (изменений нет — пересобираем на всякий случай, шаг идемпотентен)"; fi; \
+	echo "→ 2/5 сборка фронта (web/dist)"; \
+	docker run --rm -v "$(CURDIR)/web:/w" -w /w node:20-alpine sh -c 'npm ci --no-audit --no-fund && npm run build'; \
+	echo "→ 3/5 пересборка образов api+web"; \
+	$(COMPOSE) build api web; \
+	echo "→ 4/5 рестарт изменившихся контейнеров"; \
+	$(COMPOSE) up -d api web; \
+	$(COMPOSE) exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
+	  && echo "   caddy: конфиг перечитан (Caddyfile и landing/ смонтированы, пересборка не нужна)" \
+	  || echo "   caddy: reload пропущен (контейнер не поднят?)"; \
+	echo "→ 5/5 проверка"; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  CODE=$$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$(HEALTH_URL)" || true); \
+	  [ "$$CODE" = "200" ] && break; sleep 2; \
+	done; \
+	echo ""; \
+	echo "   HEAD:   $$(git rev-parse --short HEAD)  ($$(git log -1 --pretty=%s | cut -c1-60))"; \
+	echo "   health: $$CODE  <- $(HEALTH_URL)"; \
+	if git diff --name-only $$BEFORE $$AFTER | grep -q '^api/migrations/'; then \
+	  echo ""; \
+	  echo "   ВНИМАНИЕ: в этом обновлении есть новые миграции — накатить вручную: make migrate"; \
+	  git diff --name-only $$BEFORE $$AFTER | grep '^api/migrations/' | sed 's/^/     /'; \
+	fi; \
+	[ "$$CODE" = "200" ] || { echo "   ДЕПЛОЙ НЕ ПОДТВЕРЖДЁН: health != 200"; exit 1; }; \
+	echo "   готово."
