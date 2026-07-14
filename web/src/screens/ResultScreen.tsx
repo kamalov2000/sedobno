@@ -116,6 +116,16 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
         )}
 
         <IngredientList ingredients={result.ingredients} />
+
+        {/* Обрезанный состав модель отдаёт молча: список просто короче, confidence при
+            этом не падает (замер 2026-07-14: 0.95 и на целой, и на обрезанной этикетке),
+            и отличить «прочитал всё» от «прочитал начало» нечем. Раз надёжного сигнала
+            нет — не угадываем, а спрашиваем; мультикадр (до 3 фото, склейка) уже есть. */}
+        <div style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--text3)", marginTop: 10, paddingLeft: 2 }}>
+          Не весь состав попал в кадр? Добавьте кадр с продолжением — оценка считается по
+          тому, что видно на фото.
+        </div>
+
         {result.nutrition && <NutritionCard nutrition={result.nutrition} />}
         <div style={{ height: 16 }} />
       </div>
