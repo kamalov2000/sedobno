@@ -29,6 +29,9 @@ ps: ## статус контейнеров
 	$(COMPOSE) ps
 
 migrate: env ## применить миграции БД
+	# Пересборка обязательна: миграции вшиты в бинарник через go:embed, и на старом
+	# образе goose честно скажет «no migrations to run» — молча, хотя миграция есть.
+	$(COMPOSE) build migrate
 	$(COMPOSE) run --rm migrate up
 
 seed: env ## загрузить словарь добавок в БД (idempotent)
