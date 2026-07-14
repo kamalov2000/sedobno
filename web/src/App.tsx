@@ -5,11 +5,12 @@ import type { Me, ScanResult } from "./types";
 import HomeScreen from "./screens/HomeScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
+import NotScoredScreen from "./screens/NotScoredScreen";
 import ErrorScreen from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. 4.2: полный флоу фото → лоадер → результат/ошибка/пейволл.
-type View = "home" | "loading" | "result" | "error" | "paywall";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -98,6 +99,11 @@ export default function App() {
         notify("success");
         setResult(data);
         setView("result");
+      } else if (data.status === "not_scored") {
+        // Алкоголь: балла нет, но факты (состав, КБЖУ) показываем. Не ошибка — экран
+        // результата без вердикта, поэтому notify не "warning", а нейтральный.
+        setResult(data);
+        setView("not_scored");
       } else if (data.status === "not_food") {
         // Косметика/химия/лекарство — не оцениваем; попытка не списана.
         notify("warning");
@@ -240,6 +246,8 @@ export default function App() {
     <Shell>
       {view === "home" && me && <HomeScreen me={me} onScan={onScan} />}
       {view === "loading" && <ScanLoader />}
+      {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} />}
+
       {view === "result" && result && (
         <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />
       )}

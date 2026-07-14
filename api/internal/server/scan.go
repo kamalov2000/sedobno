@@ -229,6 +229,23 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			ScansLeft: remainingScans(u), // не списано
 		})
 
+	case res.Status == pipeline.StatusNotScored:
+		// Алкоголь (§14.3): балла нет, но факты показываем — состав и КБЖУ, как их
+		// прочитала модель. Состав отдаём СЫРЫМ (без нормализации по словарю): вердикты
+		// по добавкам на этом экране не показываются, а фаза 2 стоит денег.
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_scored", nil)
+		ings := make([]scanIngredientView, 0, len(res.IngredientsRaw))
+		for i, raw := range res.IngredientsRaw {
+			ings = append(ings, scanIngredientView{Raw: raw, Position: i + 1})
+		}
+		writeJSON(w, http.StatusOK, scanResponse{
+			Status:      res.Status,
+			Ingredients: ings,
+			Nutrition:   nutritionView(res.Nutrition),
+			Message:     "Наша методология оценивает пищевые добавки, а у алкоголя главный фактор — сам спирт, который она не учитывает. Балл был бы обманчив, поэтому мы его не ставим.",
+			ScansLeft:   remainingScans(u), // не списано
+		})
+
 	case res.Status == pipeline.StatusNotFood:
 		// Косметика/химия/лекарство — оценку съедобности не считаем, попытку не списываем.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", nil)

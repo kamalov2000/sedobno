@@ -63,8 +63,14 @@ type Extraction struct {
 	// FramesMismatch — кадры мультискана оказались от РАЗНЫХ продуктов: склеивать их
 	// составы нельзя (получится мусор). Актуально только при >1 кадре; отсекаем такой
 	// скан, прося снимать по одному продукту.
-	FramesMismatch bool       `json:"frames_mismatch,omitempty"`
-	Nutrition      *Nutrition `json:"nutrition,omitempty"`
+	FramesMismatch bool `json:"frames_mismatch,omitempty"`
+	// Category — категория продукта. Сейчас различаем только "alcohol" против всего
+	// остального ("food" либо пусто у старого промпта): у алкоголя главный фактор —
+	// сам спирт, которого наша методология по добавкам не видит, и балл получался
+	// обманчивым (пиво = 100/100). Enum намеренно НЕ расширен на БАД/детское питание:
+	// каждая новая категория — отдельное решение с отдельным прогоном evalpipe.
+	Category  string     `json:"category,omitempty"`
+	Nutrition *Nutrition `json:"nutrition,omitempty"`
 }
 
 // NotFood сообщает, что модель ЯВНО определила продукт как несъедобный.

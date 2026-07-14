@@ -553,3 +553,73 @@ func TestPipeline_LowConfidenceФлагТолькоДляОтображения(
 		}
 	})
 }
+
+// Алкоголь не получает балла (§14.3): состав пива безупречен (вода, солод, хмель) и
+// давал 100/100 — методология по добавкам не видит главного, самого спирта.
+func TestPipeline_AlcoholНеОценивается(t *testing.T) {
+	beer := &llm.Extraction{
+		IsLabel: true, Confidence: 0.95, Category: CategoryAlcohol,
+		Ingredients: []string{"вода питьевая", "солод ячменный", "хмель"},
+		Nutrition:   &llm.Nutrition{Present: true, Visible: true, Basis: "100ml", Kcal: ptr(43.0)},
+	}
+	p := newPipeWith(t, fakeProvider{name: "primary", ext: beer})
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != StatusNotScored {
+		t.Fatalf("статус=%s, ждали not_scored", res.Status)
+	}
+	if res.Score != 0 {
+		t.Errorf("score=%d — балл для алкоголя не считаем вовсе", res.Score)
+	}
+	// Факты показываем: состав и КБЖУ должны доехать до ответа.
+	if len(res.IngredientsRaw) != 3 {
+		t.Errorf("ингредиентов %d, ждали 3 — состав показываем и без балла", len(res.IngredientsRaw))
+	}
+	if res.Nutrition == nil || !res.Nutrition.HasValues() {
+		t.Error("КБЖУ потерян — на экране «балл не ставим» он единственная полезная цифра")
+	}
+}
+
+// Проверка алкоголя стоит ДО is_food не случайно: замер 2026-07-14 показал, что на
+// одном и том же фото водки модель отдаёт то is_food=true, то false (разброс модели).
+// Стой проверка после NotFood — водка через раз падала бы в «Это не еда».
+func TestPipeline_AlcoholПобеждаетНестабильныйIsFood(t *testing.T) {
+	no := false
+	vodka := &llm.Extraction{
+		IsLabel: true, Confidence: 0.95, Category: CategoryAlcohol,
+		IsFood:      &no, // модель в этом вызове решила, что водка — «не еда»
+		Ingredients: []string{"спирт этиловый ректификованный", "вода питьевая"},
+	}
+	p := newPipeWith(t, fakeProvider{name: "primary", ext: vodka})
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != StatusNotScored {
+		t.Fatalf("статус=%s, ждали not_scored (алкоголь важнее нестабильного is_food)", res.Status)
+	}
+}
+
+// Обычная еда категорией не задета: балл считается как раньше.
+func TestPipeline_FoodКатегорияНеЛоматБалл(t *testing.T) {
+	food := &llm.Extraction{
+		IsLabel: true, Confidence: 0.95, Category: "food",
+		Ingredients: []string{"сахар", "глутамат натрия"},
+	}
+	p := newPipeWith(t, fakeProvider{name: "primary", ext: food})
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != StatusOK {
+		t.Fatalf("статус=%s, ждали ok", res.Status)
+	}
+	// сахар в топ-3 (−15) + глутамат risk1 (−3) = 82, как в happy path.
+	if res.Score != 82 {
+		t.Errorf("score=%d, ждали 82 — категория food не должна влиять на скоринг", res.Score)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

@@ -23,8 +23,15 @@ const (
 	StatusLabelNotFound = "label_not_found"
 	StatusNotFood       = "not_food"
 	StatusMixedFrames   = "mixed_frames"
-	StatusError         = "error"
+	// StatusNotScored — продукт распознан, но балл для него не считается: наша
+	// методология оценивает пищевые добавки, а в этой категории решает не состав.
+	// Сейчас это только алкоголь (§14.3).
+	StatusNotScored = "not_scored"
+	StatusError     = "error"
 )
+
+// CategoryAlcohol — значение поля category фазы 1: алкогольный напиток.
+const CategoryAlcohol = "alcohol"
 
 // ErrBusy — семафор LLM-конкурентности (§15) исчерпан на входе скана: работа не
 // начиналась. Хендлер отдаёт 429 + Retry-After, лимит не списывается, scan не пишется.
@@ -221,6 +228,22 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// Не оцениваем, просим снимать по одному. Лимит не списывается, ошибки нет.
 	if len(images) > 1 && ext.FramesMismatch {
 		res.Status = StatusMixedFrames
+		p.finalize(res, vUsage, tUsage, fbUsage, start)
+		return res, nil
+	}
+
+	// Алкоголь: балл не считаем (§14.3). Наша методология оценивает пищевые добавки, а
+	// у алкоголя решает сам спирт, которого она не видит: пиво из воды, солода и хмеля
+	// получало 100/100 — состав-то безупречный. Показываем распознанные факты без
+	// вердикта; лимит не списывается.
+	//
+	// Проверка стоит ДО NotFood СОЗНАТЕЛЬНО: на алкоголе поле is_food нестабильно —
+	// замер 2026-07-14 показал, что на одном и том же фото водки модель от вызова к
+	// вызову отдаёт то true, то false (это разброс модели, не эффект промпта). Стой
+	// проверка после NotFood, водка через раз показывала бы «Это не еда» вместо
+	// честного «не оцениваем». category такого разброса не даёт.
+	if ext.Category == CategoryAlcohol {
+		res.Status = StatusNotScored
 		p.finalize(res, vUsage, tUsage, fbUsage, start)
 		return res, nil
 	}

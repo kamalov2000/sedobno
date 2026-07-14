@@ -17,7 +17,7 @@ export interface AuthResponse {
 }
 
 // POST /api/scan
-export type ScanStatus = "ok" | "label_not_found" | "not_food" | "mixed_frames" | "error";
+export type ScanStatus = "ok" | "label_not_found" | "not_food" | "not_scored" | "mixed_frames" | "error";
 
 export interface ScanFlag {
   title: string;
