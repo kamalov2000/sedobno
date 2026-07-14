@@ -180,7 +180,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.saveScan(ctx, u.ID, res)
+	s.saveScan(ctx, u.ID, res, len(images))
 
 	switch {
 	case perr != nil || res.Status == pipeline.StatusError:
@@ -301,7 +301,9 @@ func (s *Server) debugSaveScanImages(userID int64, images []llm.Image) {
 }
 
 // saveScan пишет результат скана (best-effort — диагностика не должна ронять ответ).
-func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Result) {
+// frames — сколько кадров прислал пользователь: без этого числа нельзя отличить
+// «нутриент-ретрай промахнулся» от «ретрай штатно пропущен» (он только для 1 кадра).
+func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Result, frames int) {
 	var score *int
 	if res.Status == pipeline.StatusOK {
 		v := res.Score
@@ -317,11 +319,17 @@ func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Resul
 	if nv := nutritionView(res.Nutrition); nv != nil {
 		nutrition, _ = json.Marshal(nv)
 	}
+	// Сырой сигнал фазы 1 — с флагами present/visible, которые nutritionView отбрасывает.
+	// Именно он различает «таблицы не было в кадре» и «была, но числа не прочитались».
+	var nutritionRaw []byte
+	if res.Nutrition != nil {
+		nutritionRaw, _ = json.Marshal(res.Nutrition)
+	}
 	scanID, err := s.store.InsertScan(ctx, store.ScanRow{
 		UserID: userID, Status: res.Status, Score: score,
 		Flags: flags, IngredientsRaw: rawIng, IngredientsMatched: matched,
-		Nutrition: nutrition,
-		Provider:  res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
+		Nutrition: nutrition, NutritionRaw: nutritionRaw, Frames: frames,
+		Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
 	})
 	if err != nil {
 		s.log.Error("scan: сохранение в scans", "err", err, "user", userID)

@@ -96,7 +96,7 @@ export default function ScanLoader() {
       </div>
 
       <div style={{ textAlign: "center", fontFamily: "'PT Mono', monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", marginTop: 16 }}>
-        ОБЫЧНО ЗАНИМАЕТ 5–8 СЕКУНД
+        ОБЫЧНО ЗАНИМАЕТ 5–12 СЕКУНД
       </div>
     </div>
   );

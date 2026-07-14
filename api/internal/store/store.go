@@ -100,6 +100,12 @@ type ScanRow struct {
 	// Nutrition — КБЖУ с этикетки (§14.2), тот же JSON, что уходит клиенту.
 	// nil → NULL: таблицы пищевой ценности на фото не было (ожидаемо, не ошибка).
 	Nutrition []byte
+	// NutritionRaw — сырой ответ фазы 1 по КБЖУ (present/visible + числа), ДО
+	// nutritionView. Отвечает на «модель не увидела таблицу или не смогла прочитать?»
+	// без раскопок в логах: view теряет флаги, а фото мы не храним.
+	NutritionRaw []byte
+	// Frames — сколько кадров было в скане (нутриент-ретрай работает только при одном).
+	Frames    int
 	Provider  string
 	LatencyMs int64
 	CostRUB   float64
@@ -111,12 +117,12 @@ type ScanRow struct {
 func (s *Store) InsertScan(ctx context.Context, sc ScanRow) (int64, error) {
 	const q = `
 INSERT INTO scans (user_id, status, score, flags, ingredients_raw, ingredients_matched,
-                   nutrition, provider, latency_ms, cost_estimate)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                   nutrition, nutrition_raw, frames, provider, latency_ms, cost_estimate)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING id`
 	var id int64
 	err := s.pool.QueryRow(ctx, q, sc.UserID, sc.Status, sc.Score, sc.Flags,
-		sc.IngredientsRaw, sc.IngredientsMatched, sc.Nutrition,
+		sc.IngredientsRaw, sc.IngredientsMatched, sc.Nutrition, sc.NutritionRaw, sc.Frames,
 		sc.Provider, sc.LatencyMs, sc.CostRUB).Scan(&id)
 	return id, err
 }
