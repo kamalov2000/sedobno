@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/sostav/api/internal/dict"
 	"github.com/sostav/api/internal/imaging"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/pipeline"
@@ -315,7 +317,7 @@ func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Resul
 	if nv := nutritionView(res.Nutrition); nv != nil {
 		nutrition, _ = json.Marshal(nv)
 	}
-	err := s.store.InsertScan(ctx, store.ScanRow{
+	scanID, err := s.store.InsertScan(ctx, store.ScanRow{
 		UserID: userID, Status: res.Status, Score: score,
 		Flags: flags, IngredientsRaw: rawIng, IngredientsMatched: matched,
 		Nutrition: nutrition,
@@ -323,5 +325,41 @@ func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Resul
 	})
 	if err != nil {
 		s.log.Error("scan: сохранение в scans", "err", err, "user", userID)
+		return // без id скана привязывать несматченные строки не к чему
+	}
+	s.recordUnmatched(ctx, scanID, res)
+}
+
+// recordUnmatched копит строки состава, которые не опознал ни словарь, ни добор
+// LLM (§6): из них еженедельно пополняется словарь. Только для успешных сканов —
+// у ошибочных и «не вижу состав» в Matched либо пусто, либо мусор распознавания.
+// Best-effort: сбор статистики не имеет права ронять ответ пользователю.
+func (s *Server) recordUnmatched(ctx context.Context, scanID int64, res *pipeline.Result) {
+	if res.Status != pipeline.StatusOK {
+		return
+	}
+	seen := make(map[string]struct{}, len(res.Matched))
+	items := make([]store.UnmatchedIngredient, 0, len(res.Matched))
+	for _, m := range res.Matched {
+		if m.Matched {
+			continue
+		}
+		raw := strings.TrimSpace(m.Raw)
+		if raw == "" {
+			continue
+		}
+		// Дедуп внутри одного скана: одна и та же строка, встреченная дважды на этикетке,
+		// не должна давать +2 к счётчику встреч — счётчик меряет сканы, а не строки.
+		if _, dup := seen[raw]; dup {
+			continue
+		}
+		seen[raw] = struct{}{}
+		items = append(items, store.UnmatchedIngredient{Raw: raw, Normalized: dict.Normalize(raw)})
+	}
+	if len(items) == 0 {
+		return
+	}
+	if err := s.store.RecordUnmatchedIngredients(ctx, scanID, items); err != nil {
+		s.log.Warn("scan: запись несматченных ингредиентов", "err", err, "scan", scanID, "n", len(items))
 	}
 }

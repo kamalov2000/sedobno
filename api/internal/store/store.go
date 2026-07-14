@@ -105,16 +105,57 @@ type ScanRow struct {
 	CostRUB   float64
 }
 
-// InsertScan сохраняет результат скана (включая error — для диагностики, §8).
-func (s *Store) InsertScan(ctx context.Context, sc ScanRow) error {
+// InsertScan сохраняет результат скана (включая error — для диагностики, §8) и
+// возвращает его id: он нужен, чтобы привязать к скану несматченные ингредиенты
+// (RecordUnmatchedIngredients).
+func (s *Store) InsertScan(ctx context.Context, sc ScanRow) (int64, error) {
 	const q = `
 INSERT INTO scans (user_id, status, score, flags, ingredients_raw, ingredients_matched,
                    nutrition, provider, latency_ms, cost_estimate)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
-	_, err := s.pool.Exec(ctx, q, sc.UserID, sc.Status, sc.Score, sc.Flags,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id`
+	var id int64
+	err := s.pool.QueryRow(ctx, q, sc.UserID, sc.Status, sc.Score, sc.Flags,
 		sc.IngredientsRaw, sc.IngredientsMatched, sc.Nutrition,
-		sc.Provider, sc.LatencyMs, sc.CostRUB)
-	return err
+		sc.Provider, sc.LatencyMs, sc.CostRUB).Scan(&id)
+	return id, err
+}
+
+// UnmatchedIngredient — строка состава, которую словарь не опознал (§6).
+type UnmatchedIngredient struct {
+	Raw        string // текст как на этикетке
+	Normalized string // dict.Normalize(Raw) — по нему потом искать и группировать
+}
+
+// RecordUnmatchedIngredients копит несматченные строки состава: словарь — ров продукта
+// (§6), и всё, что он не опознал, должно попадать сюда, иначе пополнять его не по чему.
+// Таблица агрегатная: повторная встреча той же строки не плодит запись, а увеличивает
+// count, двигает last_seen и запоминает последний скан (контекст для ручного разбора).
+// Best-effort у вызывающего: сбор статистики не имеет права ронять ответ на скан.
+func (s *Store) RecordUnmatchedIngredients(ctx context.Context, scanID int64, items []UnmatchedIngredient) error {
+	if len(items) == 0 {
+		return nil
+	}
+	const q = `
+INSERT INTO unmatched_ingredients (raw_text, normalized, last_scan_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (raw_text) DO UPDATE
+  SET count        = unmatched_ingredients.count + 1,
+      last_seen    = now(),
+      last_scan_id = EXCLUDED.last_scan_id`
+
+	batch := &pgx.Batch{}
+	for _, it := range items {
+		batch.Queue(q, it.Raw, it.Normalized, scanID)
+	}
+	br := s.pool.SendBatch(ctx, batch)
+	defer br.Close() //nolint:errcheck // ошибка вернётся из Exec ниже
+	for range items {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CountUserScansOK — число успешных проверок пользователя (порядковый номер для
