@@ -88,9 +88,13 @@ type scanResponse struct {
 	Flags       []scanFlagView       `json:"flags"`
 	Deductions  []scanDeductionView  `json:"deductions,omitempty"`
 	Ingredients []scanIngredientView `json:"ingredients"`
-	Nutrition   *scanNutritionView   `json:"nutrition,omitempty"`
-	Explanation string               `json:"explanation,omitempty"`
-	Message     string               `json:"message,omitempty"`
+	// LowConfidence — текст читался плохо: состав распознан, но мог быть прочитан с
+	// ошибками. Фронт показывает плашку «сверьте состав с этикеткой». Уверенный скан
+	// поля не содержит — отсутствие предупреждения и есть норма.
+	LowConfidence bool               `json:"low_confidence,omitempty"`
+	Nutrition     *scanNutritionView `json:"nutrition,omitempty"`
+	Explanation   string             `json:"explanation,omitempty"`
+	Message       string             `json:"message,omitempty"`
 	// ScanNumber — порядковый номер успешной проверки пользователя (для фолбэка
 	// ценника «ПРОВЕРКА №N», когда имя товара не извлекается). Только при status=ok.
 	ScanNumber int `json:"scan_number,omitempty"`
@@ -285,9 +289,10 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 	}
 	return scanResponse{
 		Status: res.Status, Score: res.Score, Flags: flags, Ingredients: ings,
-		Deductions:  deds,
-		Nutrition:   nutritionView(res.Nutrition),
-		Explanation: res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
+		Deductions:    deds,
+		LowConfidence: res.LowConfidence,
+		Nutrition:     nutritionView(res.Nutrition),
+		Explanation:   res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
 }
 

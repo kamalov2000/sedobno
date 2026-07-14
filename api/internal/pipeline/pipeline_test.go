@@ -498,3 +498,58 @@ func TestPipeline_NestedSubCompositionReachesScoring(t *testing.T) {
 		t.Errorf("score=%d, ждали 85 (100 − 15 за сахар в топ-3)", res.Score)
 	}
 }
+
+// Индикатор «читалось плохо» — ЧИСТО отображение: он не должен менять ни балл, ни
+// решение об эскалации. И он про ИТОГОВОЕ извлечение: если неуверенный кадр выручила
+// сильная модель, предупреждать не о чем — состав в итоге прочитан хорошо.
+func TestPipeline_LowConfidenceФлагТолькоДляОтображения(t *testing.T) {
+	t.Run("сильная модель выручила — флага нет", func(t *testing.T) {
+		primary := fakeProvider{name: "primary",
+			ext: &llm.Extraction{Ingredients: []string{"сах?р"}, IsLabel: true, Confidence: 0.2}}
+		fb := fakeProvider{name: "fb",
+			ext: &llm.Extraction{Ingredients: []string{"сахар"}, IsLabel: true, Confidence: 0.9}}
+		p := newPipeWith(t, primary)
+		p.SetExtractFallback(fb, 0.5)
+
+		res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if res.Status != StatusOK {
+			t.Fatalf("статус=%s, ждали ok", res.Status)
+		}
+		if res.LowConfidence {
+			t.Error("флаг взведён, хотя итоговое извлечение уверенное (fallback выручил) — плашка была бы ложной")
+		}
+	})
+
+	t.Run("сильная модель не помогла — флаг есть, балл не изменился", func(t *testing.T) {
+		low := &llm.Extraction{Ingredients: []string{"сахар"}, IsLabel: true, Confidence: 0.2}
+		high := &llm.Extraction{Ingredients: []string{"сахар"}, IsLabel: true, Confidence: 0.9}
+
+		// Тот же состав, но уверенно прочитанный: балл обязан совпасть.
+		pHigh := newPipeWith(t, fakeProvider{name: "high", ext: high})
+		resHigh, err := pHigh.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+
+		pLow := newPipeWith(t, fakeProvider{name: "low", ext: low})
+		pLow.SetExtractFallback(fakeProvider{name: "fb", ext: low}, 0.5) // fallback прочитал не лучше
+		resLow, err := pLow.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+
+		if !resLow.LowConfidence {
+			t.Error("флаг не взведён, хотя итоговое извлечение осталось неуверенным")
+		}
+		if resHigh.LowConfidence {
+			t.Error("флаг взведён на уверенном скане — плашка захламит нормальный экран")
+		}
+		if resLow.Score != resHigh.Score {
+			t.Errorf("балл разошёлся: неуверенный=%d, уверенный=%d — индикатор не должен влиять на скоринг",
+				resLow.Score, resHigh.Score)
+		}
+	})
+}

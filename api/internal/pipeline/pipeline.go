@@ -93,9 +93,14 @@ type Result struct {
 	Nutrition      *llm.Nutrition      `json:"nutrition,omitempty"`
 	Provider       string              `json:"provider"`
 	Confidence     float64             `json:"confidence"`
-	LatencyMs      int64               `json:"latency_ms"`
-	CostRUB        float64             `json:"cost_estimate"`
-	Usage          llm.Usage           `json:"-"`
+	// LowConfidence — итоговое извлечение осталось неуверенным (confidence < confMin,
+	// сильная модель не выручила либо не подключена). Состав распознан и оценён, но
+	// строки могли прочитаться с ошибками — повод попросить пользователя сверить их
+	// с этикеткой. На скоринг не влияет.
+	LowConfidence bool      `json:"low_confidence,omitempty"`
+	LatencyMs     int64     `json:"latency_ms"`
+	CostRUB       float64   `json:"cost_estimate"`
+	Usage         llm.Usage `json:"-"`
 }
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
@@ -202,6 +207,11 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	}
 
 	res.Confidence = ext.Confidence
+	// Читалось ли фото плохо — по ИТОГОВОМУ извлечению (если неуверенный кейс выручила
+	// сильная модель, ext уже заменён на её результат, и предупреждать не о чем).
+	// Тот же предикат, что гейтит эскалацию: на скоринг и эскалацию НЕ влияет,
+	// используется только для отображения.
+	res.LowConfidence = p.lowConfidence(ext)
 	res.IngredientsRaw = ext.Ingredients
 	// Пищевая ценность независима от состава: сохраняем, даже если ниже уйдём в
 	// label_not_found. Показывается на любом продукте (хорошем/плохом), §дополнение.

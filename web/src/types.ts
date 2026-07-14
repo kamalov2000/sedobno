@@ -69,6 +69,9 @@ export interface ScanResult {
   score: number;
   flags: ScanFlag[];
   deductions?: ScanDeduction[]; // пусто/нет — вычетов не было, сводку не показываем
+  /** Текст читался плохо: состав распознан, но строки могли уехать. Приходит только
+   *  когда это так — уверенный скан поля не содержит (норма = отсутствие плашки). */
+  low_confidence?: boolean;
   ingredients: ScanIngredient[];
   nutrition?: ScanNutrition;
   explanation?: string;

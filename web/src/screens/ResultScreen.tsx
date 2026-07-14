@@ -92,6 +92,29 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
           </div>
         )}
 
+        {/* Плохо прочитанный текст: состав распознан и оценён, но строки могли уехать —
+            просим сверить. Уверенный скан не показывает НИЧЕГО (зелёная галочка на
+            каждом экране обесценила бы предупреждение): норма — это отсутствие плашки. */}
+        {result.low_confidence && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              background: "var(--bg-soft)",
+              border: "0.5px solid var(--border)",
+              borderRadius: 12,
+              padding: "12px 14px",
+              marginTop: 12,
+            }}
+          >
+            <i className="ti ti-eye-exclamation" aria-hidden="true" style={{ fontSize: 18, color: "var(--text2)", flex: "none", marginTop: 1 }} />
+            <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--text2)" }}>
+              Текст на фото читался плохо — проверьте, совпадает ли распознанный состав с этикеткой.
+            </span>
+          </div>
+        )}
+
         <IngredientList ingredients={result.ingredients} />
         {result.nutrition && <NutritionCard nutrition={result.nutrition} />}
         <div style={{ height: 16 }} />
