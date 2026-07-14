@@ -35,6 +35,10 @@ migrate: env ## применить миграции БД
 	$(COMPOSE) run --rm migrate up
 
 seed: env ## загрузить словарь добавок в БД (idempotent)
+	# Та же грабля, что и в migrate: словарь вшит в бинарник через go:embed
+	# (api/data/embed.go), поэтому на старом образе seed молча зальёт СТАРЫЙ
+	# additives_seed.json и отрапортует успехом. Пересборка обязательна.
+	$(COMPOSE) --profile tools build seed
 	$(COMPOSE) --profile tools run --rm seed
 
 test: ## юнит-тесты backend
