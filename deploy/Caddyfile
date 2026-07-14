@@ -1,14 +1,22 @@
-# SITE_ADDRESS: локально ":80" (простой HTTP), в проде — домен (Caddy сам возьмёт TLS).
+# Корень домена — статический лендинг (для ЮKassa и публичного описания услуги).
+# Mini-app перенесён с / на /app. API и вебхук бота (/api/*) — без изменений.
 {$SITE_ADDRESS::80} {
 	encode gzip
 
-	# API — на Go-сервис.
+	# API и вебхук бота — на Go-сервис (без изменений).
 	handle /api/* {
 		reverse_proxy api:8080
 	}
 
-	# Всё остальное — статика mini-app.
-	handle {
+	# Mini-app (Telegram WebApp): SPA на /app и её ассеты на /assets.
+	@miniapp path /app /app/* /assets/*
+	handle @miniapp {
 		reverse_proxy web:80
+	}
+
+	# Корень и всё прочее — статический лендинг.
+	handle {
+		root * /srv/landing
+		file_server
 	}
 }
