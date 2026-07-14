@@ -308,10 +308,18 @@ func (s *Server) saveScan(ctx context.Context, userID int64, res *pipeline.Resul
 	flags, _ := json.Marshal(res.Flags)
 	rawIng, _ := json.Marshal(res.IngredientsRaw)
 	matched, _ := json.Marshal(res.Matched)
+	// Пишем КБЖУ ровно в том виде, в каком он уходит клиенту (nutritionView): пустой
+	// набор — это NULL, а не «{}» — иначе аналитика по nutrition IS NOT NULL считала бы
+	// пустышки за найденные таблицы.
+	var nutrition []byte
+	if nv := nutritionView(res.Nutrition); nv != nil {
+		nutrition, _ = json.Marshal(nv)
+	}
 	err := s.store.InsertScan(ctx, store.ScanRow{
 		UserID: userID, Status: res.Status, Score: score,
 		Flags: flags, IngredientsRaw: rawIng, IngredientsMatched: matched,
-		Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
+		Nutrition: nutrition,
+		Provider:  res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
 	})
 	if err != nil {
 		s.log.Error("scan: сохранение в scans", "err", err, "user", userID)

@@ -97,19 +97,23 @@ type ScanRow struct {
 	Flags              []byte
 	IngredientsRaw     []byte
 	IngredientsMatched []byte
-	Provider           string
-	LatencyMs          int64
-	CostRUB            float64
+	// Nutrition — КБЖУ с этикетки (§14.2), тот же JSON, что уходит клиенту.
+	// nil → NULL: таблицы пищевой ценности на фото не было (ожидаемо, не ошибка).
+	Nutrition []byte
+	Provider  string
+	LatencyMs int64
+	CostRUB   float64
 }
 
 // InsertScan сохраняет результат скана (включая error — для диагностики, §8).
 func (s *Store) InsertScan(ctx context.Context, sc ScanRow) error {
 	const q = `
 INSERT INTO scans (user_id, status, score, flags, ingredients_raw, ingredients_matched,
-                   provider, latency_ms, cost_estimate)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+                   nutrition, provider, latency_ms, cost_estimate)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	_, err := s.pool.Exec(ctx, q, sc.UserID, sc.Status, sc.Score, sc.Flags,
-		sc.IngredientsRaw, sc.IngredientsMatched, sc.Provider, sc.LatencyMs, sc.CostRUB)
+		sc.IngredientsRaw, sc.IngredientsMatched, sc.Nutrition,
+		sc.Provider, sc.LatencyMs, sc.CostRUB)
 	return err
 }
 
