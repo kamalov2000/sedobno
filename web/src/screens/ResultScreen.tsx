@@ -53,6 +53,13 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
 
         <PriceTag score={result.score} verdictKey={verdict.key} verdictWord={verdict.word} productLine={productLine} />
 
+        {/* Границы балла — сразу под ним, а не только в футере: балл считается по
+            добавкам из состава и НЕ учитывает КБЖУ, порции и то, из чего продукт
+            сделан по сути. Футерная строка говорит про медицину — это про другое. */}
+        <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text3)", marginTop: 8, paddingLeft: 2 }}>
+          Оценка — ориентир по добавкам, не полная характеристика продукта
+        </div>
+
         {flags.length > 0 ? (
           flags.map((f, i) => (
             <FlagCard key={i} name={f.title} why={f.verdict} level={f.level as "mid" | "high"} />
