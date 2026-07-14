@@ -217,9 +217,10 @@ func newPipeWith(t *testing.T, primary llm.LLMProvider) *Pipeline {
 }
 
 func TestPipeline_ExtractFallback_RescuesUnconfident(t *testing.T) {
-	// Основная модель «не разглядела» (is_label:false) — fallback должен сработать
-	// и вытащить валидную этикетку, статус становится ok.
-	primary := fakeProvider{name: "primary", ext: &llm.Extraction{IsLabel: false}}
+	// СОХРАНЯЕМЫЙ случай эскалации: состав В КАДРЕ ЕСТЬ (is_label:true), но дешёвая
+	// модель прочитала его плохо (низкий confidence) — сильная модель должна выручить.
+	primary := fakeProvider{name: "primary",
+		ext: &llm.Extraction{Ingredients: []string{"сах?р"}, IsLabel: true, Confidence: 0.2}}
 	var fbCalls int
 	fb := fakeProvider{name: "fb", calls: &fbCalls,
 		ext: &llm.Extraction{Ingredients: []string{"сахар"}, IsLabel: true, Confidence: 0.9}}
@@ -232,10 +233,60 @@ func TestPipeline_ExtractFallback_RescuesUnconfident(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if fbCalls != 1 {
-		t.Fatalf("fallback вызван %d раз, ждали 1", fbCalls)
+		t.Fatalf("fallback вызван %d раз, ждали 1 (плохо прочитанный состав — его случай)", fbCalls)
 	}
 	if res.Status != StatusOK {
 		t.Fatalf("статус=%s, ждали ok (fallback выручил)", res.Status)
+	}
+}
+
+func TestPipeline_ExtractFallback_НеЗовётсяКогдаСоставаНетВКадре(t *testing.T) {
+	// Основная модель говорит «это не панель состава» (is_label:false) — лицевая сторона,
+	// срок годности, случайное фото. Перечитывать сильной моделью НЕЧЕГО: состава там нет.
+	// Раньше здесь жёгся Sonnet, и такие сканы были самыми дорогими в проде (~1.9 ₽ против
+	// ~0.8 ₽), причём попытка пользователю не списывается — платил бизнес.
+	var fbCalls int
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{IsLabel: false}}
+	fb := fakeProvider{name: "fb", calls: &fbCalls,
+		ext: &llm.Extraction{Ingredients: []string{"сахар"}, IsLabel: true, Confidence: 0.9}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 0 {
+		t.Fatalf("fallback вызван %d раз — сильная модель жжётся там, где состава нет в кадре", fbCalls)
+	}
+	if res.Status != StatusLabelNotFound {
+		t.Fatalf("статус=%s, ждали label_not_found", res.Status)
+	}
+}
+
+func TestPipeline_ExtractFallback_НеЗовётсяНаНеЕде(t *testing.T) {
+	// Косметика/химия: состав (INCI) в кадре есть, но оценивать съедобность мы не будем
+	// (§3) — значит и перечитывать точнее незачем. Сильную модель не зовём.
+	var fbCalls int
+	notFood := false
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{
+		Ingredients: []string{"aqua", "glycerin"}, IsLabel: true, Confidence: 0.2, IsFood: &notFood}}
+	fb := fakeProvider{name: "fb", calls: &fbCalls,
+		ext: &llm.Extraction{Ingredients: []string{"aqua"}, IsLabel: true, Confidence: 0.9}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 0 {
+		t.Fatalf("fallback вызван %d раз на не-еде — деньги на ветер", fbCalls)
+	}
+	if res.Status != StatusNotFood {
+		t.Fatalf("статус=%s, ждали not_food", res.Status)
 	}
 }
 
