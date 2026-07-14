@@ -457,7 +457,44 @@ func (p *Pipeline) normalize(ctx context.Context, raw []string) ([]rec, llm.Usag
 			p.fill(&recs[i], a)
 		}
 	}
-	return recs, usage, nil
+	return dedupeRecs(recs, raw), usage, nil
+}
+
+// dedupeRecs убирает ОДНУ И ТУ ЖЕ добавку, попавшую в список дважды на одной позиции.
+// Реальный случай с прода (скан 45, 2026-07-14): строка «Краситель (эритрозин)» целиком
+// по словарю не матчится → уходит в несматченные; раскрытие скобки приносит «эритрозин»
+// (E127); а потом LLM-добор разрешает ТУ ЖЕ строку в тот же E127. Пользователь видел
+// «эритрозин, эритрозин», а скоринг вычитал добавку ДВАЖДЫ. Внутристрочный seen этот
+// путь не ловит: добор отрабатывает уже после раскрытия скобок.
+//
+// Из двух записей оставляем ту, чей raw — строка этикетки целиком: человек ищет глазами
+// «Краситель (эритрозин)», а не вырванный из скобки кусок.
+func dedupeRecs(recs []rec, raw []string) []rec {
+	type key struct {
+		pos  int
+		code string
+	}
+	isParentLine := func(r rec) bool {
+		return r.pos >= 1 && r.pos <= len(raw) && raw[r.pos-1] == r.raw
+	}
+	kept := make(map[key]int, len(recs))
+	out := make([]rec, 0, len(recs))
+	for _, r := range recs {
+		if r.code == "" { // несматченные не дедуплицируем: они нейтральны и в балл не идут
+			out = append(out, r)
+			continue
+		}
+		k := key{pos: r.pos, code: r.code}
+		if i, dup := kept[k]; dup {
+			if isParentLine(r) && !isParentLine(out[i]) {
+				out[i] = r // предпочитаем формулировку с этикетки
+			}
+			continue
+		}
+		kept[k] = len(out)
+		out = append(out, r)
+	}
+	return out
 }
 
 func (p *Pipeline) matchLLM(ctx context.Context, unmatched []string) (map[string]string, llm.Usage, error) {

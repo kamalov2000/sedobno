@@ -229,9 +229,10 @@ func TestPipeline_LabelNotFoundReason(t *testing.T) {
 // fakeProvider — управляемый провайдер для проверки fallback фазы 1. Считает вызовы
 // извлечения и возвращает заранее заданный результат.
 type fakeProvider struct {
-	name  string
-	ext   *llm.Extraction
-	calls *int
+	name    string
+	ext     *llm.Extraction
+	calls   *int
+	matches map[string]string // ответ фазы 2 (LLM-добор по несматченным строкам)
 }
 
 func (f fakeProvider) Name() string                   { return f.name }
@@ -243,6 +244,9 @@ func (f fakeProvider) ExtractIngredients(_ context.Context, _ []llm.Image) (*llm
 	return f.ext, llm.Usage{}, nil
 }
 func (f fakeProvider) MatchIngredients(_ context.Context, _ []string, _ []llm.Candidate) (map[string]string, llm.Usage, error) {
+	if f.matches != nil {
+		return f.matches, llm.Usage{}, nil
+	}
 	return map[string]string{}, llm.Usage{}, nil
 }
 func (f fakeProvider) Explain(_ context.Context, _ llm.ExplainInput) (string, llm.Usage, error) {
@@ -623,3 +627,49 @@ func TestPipeline_FoodКатегорияНеЛоматБалл(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// Регресс с прода (скан 45, 2026-07-14): пользователь увидел «эритрозин, эритрозин»,
+// а балл просел вдвое сильнее положенного. Путь: строка «Краситель (эритрозин)» целиком
+// не матчится → раскрытие скобки приносит E127 → LLM-добор разрешает ТУ ЖЕ строку в тот
+// же E127. Одна добавка — две записи и двойной вычет.
+func TestPipeline_НетДубляСкобкаПлюсДобор(t *testing.T) {
+	items := []dict.Additive{
+		{Code: "E127", Names: []string{"эритрозин"}, Category: "краситель", Risk: 3,
+			VerdictShort: "краситель", VerdictFull: "синтетический краситель."},
+	}
+	prov := fakeProvider{
+		name: "primary",
+		ext: &llm.Extraction{
+			IsLabel: true, Confidence: 0.95,
+			Ingredients: []string{"Краситель (эритрозин)"},
+		},
+		matches: map[string]string{"Краситель (эритрозин)": "E127"}, // добор находит тот же код
+	}
+	scorer, err := scoring.Load(appconfig.ScoringYAML)
+	if err != nil {
+		t.Fatalf("scoring.Load: %v", err)
+	}
+	p := New(prov, items, scorer, 4, slog.Default())
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var e127 int
+	for _, m := range res.Matched {
+		if m.Code == "E127" {
+			e127++
+		}
+	}
+	if e127 != 1 {
+		t.Errorf("E127 в списке %d раз, ждали 1: %+v", e127, res.Matched)
+	}
+	// Одна добавка risk3 = −25, а не −50: двойной вычет — это враньё в балле.
+	if res.Score != 75 {
+		t.Errorf("score=%d, ждали 75 (одна добавка risk3 = −25). Двойной вычет вернулся", res.Score)
+	}
+	// Показываем строку так, как она напечатана на этикетке.
+	if res.Matched[0].Raw != "Краситель (эритрозин)" {
+		t.Errorf("raw=%q, ждали строку этикетки целиком", res.Matched[0].Raw)
+	}
+}

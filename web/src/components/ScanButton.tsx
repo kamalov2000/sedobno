@@ -54,11 +54,14 @@ export default function ScanButton({ label, icon = "ti-scan", height = 56, fontS
       </button>
       {/* НЕ display:none: скрытый (hidden) file input во webview Telegram флапает —
           onChange не всегда стреляет. Держим отрендеренным, но визуально спрятанным. */}
+      {/* Без capture="environment": он открывал камеру НАПРЯМУЮ, минуя системный выбор,
+          и загрузить уже готовое фото этикетки (пересланное, снятое раньше) было нельзя.
+          Теперь webview показывает обычный шит «Камера / Галерея / Файлы», где камера и
+          так первая. */}
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = ""; // и после — чтобы следующий выбор того же файла сработал
