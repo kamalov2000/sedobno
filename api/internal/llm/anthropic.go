@@ -12,6 +12,22 @@ import (
 	"time"
 )
 
+// temperatureFor задаёт температуру запроса ПО МОДЕЛИ.
+//   - Haiku (claude-haiku-4-5): 0 — извлечение состава структурное, ему нужен argmax,
+//     а не сэмплирование. На дефолте 1.0 один и тот же кадр банки пива читался то как
+//     пиво, то как шоколад/масло/лимонад (доказано: один sha, четыре «состава»).
+//   - Sonnet 5 и новее: параметр УДАЛЁН у модели — присланный temperature даёт
+//     HTTP 400 «temperature is deprecated for this model». Возвращаем nil (не шлём).
+//     Эти модели управляют сэмплингом сами; мультикадр всё равно детерминизировать
+//     температурой нельзя — на нём Haiku плывёт и при 0 (предел капасити, не сэмплинг).
+func temperatureFor(model string) *float64 {
+	if strings.Contains(model, "haiku") {
+		t := 0.0
+		return &t
+	}
+	return nil
+}
+
 // anthropicClient — реализация LLMProvider поверх Anthropic Messages API (Claude).
 // В отличие от openAIClient это НЕ openai-совместимый протокол: свои заголовки
 // (x-api-key, anthropic-version), система как отдельное поле, изображение — блоком
@@ -64,11 +80,10 @@ func anthropicPrice(model string) (inPer1M, outPer1M float64) {
 type anthropicRequest struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
-	// Temperature БЕЗ omitempty: нам нужно СЛАТЬ 0 явно. Дефолт Messages API — 1.0, и
-	// на нём одни и те же байты дают разные выборки: глянцевую банку пива модель читала
-	// то как пиво, то как шоколад/масло/лимонад (один sha, четыре «состава», 2026-07-15).
-	// Извлечение — структурная задача, ей нужен argmax, а не сэмплирование.
-	Temperature float64            `json:"temperature"`
+	// Temperature — указатель с omitempty: у Haiku шлём 0 (детерминизм извлечения),
+	// у Sonnet 5+ НЕ шлём вовсе (nil) — там параметр deprecated и даёт 400. Логика
+	// выбора — в temperatureFor().
+	Temperature *float64           `json:"temperature,omitempty"`
 	System      string             `json:"system,omitempty"`
 	Thinking    *anthropicThinking `json:"thinking,omitempty"`
 	Messages    []anthropicMessage `json:"messages"`
@@ -119,7 +134,7 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 	reqBody := anthropicRequest{
 		Model:       model,
 		MaxTokens:   c.maxTokens,
-		Temperature: 0, // детерминированное извлечение: см. коммент у поля
+		Temperature: temperatureFor(model),
 		System:      system,
 		Thinking:    &anthropicThinking{Type: "disabled"},
 		Messages:    []anthropicMessage{{Role: "user", Content: content}},
