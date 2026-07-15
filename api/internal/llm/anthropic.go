@@ -64,9 +64,14 @@ func anthropicPrice(model string) (inPer1M, outPer1M float64) {
 type anthropicRequest struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
-	System    string             `json:"system,omitempty"`
-	Thinking  *anthropicThinking `json:"thinking,omitempty"`
-	Messages  []anthropicMessage `json:"messages"`
+	// Temperature БЕЗ omitempty: нам нужно СЛАТЬ 0 явно. Дефолт Messages API — 1.0, и
+	// на нём одни и те же байты дают разные выборки: глянцевую банку пива модель читала
+	// то как пиво, то как шоколад/масло/лимонад (один sha, четыре «состава», 2026-07-15).
+	// Извлечение — структурная задача, ей нужен argmax, а не сэмплирование.
+	Temperature float64            `json:"temperature"`
+	System      string             `json:"system,omitempty"`
+	Thinking    *anthropicThinking `json:"thinking,omitempty"`
+	Messages    []anthropicMessage `json:"messages"`
 }
 
 // Thinking отключаем: задача — структурное извлечение/объяснение, adaptive-режим
@@ -112,11 +117,12 @@ type anthropicResponse struct {
 // ретраем (§15: таймаут 12с на вызов + один ретрай) — симметрично openAIClient.chat.
 func (c *anthropicClient) message(ctx context.Context, model, system string, content []anthropicContent) (string, Usage, error) {
 	reqBody := anthropicRequest{
-		Model:     model,
-		MaxTokens: c.maxTokens,
-		System:    system,
-		Thinking:  &anthropicThinking{Type: "disabled"},
-		Messages:  []anthropicMessage{{Role: "user", Content: content}},
+		Model:       model,
+		MaxTokens:   c.maxTokens,
+		Temperature: 0, // детерминированное извлечение: см. коммент у поля
+		System:      system,
+		Thinking:    &anthropicThinking{Type: "disabled"},
+		Messages:    []anthropicMessage{{Role: "user", Content: content}},
 	}
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
