@@ -86,28 +86,40 @@ func (s *Server) handleScansHistory(w http.ResponseWriter, r *http.Request) {
 // разбивку вычетов считает заново тем же скорером (Rescore), КБЖУ и состав берёт как
 // есть. low_confidence и текст-объяснение мы не храним — в истории их просто нет.
 func (s *Server) rebuildScanView(row store.ScanHistoryRow) scanResponse {
-	var matched []pipeline.MatchedIngredient
-	if len(row.IngredientsMatched) > 0 {
-		_ = json.Unmarshal(row.IngredientsMatched, &matched)
-	}
 	var nut *llm.Nutrition
 	if len(row.NutritionRaw) > 0 {
 		_ = json.Unmarshal(row.NutritionRaw, &nut)
 	}
 
-	res := &pipeline.Result{
-		Status:    row.Status,
-		Matched:   matched,
-		Nutrition: nut,
+	switch row.Status {
+	case pipeline.StatusOK:
+		var matched []pipeline.MatchedIngredient
+		if len(row.IngredientsMatched) > 0 {
+			_ = json.Unmarshal(row.IngredientsMatched, &matched)
+		}
+		sc := s.pipe.Rescore(matched) // балл и разбивку считаем заново из состава
+		res := &pipeline.Result{
+			Status: row.Status, Score: sc.Score, Flags: sc.Flags,
+			Breakdown: sc.Breakdown, Matched: matched, Nutrition: nut,
+		}
+		return buildScanResponse(res, 0, 0) // scansLeft/scanNumber в истории не нужны
+
+	case pipeline.StatusNotScored:
+		// Алкоголь: балла нет, но факты показываем. Состав лежит в raw (matched пуст —
+		// пайплайн вышел до фазы 2), как и в живом ответе. Текст берёт дефолт NotScoredScreen.
+		var raw []string
+		if len(row.IngredientsRaw) > 0 {
+			_ = json.Unmarshal(row.IngredientsRaw, &raw)
+		}
+		ings := make([]scanIngredientView, 0, len(raw))
+		for i, r := range raw {
+			ings = append(ings, scanIngredientView{Raw: r, Position: i + 1})
+		}
+		return scanResponse{Status: row.Status, Ingredients: ings, Nutrition: nutritionView(nut)}
+
+	default:
+		// label_not_found / not_food / mixed_frames / error — распознавания нет,
+		// показываем как карточку статуса без деталей.
+		return scanResponse{Status: row.Status}
 	}
-	// Балл считаем только для ok: у прочих статусов (not_scored/label_not_found/...)
-	// балла нет по определению, и Rescore на пустом/маркерном составе дал бы шум.
-	if row.Status == pipeline.StatusOK {
-		sc := s.pipe.Rescore(matched)
-		res.Score = sc.Score
-		res.Flags = sc.Flags
-		res.Breakdown = sc.Breakdown
-	}
-	// scansLeft/scanNumber в истории не нужны — 0.
-	return buildScanResponse(res, 0, 0)
 }

@@ -134,7 +134,8 @@ type ScanHistoryRow struct {
 	ID                 int64
 	CreatedAt          time.Time
 	Status             string
-	Score              *int // NULL для не-ok статусов
+	Score              *int   // NULL для не-ok статусов
+	IngredientsRaw     []byte // состав для not_scored (там matched пуст — выход до фазы 2)
 	IngredientsMatched []byte
 	NutritionRaw       []byte
 }
@@ -146,7 +147,7 @@ type ScanHistoryRow struct {
 // вызывающий запрашивает limit+1 и по факту перебора решает, что показать.
 func (s *Store) ListScans(ctx context.Context, userID, beforeID int64, limit int) ([]ScanHistoryRow, error) {
 	const q = `
-SELECT id, created_at, status, score, ingredients_matched, nutrition_raw
+SELECT id, created_at, status, score, ingredients_raw, ingredients_matched, nutrition_raw
 FROM scans
 WHERE user_id = $1 AND ($2 = 0 OR id < $2)
 ORDER BY id DESC
@@ -159,7 +160,7 @@ LIMIT $3`
 	var out []ScanHistoryRow
 	for rows.Next() {
 		var r ScanHistoryRow
-		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Status, &r.Score, &r.IngredientsMatched, &r.NutritionRaw); err != nil {
+		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Status, &r.Score, &r.IngredientsRaw, &r.IngredientsMatched, &r.NutritionRaw); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
