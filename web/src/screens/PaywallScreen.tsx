@@ -1,6 +1,7 @@
 import { useState } from "react";
 import GrainFilter from "../components/paywall/GrainFilter";
 import Sprig from "../components/paywall/Sprig";
+import LegalLinks from "../components/LegalLinks";
 
 // Экран 05 · Пейволл (Экран из дизайна). Единственный экран с бренд-слоем §14:
 // градиент шалфей/индиго, бумажное зерно, веточка, serif Newsreader. Остальное нейтрально.
@@ -176,6 +177,7 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
         >
           Не сейчас
         </button>
+        <LegalLinks items={["oferta", "privacy"]} />
       </div>
     </div>
   );

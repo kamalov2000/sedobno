@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Me } from "../types";
 import PhotoStager from "../components/PhotoStager";
+import LegalLinks from "../components/LegalLinks";
 
 // Экран 01 · ГЛАВНЫЙ (перенос из Claude Design, без фейковой шапки Telegram —
 // её рисует реальный клиент). Утилитарный слой: нейтрально, Golos Text.
@@ -116,6 +117,7 @@ export default function HomeScreen({ me, onScan }: Props) {
         )}
 
         <PhotoStager onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
+        <LegalLinks items={["about", "oferta", "privacy"]} />
       </div>
     </div>
   );
