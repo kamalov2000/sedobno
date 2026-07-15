@@ -6,14 +6,12 @@
 <title>Съедобно — сканер состава продуктов в Telegram</title>
 <meta name="description" content="Телеграм-бот, который оценивает состав продукта по фото этикетки: оценка 0–100 и разбор добавок. 10 бесплатных проверок, далее 249 ₽/мес." />
 <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 42'><rect width='42' height='42' rx='12' fill='%235C6B50'/><text x='20' y='31' font-family='Georgia,serif' font-style='italic' font-size='27' fill='%23FBF7EC' text-anchor='middle'>С</text></svg>" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Newsreader:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Unbounded:wght@500;600&family=PT+Mono&display=swap" rel="stylesheet">
-<link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" rel="stylesheet">
+<link rel="stylesheet" href="fonts.css">
 <style>
 html{scroll-behavior:smooth}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 body{margin:0;background:#EFEBE0}
+.ic{display:inline-block;vertical-align:middle}
 a{color:#3E5A3F;text-decoration:none}
 a:hover{color:#2F3B2E}
 @keyframes lpfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
@@ -34,6 +32,7 @@ a:hover{color:#2F3B2E}
 </style>
 </head>
 <body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="ic-brand-telegram" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4" /></symbol><symbol id="ic-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2" /><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /></symbol><symbol id="ic-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7v-1a2 2 0 0 1 2 -2h2" /><path d="M4 17v1a2 2 0 0 0 2 2h2" /><path d="M16 4h2a2 2 0 0 1 2 2v1" /><path d="M16 20h2a2 2 0 0 0 2 -2v-1" /><path d="M5 12l14 0" /></symbol><symbol id="ic-list-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5l1.5 1.5l2.5 -2.5" /><path d="M3.5 11.5l1.5 1.5l2.5 -2.5" /><path d="M3.5 17.5l1.5 1.5l2.5 -2.5" /><path d="M11 6l9 0" /><path d="M11 12l9 0" /><path d="M11 18l9 0" /></symbol><symbol id="ic-bread" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 4a3 3 0 0 1 2 5.235v8.765a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-8.764a3 3 0 0 1 1.824 -5.231h12.176v-.005z" /></symbol><symbol id="ic-infinity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.828 9.172a4 4 0 1 0 0 5.656a10 10 0 0 0 2.172 -2.828a10 10 0 0 1 2.172 -2.828a4 4 0 1 1 0 5.656a10 10 0 0 1 -2.172 -2.828a10 10 0 0 0 -2.172 -2.828" /></symbol><symbol id="ic-book-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 4v16h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12z" /><path d="M19 16h-12a2 2 0 0 0 -2 2" /><path d="M9 8h6" /></symbol><symbol id="ic-credit-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v8a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z" /><path d="M3 10l18 0" /><path d="M7 15l.01 0" /><path d="M11 15l2 0" /></symbol><symbol id="ic-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l14 0" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" /></symbol><symbol id="ic-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l14 0" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" /></symbol></svg>
 <div style="background:#EFEBE0;font-family:'Golos Text',sans-serif;color:#22271C;overflow:hidden;--ink:#22271C;--ink2:#5C6152;--ink3:#8B8E7E;--paper:#EFEBE0;--card:#F7F4EC;--line:#DED8C8;--green:#3E5A3F;--green-d:#2F3B2E;--sage:#8B9A78">
   <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><filter id="lpgrain"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" stitchTiles="stitch" result="n"></feTurbulence><feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.04 0"></feColorMatrix></filter></defs></svg>
 
@@ -46,7 +45,7 @@ a:hover{color:#2F3B2E}
         </div>
         <span lang="ru" style="font-family:'Newsreader',serif;font-style:italic;font-weight:500;font-size:22px;color:var(--green-d)">Съедобно</span>
       </div>
-      <a class="lp-cta-green" href="https://telegram.me/sedobno_bot" style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 20px;border-radius:99px;font-size:14.5px;font-weight:500"><i class="ti ti-brand-telegram" aria-hidden="true" style="font-size:17px"></i>Открыть бота</a>
+      <a class="lp-cta-green" href="https://telegram.me/sedobno_bot" style="display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 20px;border-radius:99px;font-size:14.5px;font-weight:500"><svg class="ic" aria-hidden="true" style="width:17px;height:17px"><use href="#ic-brand-telegram"/></svg>Открыть бота</a>
     </nav>
   </div>
 
@@ -56,7 +55,7 @@ a:hover{color:#2F3B2E}
       <h1 lang="ru" class="lp-h1" style="font-family:'Newsreader',serif;font-weight:500;font-size:60px;line-height:1.08;letter-spacing:-0.01em;color:var(--ink);margin:22px 0 0;text-wrap:balance">Проверка состава продукта <span style="font-style:italic;color:var(--green)">по фото</span></h1>
       <p style="font-size:18px;line-height:1.55;color:var(--ink2);margin:20px 0 0;max-width:480px;text-wrap:pretty">Сфотографируйте этикетку — бот распознает состав, разберёт добавки и даст оценку от 0 до 100 с красными флагами. За несколько секунд, на любом товаре.</p>
       <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:34px">
-        <a class="lp-cta-green" href="https://telegram.me/sedobno_bot" style="display:inline-flex;align-items:center;gap:9px;height:56px;padding:0 28px;border-radius:14px;font-size:16px;font-weight:500"><i class="ti ti-brand-telegram" aria-hidden="true" style="font-size:19px"></i>Открыть бота в Telegram</a>
+        <a class="lp-cta-green" href="https://telegram.me/sedobno_bot" style="display:inline-flex;align-items:center;gap:9px;height:56px;padding:0 28px;border-radius:14px;font-size:16px;font-weight:500"><svg class="ic" aria-hidden="true" style="width:19px;height:19px"><use href="#ic-brand-telegram"/></svg>Открыть бота в Telegram</a>
         <a class="lp-cta-ghost" href="#how" style="display:inline-flex;align-items:center;gap:8px;height:56px;padding:0 26px;background:none;border:1px solid var(--line);color:var(--ink);border-radius:14px;font-size:16px;font-weight:500">Как это работает</a>
       </div>
       <div class="lp-stats" style="display:flex;gap:26px;margin-top:34px;flex-wrap:wrap">
@@ -101,19 +100,19 @@ a:hover{color:#2F3B2E}
     <div style="font-family:'PT Mono',monospace;font-size:12px;letter-spacing:0.1em;color:var(--ink3);margin-bottom:28px">ЧТО ДЕЛАЕТ</div>
     <div class="lp-grid3" style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px">
       <div style="background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 24px">
-        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><i class="ti ti-camera" aria-hidden="true" style="font-size:22px"></i></div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><svg class="ic" aria-hidden="true" style="width:22px;height:22px"><use href="#ic-camera"/></svg></div>
         <div style="font-family:'PT Mono',monospace;font-size:11px;color:var(--ink3);margin-top:20px">ШАГ 1</div>
         <div style="font-size:17px;font-weight:500;color:var(--ink);margin-top:6px;line-height:1.35">Сфотографируйте состав</div>
         <div style="font-size:14px;color:var(--ink2);margin-top:8px;line-height:1.5">Наведите камеру на блок «Состав» на упаковке и отправьте боту.</div>
       </div>
       <div style="background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 24px">
-        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><i class="ti ti-scan" aria-hidden="true" style="font-size:22px"></i></div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><svg class="ic" aria-hidden="true" style="width:22px;height:22px"><use href="#ic-scan"/></svg></div>
         <div style="font-family:'PT Mono',monospace;font-size:11px;color:var(--ink3);margin-top:20px">ШАГ 2</div>
         <div style="font-size:17px;font-weight:500;color:var(--ink);margin-top:6px;line-height:1.35">Бот разбирает этикетку</div>
         <div style="font-size:14px;color:var(--ink2);margin-top:8px;line-height:1.5">Распознаёт ингредиенты и добавки, сверяет со справочником, считает оценку 0–100.</div>
       </div>
       <div style="background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 24px">
-        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><i class="ti ti-list-check" aria-hidden="true" style="font-size:22px"></i></div>
+        <div style="display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:13px;background:#E7ECDD;color:var(--green-d)"><svg class="ic" aria-hidden="true" style="width:22px;height:22px"><use href="#ic-list-check"/></svg></div>
         <div style="font-family:'PT Mono',monospace;font-size:11px;color:var(--ink3);margin-top:20px">ШАГ 3</div>
         <div style="font-size:17px;font-weight:500;color:var(--ink);margin-top:6px;line-height:1.35">Вы видите вердикт</div>
         <div style="font-size:14px;color:var(--ink2);margin-top:8px;line-height:1.5">Оценка, красные флаги и понятный разбор каждой добавки человеческим языком.</div>
@@ -123,7 +122,7 @@ a:hover{color:#2F3B2E}
 
   <section class="lp-pad" style="max-width:1120px;margin:0 auto;padding:0 40px 80px">
     <div style="position:relative;border-radius:26px;overflow:hidden;background:var(--card);border:1px solid var(--line);padding:36px 40px;display:flex;flex-wrap:wrap;align-items:center;gap:28px">
-      <div style="display:flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:16px;background:#E7ECDD;color:var(--green-d);flex:none"><i class="ti ti-bread" aria-hidden="true" style="font-size:30px"></i></div>
+      <div style="display:flex;align-items:center;justify-content:center;width:60px;height:60px;border-radius:16px;background:#E7ECDD;color:var(--green-d);flex:none"><svg class="ic" aria-hidden="true" style="width:30px;height:30px"><use href="#ic-bread"/></svg></div>
       <div style="flex:1;min-width:260px">
         <div lang="ru" style="font-family:'Newsreader',serif;font-weight:500;font-size:26px;color:var(--ink);line-height:1.25">Работает на <span style="font-style:italic;color:var(--green)">любом товаре</span> — даже на хлебе из местной пекарни</div>
         <p style="font-size:15px;line-height:1.55;color:var(--ink2);margin:10px 0 0;max-width:620px">Мы читаем сам текст состава по фото, а не ищем штрихкод в базе. Поэтому проверка работает сразу на всём — от федеральных брендов до развесной еды без кода.</p>
@@ -150,15 +149,15 @@ a:hover{color:#2F3B2E}
       </div>
       <div style="position:relative;display:flex;flex-direction:column;gap:14px">
         <div style="display:flex;align-items:center;gap:13px">
-          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><i class="ti ti-infinity" aria-hidden="true" style="font-size:19px"></i></span>
+          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><svg class="ic" aria-hidden="true" style="width:19px;height:19px"><use href="#ic-infinity"/></svg></span>
           <span style="font-size:15.5px;color:#F3EFE3">Безлимитное число проверок</span>
         </div>
         <div style="display:flex;align-items:center;gap:13px">
-          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><i class="ti ti-book-2" aria-hidden="true" style="font-size:19px"></i></span>
+          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><svg class="ic" aria-hidden="true" style="width:19px;height:19px"><use href="#ic-book-2"/></svg></span>
           <span style="font-size:15.5px;color:#F3EFE3">Справочник добавок, который пополняется</span>
         </div>
         <div style="display:flex;align-items:center;gap:13px">
-          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><i class="ti ti-credit-card" aria-hidden="true" style="font-size:19px"></i></span>
+          <span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;background:rgba(251,247,236,0.12);color:#DDE6CE;flex:none"><svg class="ic" aria-hidden="true" style="width:19px;height:19px"><use href="#ic-credit-card"/></svg></span>
           <span style="font-size:15.5px;color:#F3EFE3">Оплата в Telegram или картой</span>
         </div>
         <a class="lp-cta-cream" href="https://telegram.me/sedobno_bot" style="display:inline-flex;align-items:center;justify-content:center;gap:9px;height:54px;margin-top:8px;border-radius:14px;font-size:16px;font-weight:600">Начать бесплатно</a>
@@ -171,15 +170,15 @@ a:hover{color:#2F3B2E}
       <div style="font-family:'PT Mono',monospace;font-size:12px;letter-spacing:0.1em;color:var(--ink3);margin-bottom:24px">КАК ПОЛУЧИТЬ УСЛУГУ</div>
       <div style="display:flex;flex-direction:column">
         <div style="display:flex;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)">
-          <i class="ti ti-arrow-right" aria-hidden="true" style="font-size:18px;color:var(--green);margin-top:2px;flex:none"></i>
+          <svg class="ic" aria-hidden="true" style="width:18px;height:18px;color:var(--green);margin-top:2px;flex:none"><use href="#ic-arrow-right"/></svg>
           <span style="font-size:15.5px;line-height:1.5;color:var(--ink)">Услуга оказывается через Telegram-бота <a href="https://telegram.me/sedobno_bot">@sedobno_bot</a>.</span>
         </div>
         <div style="display:flex;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)">
-          <i class="ti ti-arrow-right" aria-hidden="true" style="font-size:18px;color:var(--green);margin-top:2px;flex:none"></i>
+          <svg class="ic" aria-hidden="true" style="width:18px;height:18px;color:var(--green);margin-top:2px;flex:none"><use href="#ic-arrow-right"/></svg>
           <span style="font-size:15.5px;line-height:1.5;color:var(--ink)">Доступ открывается мгновенно после оплаты, автоматически.</span>
         </div>
         <div style="display:flex;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)">
-          <i class="ti ti-arrow-right" aria-hidden="true" style="font-size:18px;color:var(--green);margin-top:2px;flex:none"></i>
+          <svg class="ic" aria-hidden="true" style="width:18px;height:18px;color:var(--green);margin-top:2px;flex:none"><use href="#ic-arrow-right"/></svg>
           <span style="font-size:15.5px;line-height:1.5;color:var(--ink)">Это цифровая услуга — доставки товара не требуется.</span>
         </div>
       </div>
