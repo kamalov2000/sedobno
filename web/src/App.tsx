@@ -79,18 +79,20 @@ export default function App() {
     void boot();
   }, [boot]);
 
-  // Нативная кнопка «назад» Telegram. В истории → на главный; в результате, открытом
-  // из истории → обратно в историю. В остальных экранах скрыта.
+  // Нативная кнопка «назад» Telegram. Показываем на любом экране-исходе скана
+  // (результат/алкоголь/ошибка) и в истории — иначе после скана из результата некуда
+  // уйти, кроме «проверить ещё». Исход, открытый ИЗ истории → назад в историю; свежий
+  // скан и сама история → на главный.
   useEffect(() => {
     const bb = tg()?.BackButton;
     if (!bb) return;
-    const backToHistory = (view === "result" || view === "not_scored") && fromHistory;
-    if (!(view === "history" || backToHistory)) {
+    const isOutcome = view === "result" || view === "not_scored" || view === "error";
+    if (!(view === "history" || isOutcome)) {
       bb.hide();
       return;
     }
     const onBack = () => {
-      if (backToHistory) {
+      if (isOutcome && fromHistory) {
         setFromHistory(false);
         setView("history");
       } else {
@@ -289,12 +291,16 @@ export default function App() {
         />
       )}
       {view === "loading" && <ScanLoader />}
-      {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} />}
+      {view === "not_scored" && result && (
+        <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
+      )}
 
       {view === "result" && result && (
         <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />
       )}
-      {view === "error" && <ErrorScreen title={errorCopy.title} subtitle={errorCopy.subtitle} onAgain={onScan} />}
+      {view === "error" && (
+        <ErrorScreen title={errorCopy.title} subtitle={errorCopy.subtitle} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
+      )}
       {view === "paywall" && (
         <PaywallScreen
           onPay={onPay}

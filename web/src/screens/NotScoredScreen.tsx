@@ -11,9 +11,10 @@ import PhotoStager from "../components/PhotoStager";
 interface Props {
   result: ScanResult;
   onAgain: (files: File[]) => void;
+  isSubscribed?: boolean; // у подписчика попыток нет — плашку «не списана» не показываем
 }
 
-export default function NotScoredScreen({ result, onAgain }: Props) {
+export default function NotScoredScreen({ result, onAgain, isSubscribed = false }: Props) {
   const count = result.ingredients.length;
 
   return (
@@ -55,21 +56,23 @@ export default function NotScoredScreen({ result, onAgain }: Props) {
       </div>
 
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            background: "var(--bg-soft)",
-            borderRadius: 11,
-            padding: 12,
-            marginBottom: 12,
-          }}
-        >
-          <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 17, color: "var(--accent)" }} />
-          <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
-        </div>
+        {!isSubscribed && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              background: "var(--bg-soft)",
+              borderRadius: 11,
+              padding: 12,
+              marginBottom: 12,
+            }}
+          >
+            <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 17, color: "var(--accent)" }} />
+            <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
+          </div>
+        )}
         <PhotoStager onScan={onAgain} startLabel="Проверить ещё" startIcon="ti-scan" startHeight={52} startFontSize={15} />
       </div>
     </div>

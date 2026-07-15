@@ -7,6 +7,7 @@ interface Props {
   title: string;
   subtitle: string;
   onAgain: (files: File[]) => void;
+  isSubscribed?: boolean; // у подписчика попыток нет — плашку «не списана» не показываем
 }
 
 const HINTS = [
@@ -15,7 +16,7 @@ const HINTS = [
   { icon: "ti-frame", text: "В кадре — только блок «Состав»" },
 ];
 
-export default function ErrorScreen({ title, subtitle, onAgain }: Props) {
+export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = false }: Props) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", boxSizing: "border-box", minHeight: 0 }}>
       <div style={{ marginTop: 36 }}>
@@ -45,10 +46,12 @@ export default function ErrorScreen({ title, subtitle, onAgain }: Props) {
       <div style={{ flex: 1 }} />
 
       <div style={{ flex: "none", paddingBottom: 4 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "var(--bg-soft)", borderRadius: 11, padding: 12, marginBottom: 12 }}>
-          <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 17, color: "var(--accent)" }} />
-          <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
-        </div>
+        {!isSubscribed && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "var(--bg-soft)", borderRadius: 11, padding: 12, marginBottom: 12 }}>
+            <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 17, color: "var(--accent)" }} />
+            <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
+          </div>
+        )}
         <PhotoStager onScan={onAgain} startLabel="Снять ещё раз" startIcon="ti-camera" />
       </div>
     </div>
