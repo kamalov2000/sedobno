@@ -3,6 +3,7 @@ import { bootAuth, scanPhoto, payCreate, sbpPay, getMe, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult } from "./types";
 import HomeScreen from "./screens/HomeScreen";
+import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
@@ -10,7 +11,7 @@ import ErrorScreen from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. 4.2: полный флоу фото → лоадер → результат/ошибка/пейволл.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -50,6 +51,8 @@ export default function App() {
   const [view, setView] = useState<View>("home");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
+  // Открыт ли текущий экран результата ИЗ истории: тогда «назад» ведёт в историю, а не домой.
+  const [fromHistory, setFromHistory] = useState(false);
 
   const boot = useCallback(async () => {
     setPhase("booting");
@@ -76,7 +79,34 @@ export default function App() {
     void boot();
   }, [boot]);
 
+  // Нативная кнопка «назад» Telegram. В истории → на главный; в результате, открытом
+  // из истории → обратно в историю. В остальных экранах скрыта.
+  useEffect(() => {
+    const bb = tg()?.BackButton;
+    if (!bb) return;
+    const backToHistory = (view === "result" || view === "not_scored") && fromHistory;
+    if (!(view === "history" || backToHistory)) {
+      bb.hide();
+      return;
+    }
+    const onBack = () => {
+      if (backToHistory) {
+        setFromHistory(false);
+        setView("history");
+      } else {
+        setView("home");
+      }
+    };
+    bb.onClick(onBack);
+    bb.show();
+    return () => {
+      bb.offClick(onBack);
+      bb.hide();
+    };
+  }, [view, fromHistory]);
+
   const onScan = useCallback(async (files: File[]) => {
+    setFromHistory(false); // свежий скан — не из истории: его «назад» ведёт домой
     setResult(null); // не даём прошлому результату «залипнуть», если что-то пойдёт не так
     setView("loading");
     try {
@@ -245,7 +275,19 @@ export default function App() {
   // phase === "ready"
   return (
     <Shell>
-      {view === "home" && me && <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} />}
+      {view === "home" && me && (
+        <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} onHistory={() => setView("history")} />
+      )}
+      {view === "history" && (
+        <HistoryScreen
+          onBack={() => setView("home")}
+          onOpen={(item) => {
+            setResult(item);
+            setFromHistory(true);
+            setView(item.status === "not_scored" ? "not_scored" : "result");
+          }}
+        />
+      )}
       {view === "loading" && <ScanLoader />}
       {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} />}
 

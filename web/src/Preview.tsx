@@ -55,9 +55,9 @@ const mockResult: ScanResult = {
 };
 
 const SCREENS: { title: string; node: ReactNode }[] = [
-  { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
   { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} /> },
   {

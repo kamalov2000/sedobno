@@ -4,7 +4,7 @@
 // 402/429 обрабатываются на уровне /scan (4.2), здесь — только базовый транспорт.
 
 import { getInitData } from "./telegram";
-import type { AuthResponse, Me, ScanResult } from "./types";
+import type { AuthResponse, Me, ScanResult, ScanHistoryPage } from "./types";
 
 let token: string | null = null;
 
@@ -64,6 +64,14 @@ export async function apiFetch(input: string, init: RequestInit = {}, allowReaut
 
 export async function getMe(): Promise<Me> {
   const res = await apiFetch("/api/me");
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+// История сканов (§14.4). cursor — id последнего показанного элемента (пагинация).
+export async function scansHistory(cursor?: number): Promise<ScanHistoryPage> {
+  const q = cursor ? `?cursor=${cursor}` : "";
+  const res = await apiFetch(`/api/scans/history${q}`);
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
 }

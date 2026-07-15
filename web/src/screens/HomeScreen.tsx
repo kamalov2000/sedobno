@@ -10,15 +10,28 @@ interface Props {
   me: Me;
   onScan: (files: File[]) => void;
   onSubscribe: () => void;
+  onHistory: () => void;
 }
 
-export default function HomeScreen({ me, onScan, onSubscribe }: Props) {
+export default function HomeScreen({ me, onScan, onSubscribe, onHistory }: Props) {
   // Бесплатные проверки исчерпаны и подписки нет: на месте счётчика «осталось X из 10»
   // показываем объяснение + CTA подписки (сканировать всё равно нечем — упрётся в пейволл).
   const outOfScans = !me.is_subscribed && me.scans_left <= 0;
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
-      <div style={{ marginTop: 40 }}>
+      {/* Шапка: вход в историю проверок справа сверху. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, marginRight: -4 }}>
+        <button
+          type="button"
+          onClick={onHistory}
+          aria-label="История проверок"
+          style={{ background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}
+        >
+          <i className="ti ti-history" aria-hidden="true" style={{ fontSize: 22 }} />
+        </button>
+      </div>
+
+      <div style={{ marginTop: 12 }}>
         <div
           style={{
             fontSize: 25,

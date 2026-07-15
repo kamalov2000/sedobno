@@ -63,6 +63,18 @@ export interface ScanNutrition {
  *  Приходит только при status=label_not_found; у старого бэка отсутствует. */
 export type ScanReason = "not_a_label" | "unreadable" | "wrong_block";
 
+/** Элемент истории: тот же ScanResult, что и живой скан, плюс id и дата.
+ *  Открывается по тапу тем же экраном результата (переиспользуем компонент). */
+export interface ScanHistoryItem extends ScanResult {
+  id: number;
+  created_at: string; // ISO
+}
+
+export interface ScanHistoryPage {
+  items: ScanHistoryItem[];
+  next_cursor?: number; // id для следующей страницы; отсутствует — история кончилась
+}
+
 export interface ScanResult {
   status: ScanStatus;
   reason?: ScanReason;

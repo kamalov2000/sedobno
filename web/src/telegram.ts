@@ -21,6 +21,12 @@ export interface TgWebApp {
   openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
   setHeaderColor?: (color: string) => void;
   HapticFeedback?: HapticFeedback;
+  BackButton?: {
+    show: () => void;
+    hide: () => void;
+    onClick: (cb: () => void) => void;
+    offClick: (cb: () => void) => void;
+  };
 }
 
 declare global {
