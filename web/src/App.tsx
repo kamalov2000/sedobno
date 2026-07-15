@@ -245,7 +245,7 @@ export default function App() {
   // phase === "ready"
   return (
     <Shell>
-      {view === "home" && me && <HomeScreen me={me} onScan={onScan} />}
+      {view === "home" && me && <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} />}
       {view === "loading" && <ScanLoader />}
       {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} />}
 

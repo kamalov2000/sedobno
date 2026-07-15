@@ -9,9 +9,13 @@ import LegalLinks from "../components/LegalLinks";
 interface Props {
   me: Me;
   onScan: (files: File[]) => void;
+  onSubscribe: () => void;
 }
 
-export default function HomeScreen({ me, onScan }: Props) {
+export default function HomeScreen({ me, onScan, onSubscribe }: Props) {
+  // Бесплатные проверки исчерпаны и подписки нет: на месте счётчика «осталось X из 10»
+  // показываем объяснение + CTA подписки (сканировать всё равно нечем — упрётся в пейволл).
+  const outOfScans = !me.is_subscribed && me.scans_left <= 0;
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
       <div style={{ marginTop: 40 }}>
@@ -110,13 +114,44 @@ export default function HomeScreen({ me, onScan }: Props) {
               Подписка активна
             </span>
           </div>
+        ) : outOfScans ? (
+          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
+            Бесплатные проверки закончились (0&nbsp;из&nbsp;10). Оформите подписку — 249&nbsp;₽/мес, проверки без ограничений.
+          </div>
         ) : (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>
             Осталось {Math.max(0, me.scans_left)} из 10 проверок
           </div>
         )}
 
-        <PhotoStager onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
+        {outOfScans ? (
+          <button
+            type="button"
+            className="sj-cta"
+            onClick={onSubscribe}
+            style={{
+              width: "100%",
+              height: 56,
+              background: "var(--accent)",
+              color: "var(--on-accent)",
+              border: "none",
+              borderRadius: 14,
+              fontFamily: "'Golos Text', sans-serif",
+              fontSize: 16,
+              fontWeight: 500,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 9,
+              cursor: "pointer",
+            }}
+          >
+            <i className="ti ti-crown" aria-hidden="true" style={{ fontSize: 20 }} />
+            Оформить подписку
+          </button>
+        ) : (
+          <PhotoStager onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
+        )}
         <LegalLinks items={["about", "oferta", "privacy"]} />
       </div>
     </div>
