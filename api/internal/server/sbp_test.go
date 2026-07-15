@@ -11,23 +11,8 @@ func testSBPServer() *Server {
 	_, n1, _ := net.ParseCIDR("185.71.76.0/27")
 	_, n2, _ := net.ParseCIDR("2a02:5180::/32")
 	return &Server{cfg: &config.Config{
-		LandingLinkSecret: "landing-secret",
 		YooKassaAllowlist: []*net.IPNet{n1, n2},
 	}}
-}
-
-func TestSBPSignVerify(t *testing.T) {
-	s := testSBPServer()
-	sig := s.signSBPUID(24)
-	if !s.validSBPSig(24, sig) {
-		t.Fatal("своя подпись должна проходить проверку")
-	}
-	if s.validSBPSig(25, sig) {
-		t.Error("подпись uid=24 не должна подходить к uid=25")
-	}
-	if s.validSBPSig(24, sig+"00") || s.validSBPSig(24, "zzzz") {
-		t.Error("подделанная/битая подпись должна отклоняться")
-	}
 }
 
 func TestIPAllowed(t *testing.T) {

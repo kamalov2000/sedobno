@@ -96,7 +96,7 @@ func TestMustLoad_SBPEnabledRequiresKeys(t *testing.T) {
 			t.Fatal("ожидали панику: SBP_ENABLED=true без ключей ЮKassa")
 		}
 		msg, _ := r.(string)
-		for _, key := range []string{"YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY", "LANDING_URL", "LANDING_LINK_SECRET"} {
+		for _, key := range []string{"YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY", "LANDING_URL"} {
 			if !strings.Contains(msg, key) {
 				t.Errorf("паника не упоминает %s: %s", key, msg)
 			}

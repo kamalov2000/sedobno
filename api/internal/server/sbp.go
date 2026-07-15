@@ -1,12 +1,9 @@
 package server
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -16,38 +13,22 @@ import (
 	"github.com/sostav/api/internal/yookassa"
 )
 
-// СБП/карта через ЮKassa (§14.1). Три ручки:
-//   POST /payments/sbp/link    — (authed) выдаёт фронту подписанную ссылку на лендинг;
-//   GET  /payments/sbp/create  — (лендинг) проверяет HMAC(uid) и ведёт на страницу оплаты;
+// СБП/карта через ЮKassa (§14.1). Две ручки:
+//   POST /payments/sbp/create  — (authed) создаёт платёж и отдаёт ссылку на ЮKassa;
 //   POST /payments/sbp/webhook — (ЮKassa) IP-allowlist + re-fetch → идемпотентная активация.
-// Ключи ЮKassa живут только здесь, на api (не на лендинге). Все ручки выключены при
-// SBP_ENABLED=false (гейт конфига, §11) — тогда отдают 404, будто их нет.
+// Ключи ЮKassa живут только здесь, на api. Ручки выключены при SBP_ENABLED=false
+// (гейт конфига, §11) — тогда отдают 404, будто их нет.
 
-// signSBPUID подписывает user_id для ссылки на лендинг (HMAC-SHA256, секрет LANDING_LINK_SECRET).
-func (s *Server) signSBPUID(uid int64) string {
-	mac := hmac.New(sha256.New, []byte(s.cfg.LandingLinkSecret))
-	fmt.Fprintf(mac, "sbp:%d", uid)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// validSBPSig сверяет подпись в постоянном времени.
-func (s *Server) validSBPSig(uid int64, sig string) bool {
-	want := s.signSBPUID(uid)
-	got, err := hex.DecodeString(sig)
-	if err != nil {
-		return false
-	}
-	wantB, _ := hex.DecodeString(want)
-	return hmac.Equal(wantB, got)
-}
-
-type sbpLinkResponse struct {
+type sbpPayResponse struct {
 	URL string `json:"url"`
 }
 
-// handleSBPLink — POST /api/payments/sbp/link (защищённый). Возвращает подписанную
-// ссылку на лендинг с user_id+HMAC; фронт открывает её WebApp.openLink по кнопке пейволла.
-func (s *Server) handleSBPLink(w http.ResponseWriter, r *http.Request) {
+// handleSBPPay — POST /api/payments/sbp/create (защищённый). Создаёт платёж ЮKassa для
+// ТЕКУЩЕГО пользователя и возвращает прямую ссылку на страницу оплаты. Mini-app открывает
+// её через WebApp.openLink — попадаем на ЮKassa напрямую, без промежуточного лендинга
+// (раньше был лишний экран и клик). Пользователя опознаёт JWT (claims.UserID), поэтому
+// HMAC-подпись, что была нужна для внешнего лендинга, здесь не требуется.
+func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.SBPEnabled {
 		writeError(w, http.StatusNotFound, "sbp_disabled", "оплата по СБП недоступна")
 		return
@@ -57,33 +38,12 @@ func (s *Server) handleSBPLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
 		return
 	}
-	sep := "?"
-	if strings.Contains(s.cfg.LandingURL, "?") {
-		sep = "&"
-	}
-	link := fmt.Sprintf("%s%suid=%d&sig=%s", s.cfg.LandingURL, sep, claims.UserID, s.signSBPUID(claims.UserID))
-	writeJSON(w, http.StatusOK, sbpLinkResponse{URL: link})
-}
-
-// handleSBPCreate — GET /api/payments/sbp/create?uid=&sig= (лендинг-facing). Проверяет
-// HMAC(uid), создаёт платёж ЮKassa и редиректит браузер на страницу оплаты. GET-редирект
-// вместо JSON/CORS: лендинг может просто вести кнопкой сюда, не завися от нашего домена.
-func (s *Server) handleSBPCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.SBPEnabled {
-		writeError(w, http.StatusNotFound, "sbp_disabled", "оплата по СБП недоступна")
-		return
-	}
 	ctx := r.Context()
-	uid, _ := strconv.ParseInt(r.URL.Query().Get("uid"), 10, 64)
-	sig := r.URL.Query().Get("sig")
-	if uid <= 0 || !s.validSBPSig(uid, sig) {
-		writeError(w, http.StatusForbidden, "bad_signature", "ссылка недействительна")
-		return
-	}
+	uid := claims.UserID
 
 	u, err := s.store.GetUserByID(ctx, uid)
 	if err != nil {
-		s.log.Error("sbp create: чтение пользователя", "err", err, "user", uid)
+		s.log.Error("sbp pay: чтение пользователя", "err", err, "user", uid)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
@@ -93,25 +53,27 @@ func (s *Server) handleSBPCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p, err := s.yk.CreatePayment(ctx, yookassa.CreateInput{
-		AmountRub:      s.cfg.SBPPriceRub,
-		Description:    "Съедобно — подписка на месяц",
+		AmountRub:   s.cfg.SBPPriceRub,
+		Description: "Съедобно — подписка на месяц",
+		// ReturnURL — куда ЮKassa вернёт браузер ПОСЛЕ оплаты: лендинг с подсказкой
+		// «вернитесь в Telegram». Это НЕ часть пути ДО оплаты, лендинг там больше не участвует.
 		ReturnURL:      s.cfg.LandingURL,
 		Metadata:       map[string]string{"user_id": strconv.FormatInt(uid, 10)},
 		IdempotenceKey: randIdemKey(),
 	})
 	if err != nil {
-		s.log.Error("sbp create: ЮKassa", "err", err, "user", uid)
+		s.log.Error("sbp pay: ЮKassa", "err", err, "user", uid)
 		writeError(w, http.StatusBadGateway, "pay_unavailable", "оплата временно недоступна, попробуйте позже")
 		return
 	}
 	if p.Confirmation == nil || p.Confirmation.ConfirmationURL == "" {
-		s.log.Error("sbp create: нет confirmation_url", "user", uid, "payment", p.ID)
+		s.log.Error("sbp pay: нет confirmation_url", "user", uid, "payment", p.ID)
 		writeError(w, http.StatusBadGateway, "pay_unavailable", "оплата временно недоступна, попробуйте позже")
 		return
 	}
 
 	_ = s.store.InsertEvent(ctx, &uid, "pay_started", map[string]any{"channel": "sbp"})
-	http.Redirect(w, r, p.Confirmation.ConfirmationURL, http.StatusFound)
+	writeJSON(w, http.StatusOK, sbpPayResponse{URL: p.Confirmation.ConfirmationURL})
 }
 
 // handleSBPWebhook — POST /api/payments/sbp/webhook (зовёт ЮKassa). Уведомления ЮKassa

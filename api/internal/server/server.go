@@ -64,8 +64,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/tg/webhook", s.handleWebhook)    // зовёт Telegram; своя проверка секрета
 		r.Get("/admin/stats", s.handleAdminStats) // владелец; авторизация по ?key=
 
-		// СБП/ЮKassa (§14.1): зовут лендинг и ЮKassa — своя проверка (HMAC / IP-allowlist+re-fetch).
-		r.Get("/payments/sbp/create", s.handleSBPCreate)    // лендинг → редирект на оплату
+		// Вебхук ЮKassa — публичный (зовёт ЮKassa): своя проверка IP-allowlist + re-fetch.
 		r.Post("/payments/sbp/webhook", s.handleSBPWebhook) // ЮKassa → активация подписки
 
 		// Защищённые роуты: Bearer JWT обязателен (§8).
@@ -74,7 +73,7 @@ func (s *Server) Router() http.Handler {
 			r.With(s.rateLimitScans).Post("/scan", s.handleScan)
 			r.Get("/me", s.handleMe)
 			r.Post("/pay/create", s.handlePayCreate)
-			r.Post("/payments/sbp/link", s.handleSBPLink) // подписанная ссылка на лендинг
+			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa
 		})
 	})
 

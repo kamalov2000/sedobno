@@ -73,7 +73,6 @@
     font-size: 16px; font-weight: 600; padding: 15px; border-radius: 13px;
     margin: 22px 0 8px;
   }
-  .paynote { margin: 8px 0 0; font-size: 13px; color: var(--ink3); text-align: center; line-height: 1.5; }
   .req { font-size: 14.5px; }
   .req .row { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--line); }
   .req .row:last-child { border-bottom: 0; }
@@ -91,15 +90,7 @@
     <div class="logo"><span class="mark">С</span><span>Съедобно</span></div>
     <h1>Проверка состава продукта по фото</h1>
     <p class="lead">Телеграм-бот сканирует этикетку по фотографии, распознаёт состав и даёт оценку от 0 до 100 с разбором добавок и красными флагами — за несколько секунд.</p>
-    <a class="cta" id="cta-bot" href="https://telegram.me/sedobno_bot">Открыть бота в Telegram</a>
-
-    <!-- Оплата подписки. Mini-app присылает сюда ПОДПИСАННУЮ ссылку (?uid=&sig=) —
-         без неё платить нечем и некому, поэтому блок скрыт: случайному посетителю
-         лендинга он бесполезен, а кнопка «оплатить» без uid дала бы 403. -->
-    <div id="pay" hidden>
-      <a class="cta" id="pay-btn" href="#">Оплатить подписку — 249 ₽/мес</a>
-      <p class="paynote">Оплата картой или через СБП. После оплаты подписка активируется автоматически — вернитесь в Telegram.</p>
-    </div>
+    <a class="cta" href="https://telegram.me/sedobno_bot">Открыть бота в Telegram</a>
   </header>
 
   <section class="card">
@@ -144,21 +135,5 @@
     © 2026 Камалов Альберт Ильдарович · Съедобно
   </footer>
 </div>
-<script>
-  // Ссылка из mini-app: ?uid=<id>&sig=<HMAC>. Подпись проверяет бэк — здесь мы её
-  // только передаём дальше. Нет параметров (человек зашёл на лендинг сам) → блок
-  // оплаты не показываем и оставляем кнопку «Открыть бота».
-  (function () {
-    var q = new URLSearchParams(location.search);
-    var uid = q.get("uid"), sig = q.get("sig");
-    if (!uid || !sig) return;
-    var pay = document.getElementById("pay");
-    var btn = document.getElementById("pay-btn");
-    btn.href = "/api/payments/sbp/create?uid=" + encodeURIComponent(uid) + "&sig=" + encodeURIComponent(sig);
-    pay.hidden = false;
-    // Пришли платить — кнопка бота здесь только мешает.
-    document.getElementById("cta-bot").hidden = true;
-  })();
-</script>
 </body>
 </html>

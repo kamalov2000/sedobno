@@ -98,13 +98,14 @@ export async function payCreate(): Promise<PayOutcome> {
   return { kind: "invoice", url: data.invoice_link };
 }
 
-/** Ссылка на лендинг СБП (user_id + HMAC). Открывается через tg.openLink (§14.1). */
-export type SbpLinkOutcome =
+/** Создать платёж ЮKassa и получить ПРЯМУЮ ссылку на страницу оплаты. Открывается
+ *  через tg.openLink — попадаем на ЮKassa напрямую, без промежуточного лендинга (§14.1). */
+export type SbpPayOutcome =
   | { kind: "url"; url: string }
   | { kind: "error"; message: string };
 
-export async function sbpLink(): Promise<SbpLinkOutcome> {
-  const res = await apiFetch("/api/payments/sbp/link", { method: "POST" });
+export async function sbpPay(): Promise<SbpPayOutcome> {
+  const res = await apiFetch("/api/payments/sbp/create", { method: "POST" });
   if (!res.ok) return { kind: "error", message: await readMessage(res) };
   const data = (await res.json()) as { url: string };
   return { kind: "url", url: data.url };

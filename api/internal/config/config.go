@@ -63,8 +63,8 @@ type Config struct {
 	YooKassaShopID    string       // shopId для Basic-auth к API ЮKassa
 	YooKassaSecretKey string       // секретный ключ для Basic-auth к API ЮKassa
 	YooKassaAPIBase   string       // база API ЮKassa (default https://api.yookassa.ru/v3; стаб в тестах)
-	LandingURL        string       // страница-лендинг, куда ведёт подписанная ссылка с пейволла
-	LandingLinkSecret string       // HMAC-секрет подписи user_id в ссылке на лендинг
+	LandingURL        string       // ReturnURL: куда ЮKassa вернёт браузер после оплаты
+	LandingLinkSecret string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
 	YooKassaAllowlist []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
 
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
@@ -173,15 +173,18 @@ func MustLoad() *Config {
 		// Включённый СБП без ключей/лендинга — ошибка конфигурации (fail-fast §11).
 		cfg.YooKassaShopID = req("YOOKASSA_SHOP_ID")
 		cfg.YooKassaSecretKey = req("YOOKASSA_SECRET_KEY")
+		// LANDING_URL нужен как ReturnURL: куда ЮKassa вернёт браузер после оплаты.
 		cfg.LandingURL = req("LANDING_URL")
-		cfg.LandingLinkSecret = req("LANDING_LINK_SECRET")
 	} else {
 		// Выключен — читаем, если заданы, но не гейтим (можно держать пустыми).
 		cfg.YooKassaShopID = opt("YOOKASSA_SHOP_ID", "")
 		cfg.YooKassaSecretKey = opt("YOOKASSA_SECRET_KEY", "")
 		cfg.LandingURL = opt("LANDING_URL", "")
-		cfg.LandingLinkSecret = opt("LANDING_LINK_SECRET", "")
 	}
+	// LANDING_LINK_SECRET больше не используется: путь оплаты пошёл mini-app → ЮKassa
+	// напрямую (JWT опознаёт юзера), HMAC-подпись ссылки на внешний лендинг не нужна.
+	// Читаем опционально, чтобы старый .env с этим ключом не падал.
+	cfg.LandingLinkSecret = opt("LANDING_LINK_SECRET", "")
 
 	// Fail-fast (§11): требуем ключ ТОЛЬКО у выбранного провайдера, а не безусловно.
 	switch cfg.LLMProvider {

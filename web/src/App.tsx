@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, payCreate, sbpLink, getMe, ApiError } from "./api";
+import { bootAuth, scanPhoto, payCreate, sbpPay, getMe, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult } from "./types";
 import HomeScreen from "./screens/HomeScreen";
@@ -166,10 +166,11 @@ export default function App() {
     });
   }, []);
 
-  // Оплата картой/СБП: берём подписанную ссылку на лендинг и открываем её (openLink).
-  // Подписка активируется вебхуком ЮKassa на бэке; при возврате в mini-app обновляем профиль.
+  // Оплата картой/СБП: создаём платёж и открываем ПРЯМУЮ ссылку ЮKassa (openLink) —
+  // без промежуточного лендинга. Подписка активируется вебхуком ЮKassa на бэке; при
+  // возврате в mini-app обновляем профиль.
   const onSbpPay = useCallback(async () => {
-    const out = await sbpLink();
+    const out = await sbpPay();
     if (out.kind === "error") {
       notify("error");
       return; // остаёмся на пейволле
