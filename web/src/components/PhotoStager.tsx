@@ -24,10 +24,14 @@ export default function PhotoStager({
   startFontSize = 16,
 }: Props) {
   const [photos, setPhotos] = useState<File[]>([]);
+  const [readError, setReadError] = useState(false);
   const urls = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
 
-  const addPhoto = (f: File) => setPhotos((p) => (p.length >= MAX_PHOTOS ? p : [...p, f]));
+  const addPhoto = (f: File) => {
+    setReadError(false);
+    setPhotos((p) => (p.length >= MAX_PHOTOS ? p : [...p, f]));
+  };
   const removePhoto = (i: number) => {
     haptic("light");
     setPhotos((p) => p.filter((_, idx) => idx !== i));
@@ -39,7 +43,23 @@ export default function PhotoStager({
   };
 
   if (photos.length === 0) {
-    return <ScanButton label={startLabel} icon={startIcon} height={startHeight} fontSize={startFontSize} onFile={addPhoto} />;
+    return (
+      <>
+        {readError && (
+          <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>
+            Не удалось прочитать фото — снимите ещё раз.
+          </p>
+        )}
+        <ScanButton
+          label={startLabel}
+          icon={startIcon}
+          height={startHeight}
+          fontSize={startFontSize}
+          onFile={addPhoto}
+          onReadError={() => setReadError(true)}
+        />
+      </>
+    );
   }
 
   return (
@@ -89,7 +109,7 @@ export default function PhotoStager({
             третий кадр — это продолжение <b>того же</b> списка «Состав», а не другие
             части этикетки (не пищевая ценность и не лицевая сторона).
           </p>
-          <ScanButton label="Добавить ещё фото" icon="ti-plus" variant="outline" height={48} fontSize={15} onFile={addPhoto} />
+          <ScanButton label="Добавить ещё фото" icon="ti-plus" variant="outline" height={48} fontSize={15} onFile={addPhoto} onReadError={() => setReadError(true)} />
         </>
       )}
 

@@ -22,10 +22,18 @@ import (
 	seeddata "github.com/sostav/api/data"
 	"github.com/sostav/api/internal/config"
 	"github.com/sostav/api/internal/dict"
+	"github.com/sostav/api/internal/imaging"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/logging"
 	"github.com/sostav/api/internal/pipeline"
 	"github.com/sostav/api/internal/scoring"
+)
+
+// Те же параметры нормализации, что и прод (server.maxImageDim/jpegQuality): eval
+// должен быть честной репликой прод-пути, а не своей веткой обработки фото.
+const (
+	maxImageDim = 1500
+	jpegQuality = 85
 )
 
 func main() {
@@ -152,7 +160,18 @@ func readCase(paths []string) ([]llm.Image, string, error) {
 		if err != nil {
 			return nil, filepath.Base(p), err
 		}
-		imgs = append(imgs, llm.Image{Data: data, MIME: mimeOf(p)})
+		// .txt — mock-фикстура (строки = ингредиенты), уходит как есть. Изображение
+		// прогоняем через тот же Normalize, что и прод (scan.go): MIME по расширению
+		// врал — PNG с именем .jpg улетал как image/jpeg и ловил 400 от Anthropic.
+		if strings.ToLower(filepath.Ext(p)) == ".txt" {
+			imgs = append(imgs, llm.Image{Data: data, MIME: "text/plain"})
+		} else {
+			jpg, nerr := imaging.Normalize(data, maxImageDim, jpegQuality)
+			if nerr != nil {
+				return nil, filepath.Base(p), fmt.Errorf("normalize %s: %w", filepath.Base(p), nerr)
+			}
+			imgs = append(imgs, llm.Image{Data: jpg, MIME: "image/jpeg"})
+		}
 		names = append(names, filepath.Base(p))
 	}
 	return imgs, strings.Join(names, "+"), nil
@@ -184,19 +203,6 @@ func listFiles(dir string, mock bool) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
-}
-
-func mimeOf(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".txt":
-		return "text/plain"
-	default:
-		return "image/jpeg"
-	}
 }
 
 func countMatched(m []pipeline.MatchedIngredient) int {

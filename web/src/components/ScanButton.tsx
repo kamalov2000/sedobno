@@ -11,9 +11,35 @@ interface Props {
   fontSize?: number;
   variant?: "accent" | "outline"; // outline — вторичная кнопка (напр. «+ ещё фото»)
   onFile: (file: File) => void;
+  onReadError?: () => void; // не смогли прочитать байты выбранного файла
 }
 
-export default function ScanButton({ label, icon = "ti-scan", height = 56, fontSize = 16, variant = "accent", onFile }: Props) {
+// snapshot копирует байты выбранного файла В ПАМЯТЬ немедленно.
+//
+// File — не байты, а ЛЕНИВАЯ ссылка на файл (на Android — content:// URI). Мы держали
+// её в React-стейте и читали только при отправке FormData, уже после input.value = "".
+// В webview Telegram провайдер к тому моменту успевал освободить/переиспользовать URI,
+// и наверх уезжал ДРУГОЙ файл из медиа-хранилища: 2026-07-14 один и тот же снимок банки
+// пива дал четыре разных «состава» — лимонада, сгущёнки, сливок, мороженого. Это были
+// реальные чужие картинки, а не галлюцинации модели (та же банка, прогнанная напрямую
+// через пайплайн, читается верно 3 раза из 3).
+async function snapshot(file: File): Promise<File> {
+  const bytes = await file.arrayBuffer(); // читаем СЕЙЧАС, пока URI жив
+  return new File([bytes], file.name || "photo.jpg", {
+    type: file.type || "image/jpeg",
+    lastModified: file.lastModified,
+  });
+}
+
+export default function ScanButton({
+  label,
+  icon = "ti-scan",
+  height = 56,
+  fontSize = 16,
+  variant = "accent",
+  onFile,
+  onReadError,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const outline = variant === "outline";
@@ -63,9 +89,20 @@ export default function ScanButton({ label, icon = "ti-scan", height = 56, fontS
         type="file"
         accept="image/*"
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = ""; // и после — чтобы следующий выбор того же файла сработал
-          if (file) onFile(file);
+          const input = e.target;
+          const file = input.files?.[0];
+          if (!file) return;
+          // Сначала СНИМАЕМ байты, и только потом сбрасываем input: обратный порядок
+          // (как было) отдавал наверх ссылку на уже освобождённый content:// URI.
+          void snapshot(file)
+            .then((copy) => {
+              input.value = ""; // чтобы повторный выбор того же файла снова дал onChange
+              onFile(copy);
+            })
+            .catch(() => {
+              input.value = "";
+              onReadError?.(); // лучше честно попросить переснять, чем отправить мусор
+            });
         }}
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", pointerEvents: "none" }}
       />

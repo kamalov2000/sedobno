@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,6 +192,13 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 				"формат не поддерживается — пришлите JPEG, PNG или WebP")
 			return
 		}
+		// Диагностика без сохранения фото (приватность не трогаем): по хешу видно, тот
+		// же файл прислали повторно или разные. Разбор инцидента 2026-07-14, когда
+		// webview слал не тот файл, чем снял пользователь.
+		sum := sha256.Sum256(raw)
+		s.log.Info("scan: принят кадр", "user", u.ID, "sha", hex.EncodeToString(sum[:6]),
+			"in_bytes", len(raw), "out_bytes", len(jpg))
+
 		images = append(images, llm.Image{Data: jpg, MIME: "image/jpeg"})
 	}
 
