@@ -123,6 +123,20 @@ type Pipeline struct {
 	sem        chan struct{}
 }
 
+// Rescore пересчитывает балл, флаги и разбивку вычетов из уже сохранённых строк
+// состава (история сканов §14.4): та же фаза 3, что и в живом скане, без LLM. Даёт
+// сводку «Балл снижен из-за…» для истории, не храня ничего нового и не дублируя логику.
+func (p *Pipeline) Rescore(matched []MatchedIngredient) scoring.Result {
+	items := make([]scoring.Ingredient, 0, len(matched))
+	for _, m := range matched {
+		items = append(items, scoring.Ingredient{
+			Code: m.Code, Category: m.Category, Name: m.Name,
+			Risk: m.Risk, Position: m.Position, Matched: m.Matched,
+		})
+	}
+	return p.scorer.Score(items)
+}
+
 // SetExtractFallback включает повторное извлечение фазы 1 на более сильной
 // vision-модели (например Sonnet) для неуверенных результатов основной модели
 // (§4, редкий и дешёвый путь). fb == nil выключает fallback. confMin — минимально

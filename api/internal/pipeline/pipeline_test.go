@@ -673,3 +673,24 @@ func TestPipeline_НетДубляСкобкаПлюсДобор(t *testing.T) {
 		t.Errorf("raw=%q, ждали строку этикетки целиком", res.Matched[0].Raw)
 	}
 }
+
+// Rescore восстанавливает балл истории из сохранённых строк состава — тот же
+// результат, что и живой скан того же состава (та же фаза 3, без LLM).
+func TestPipeline_RescoreСовпадаетСЖивымСканом(t *testing.T) {
+	prov := fakeProvider{name: "primary", ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9,
+		Ingredients: []string{"сахар", "глутамат натрия", "вода"},
+	}}
+	p := newPipeWith(t, prov)
+	live, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sc := p.Rescore(live.Matched)
+	if sc.Score != live.Score {
+		t.Errorf("Rescore балл=%d, живой=%d — история разошлась бы с исходным сканом", sc.Score, live.Score)
+	}
+	if len(sc.Breakdown) != len(live.Breakdown) {
+		t.Errorf("Rescore разбивка %d строк, живая %d", len(sc.Breakdown), len(live.Breakdown))
+	}
+}

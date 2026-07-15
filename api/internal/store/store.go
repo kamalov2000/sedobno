@@ -127,6 +127,46 @@ RETURNING id`
 	return id, err
 }
 
+// ScanHistoryRow — строка истории сканов пользователя. Отдаём только то, из чего
+// фронт восстанавливает карточку и экран результата: балл считается заново из
+// ingredients_matched (ничего нового не храним), фото не было и нет.
+type ScanHistoryRow struct {
+	ID                 int64
+	CreatedAt          time.Time
+	Status             string
+	Score              *int // NULL для не-ok статусов
+	IngredientsMatched []byte
+	NutritionRaw       []byte
+}
+
+// ListScans возвращает сканы пользователя от новых к старым, страницами по limit.
+// Курсор — id последнего показанного скана (beforeID); 0 = первая страница. id
+// монотонный, поэтому пагинация устойчива к одинаковым created_at (в отличие от
+// курсора по времени). Чтобы отличить «есть ещё» от «ровно последняя страница»,
+// вызывающий запрашивает limit+1 и по факту перебора решает, что показать.
+func (s *Store) ListScans(ctx context.Context, userID, beforeID int64, limit int) ([]ScanHistoryRow, error) {
+	const q = `
+SELECT id, created_at, status, score, ingredients_matched, nutrition_raw
+FROM scans
+WHERE user_id = $1 AND ($2 = 0 OR id < $2)
+ORDER BY id DESC
+LIMIT $3`
+	rows, err := s.pool.Query(ctx, q, userID, beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScanHistoryRow
+	for rows.Next() {
+		var r ScanHistoryRow
+		if err := rows.Scan(&r.ID, &r.CreatedAt, &r.Status, &r.Score, &r.IngredientsMatched, &r.NutritionRaw); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // UnmatchedIngredient — строка состава, которую словарь не опознал (§6).
 type UnmatchedIngredient struct {
 	Raw        string // текст как на этикетке

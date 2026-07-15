@@ -71,6 +71,7 @@ func (s *Server) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 			r.With(s.rateLimitScans).Post("/scan", s.handleScan)
+			r.Get("/scans/history", s.handleScansHistory)
 			r.Get("/me", s.handleMe)
 			r.Post("/pay/create", s.handlePayCreate)
 			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa
