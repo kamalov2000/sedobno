@@ -110,6 +110,75 @@ func TestWebhook_GroupStartIgnored(t *testing.T) {
 	}
 }
 
+func TestSupportCommand(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantBody string
+		wantOK   bool
+	}{
+		{"/support не открывается приложение", "не открывается приложение", true},
+		{"  /support  лишние пробелы  ", "лишние пробелы", true},
+		{"/support", "", true}, // голая команда — ок, но без текста
+		{"/support@sedobno_bot всё сломалось", "всё сломалось", true}, // с упоминанием бота
+		{"/support@sedobno_bot", "", true},                 // упоминание без текста
+		{"/support\nпервая строка", "первая строка", true}, // перенос как разделитель
+		{"/supportxyz", "", false},                         // /support — префикс другого слова
+		{"привет, у меня вопрос", "", false},               // обычный текст — не команда
+		{"", "", false},
+	}
+	for _, c := range cases {
+		body, ok := supportCommand(c.in)
+		if ok != c.wantOK || body != c.wantBody {
+			t.Errorf("supportCommand(%q) = (%q, %v), ждали (%q, %v)", c.in, body, ok, c.wantBody, c.wantOK)
+		}
+	}
+}
+
+// Обычный текст в личке БОЛЬШЕ не форвардится в поддержку (иначе шум): бот отвечает
+// подсказкой про /support и не трогает БД. store=nil, поэтому любой поход в store
+// уронил бы тест — что и подтверждает отсутствие форварда.
+func TestWebhook_PlainTextGetsHint(t *testing.T) {
+	spy := newTGSpy()
+	srv := webhookServer(t, spy)
+	upd := `{"update_id":7,"message":{"message_id":3,"chat":{"id":42,"type":"private"},` +
+		`"from":{"id":42},"text":"привет, ничего не работает"}}`
+	resp := postWebhook(t, srv, "sekret", upd)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("статус=%d, ждали 200", resp.StatusCode)
+	}
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	if spy.method != "sendMessage" {
+		t.Fatalf("метод=%q, ждали sendMessage (подсказку)", spy.method)
+	}
+	if txt, _ := spy.body["text"].(string); !strings.Contains(txt, "/support") {
+		t.Fatalf("подсказка не упоминает /support: %q", txt)
+	}
+	// Форвардили бы обращение → chat_id был бы группой поддержки, а не автором.
+	if id, _ := spy.body["chat_id"].(float64); int64(id) != 42 {
+		t.Fatalf("chat_id=%v, ждали 42 (ответ автору, а не форвард в поддержку)", spy.body["chat_id"])
+	}
+}
+
+// Голый «/support» без текста — не обращение: просим дописать сообщение, БД не трогаем.
+func TestWebhook_EmptySupportPrompts(t *testing.T) {
+	spy := newTGSpy()
+	srv := webhookServer(t, spy)
+	upd := `{"update_id":8,"message":{"message_id":4,"chat":{"id":42,"type":"private"},` +
+		`"from":{"id":42},"text":"/support"}}`
+	resp := postWebhook(t, srv, "sekret", upd)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("статус=%d, ждали 200", resp.StatusCode)
+	}
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	if spy.method != "sendMessage" {
+		t.Fatalf("метод=%q, ждали sendMessage (подсказку про пустую команду)", spy.method)
+	}
+}
+
 func TestWebhook_PreCheckoutOK(t *testing.T) {
 	spy := newTGSpy()
 	srv := webhookServer(t, spy)

@@ -79,7 +79,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	case upd.Message != nil && isPrivateChat(upd.Message) && isStartCommand(upd.Message.Text):
 		s.handleStart(w, r.Context(), upd.Message)
 	case upd.Message != nil && isPrivateChat(upd.Message) && strings.TrimSpace(upd.Message.Text) != "":
-		s.handleFeedback(w, r.Context(), upd.Message)
+		s.handleText(w, r.Context(), upd.Message)
 	default:
 		w.WriteHeader(http.StatusOK) // ничего интересного — просто подтверждаем
 	}
@@ -141,26 +141,61 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleFeedback сохраняет произвольный текст как обратную связь, форвардит владельцу
-// и благодарит пользователя (§8). Источник истины — строка в БД; форвардинг best-effort.
-func (s *Server) handleFeedback(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
+// supportHint — подсказка на произвольное сообщение в личку, не являющееся командой
+// поддержки. Раньше в feedback улетал ЛЮБОЙ текст; теперь канал явный (команда
+// /support), а обычный текст не форвардим — но и не молчим, иначе бот выглядит
+// сломанным. Учим паттерну, а не проглатываем сообщение.
+const supportHint = "Чтобы написать в поддержку, отправьте /support и текст сообщения.\n" +
+	"Например: /support приложение не открывается"
+
+// supportEmptyHint — ответ на «/support» без текста: команда есть, а обращения нет.
+const supportEmptyHint = "Напишите сообщение после команды.\n" +
+	"Например: /support приложение не открывается"
+
+// handleText разводит произвольный текст в личке: команда /support с текстом →
+// обращение в поддержку; всё остальное (в т.ч. голый /support) → подсказка, БЕЗ
+// форварда. Гейт по команде отсекает шум, который прежде весь шёл в группу поддержки.
+func (s *Server) handleText(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
+	if body, ok := supportCommand(msg.Text); ok {
+		s.handleSupport(w, ctx, msg, body)
+		return
+	}
+	if msg.Chat != nil {
+		if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportHint, nil); err != nil {
+			s.log.Warn("webhook: подсказка про /support", "err", err)
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleSupport сохраняет обращение (текст после /support), форвардит владельцу и
+// благодарит пользователя (§8). Источник истины — строка в БД; форвардинг best-effort.
+// Пустой body («/support» без текста) — не обращение: просим дописать сообщение.
+func (s *Server) handleSupport(w http.ResponseWriter, ctx context.Context, msg *tgMessage, body string) {
 	if msg.From == nil || msg.Chat == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if body == "" {
+		if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportEmptyHint, nil); err != nil {
+			s.log.Warn("webhook: подсказка про пустой /support", "err", err)
+		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	var uid *int64
 	if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, ""); err != nil {
-		s.log.Warn("webhook: upsert пользователя для фидбэка", "err", err)
+		s.log.Warn("webhook: upsert пользователя для обращения", "err", err)
 	} else {
 		uid = &u.ID
 	}
-	if err := s.store.InsertFeedback(ctx, uid, msg.Text); err != nil {
-		s.log.Error("webhook: сохранение фидбэка", "err", err)
+	if err := s.store.InsertFeedback(ctx, uid, body); err != nil {
+		s.log.Error("webhook: сохранение обращения", "err", err)
 	}
 
-	fwd := fmt.Sprintf("📝 Фидбэк от @%s (id %d):\n%s", usernameOr(msg.From, "—"), msg.From.ID, msg.Text)
+	fwd := fmt.Sprintf("📝 Обращение от @%s (id %d):\n%s", usernameOr(msg.From, "—"), msg.From.ID, body)
 	if err := s.tg.SendMessage(ctx, s.cfg.FeedbackChatID, fwd, nil); err != nil {
-		s.log.Warn("webhook: форвард фидбэка владельцу", "err", err)
+		s.log.Warn("webhook: форвард обращения владельцу", "err", err)
 	}
 	_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Спасибо, передал разработчику 🙌", nil)
 	w.WriteHeader(http.StatusOK)
@@ -173,9 +208,11 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
 		}
 	}
-	// Про обратную связь говорим прямо в приветствии: канал давно работает (сообщение
-	// боту улетает в FEEDBACK_CHAT_ID), но пользователь о нём не догадывался.
-	const feedbackNote = "\n\nЕсли что-то не так или есть идея — просто напиши мне сюда, в этот чат. Я прочитаю."
+	// Про обратную связь говорим прямо в приветствии. Канал теперь явный: обращение
+	// улетает в поддержку только по команде /support (обычный текст мы не форвардим),
+	// поэтому и приглашаем именно к ней — иначе человек напишет без команды и получит
+	// лишь подсказку.
+	const feedbackNote = "\n\nЕсли что-то не так или есть идея — напиши /support и сообщение, я прочитаю."
 	text := "Привет! Я «Съедобно» — проверяю составы продуктов по фото этикетки. Нажми кнопку ниже, чтобы открыть приложение." + feedbackNote
 	var markup any
 	if s.cfg.WebAppURL != "" {
@@ -214,6 +251,33 @@ func isPrivateChat(msg *tgMessage) bool {
 func isStartCommand(text string) bool {
 	t := strings.TrimSpace(text)
 	return t == "/start" || strings.HasPrefix(t, "/start ") || strings.HasPrefix(t, "/start@")
+}
+
+// supportCommand распознаёт обращение в поддержку и вычленяет его текст. Возвращает
+// (текст, true) для «/support …», «/support@bot …» и голого «/support» (текст ""),
+// и ("", false) для всего остального — включая «/supportxyz», где /support лишь
+// префикс другого слова. Разделение важно: только команда уходит в поддержку,
+// прочий текст ловит подсказку (handleText).
+func supportCommand(text string) (string, bool) {
+	const cmd = "/support"
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, cmd) {
+		return "", false
+	}
+	rest := t[len(cmd):]
+	switch {
+	case rest == "": // голый «/support»
+		return "", true
+	case rest[0] == '@': // «/support@botname …» — отрезаем упоминание бота
+		if i := strings.IndexAny(rest, " \t\n"); i >= 0 {
+			return strings.TrimSpace(rest[i:]), true
+		}
+		return "", true // «/support@botname» без текста
+	case rest[0] == ' ' || rest[0] == '\t' || rest[0] == '\n':
+		return strings.TrimSpace(rest), true
+	default: // «/supportxyz» — не наша команда
+		return "", false
+	}
 }
 
 func usernameOr(u *tgUser, def string) string {
