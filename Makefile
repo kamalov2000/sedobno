@@ -65,7 +65,8 @@ fmt: ## форматирование и статанализ Go
 # Запускать там, где .env с БОЕВЫМ токеном (на проде — /opt/sostav). Идемпотентно.
 bot-setup: ## настроить бота: кнопка «Открыть» + команды /start,/support (Bot API, разово)
 	@set -e; \
-	set -a; . ./$(ENV_FILE); set +a; \
+	TELEGRAM_BOT_TOKEN=$$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' $(ENV_FILE) | head -1); \
+	WEBAPP_URL=$$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1); \
 	test -n "$$TELEGRAM_BOT_TOKEN" || { echo "нет TELEGRAM_BOT_TOKEN в $(ENV_FILE)"; exit 1; }; \
 	test -n "$$WEBAPP_URL" || { echo "нет WEBAPP_URL в $(ENV_FILE) — кнопке-меню нечего открывать"; exit 1; }; \
 	API="https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN"; \
