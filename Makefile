@@ -5,7 +5,10 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt deploy
+# BOT_MENU_TEXT — надпись на кнопке слева от поля ввода бота (открывает mini-app).
+BOT_MENU_TEXT ?= Открыть
+
+.PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt deploy bot-setup
 
 help: ## список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -55,6 +58,23 @@ web-build: ## сборка фронта
 
 fmt: ## форматирование и статанализ Go
 	cd api && gofmt -w . && go vet ./...
+
+# Разовая настройка боевого бота через Bot API (живёт на стороне Telegram, деплой не
+# нужен). Кнопка слева от поля ввода = открыть mini-app в один тап (web_app); список
+# команд по «/» = start + support. Имена команд только латиницей — описания русские.
+# Запускать там, где .env с БОЕВЫМ токеном (на проде — /opt/sostav). Идемпотентно.
+bot-setup: ## настроить бота: кнопка «Открыть» + команды /start,/support (Bot API, разово)
+	@set -e; \
+	set -a; . ./$(ENV_FILE); set +a; \
+	test -n "$$TELEGRAM_BOT_TOKEN" || { echo "нет TELEGRAM_BOT_TOKEN в $(ENV_FILE)"; exit 1; }; \
+	test -n "$$WEBAPP_URL" || { echo "нет WEBAPP_URL в $(ENV_FILE) — кнопке-меню нечего открывать"; exit 1; }; \
+	API="https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN"; \
+	echo "→ setChatMenuButton (web_app → $$WEBAPP_URL)"; \
+	curl -sS "$$API/setChatMenuButton" -H 'Content-Type: application/json' \
+	  -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"$(BOT_MENU_TEXT)\",\"web_app\":{\"url\":\"$$WEBAPP_URL\"}}}"; echo; \
+	echo "→ setMyCommands (start, support)"; \
+	curl -sS "$$API/setMyCommands" -H 'Content-Type: application/json' \
+	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"}]}'; echo
 
 # ВАЖНО (миграции): api в compose зависит от migrate (service_completed_successfully),
 # поэтому обычный `up -d api` МОЛЧА накатил бы goose. Деплой кода и изменение схемы
