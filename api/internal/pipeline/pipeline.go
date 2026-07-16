@@ -439,7 +439,10 @@ func (p *Pipeline) normalize(ctx context.Context, raw []string) ([]rec, llm.Usag
 		// внутренности (мука рисовая, какао тёртое) не плодим: они нейтральны, а список
 		// раздувать незачем.
 		for _, item := range dict.NestedItems(s) {
-			for _, a := range p.matcher.MatchAll(item) {
+			// MatchAllNested (не MatchAll): у вложенного подсостава нет LLM-добора, поэтому
+			// добавку с функциональным классом впереди («фиксатор окраски — нитрит натрия»)
+			// добираем хвостовым сопоставлением — иначе E250 в мясной нарезке терялся.
+			for _, a := range p.matcher.MatchAllNested(item) {
 				if _, dup := seen[a.Code]; dup {
 					continue
 				}

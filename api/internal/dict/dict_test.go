@@ -185,6 +185,88 @@ func TestSeed_LoadsAndMatches(t *testing.T) {
 	}
 }
 
+func TestMatchAllNested_MixInBrackets(t *testing.T) {
+	items := []Additive{
+		{Code: "E250", Names: []string{"нитрит натрия"}, Category: "консервант", Risk: 2},
+		{Code: "E251", Names: []string{"нитрат натрия"}, Category: "консервант", Risk: 2},
+		{Code: "E160a", Names: []string{"бета-каротин"}, Category: "краситель", Risk: 0},
+		{Code: "salt", Names: []string{"соль"}, Category: "маркер", Risk: 0},
+	}
+	m := NewMatcher(items)
+
+	// Разворачивание «нитритно-посолочная смесь (нитрит натрия, соль)»: ОБЕ добавки
+	// внутри скобки должны сматчиться (регресс photo_6 — нитрит терялся целиком).
+	var codes []string
+	for _, item := range NestedItems("нитритно-посолочная смесь (нитрит натрия, соль)") {
+		for _, a := range m.MatchAllNested(item) {
+			codes = append(codes, a.Code)
+		}
+	}
+	if !contains(codes, "E250") || !contains(codes, "salt") {
+		t.Fatalf("разворачивание дало %v, ждали среди них E250 и salt", codes)
+	}
+
+	// Функциональный класс перед названием (в т.ч. искажённый распознаванием) снимается
+	// хвостовым сопоставлением; дефис внутри слова («бета-каротин») не ломается.
+	suffCases := []struct{ raw, wantCode string }{
+		{"фиксатор окраски- нитрит натрия", "E250"}, // реальная строка photo_6 (Sonnet-извлечение)
+		{"дикислор окраски- нитрит натрия", "E250"}, // та же строка с искажённым префиксом (Haiku)
+		{"консервант- нитрат натрия", "E251"},
+		{"красители бета-каротин", "E160a"},
+	}
+	for _, c := range suffCases {
+		got := m.MatchAllNested(c.raw)
+		if len(got) != 1 || got[0].Code != c.wantCode {
+			t.Errorf("MatchAllNested(%q) = %v, ждали [%s]", c.raw, codesOf(got), c.wantCode)
+		}
+	}
+
+	// Без ложных срабатываний: хвост, не совпадающий с синонимом, не матчится
+	// («какао» нет в словаре — «масло какао» не должно превратиться в добавку).
+	if got := m.MatchAllNested("масло какао"); got != nil {
+		t.Errorf("MatchAllNested(масло какао) = %v, ждали nil", codesOf(got))
+	}
+}
+
+// Регресс на РЕАЛЬНОМ сиде и реальной строке photo_6 (свиная шейка): нитрит E250 и
+// нитрат E251 внутри «нитритно-посолочной смеси» должны сматчиться на словарь.
+func TestSeed_NestedNitriteMix(t *testing.T) {
+	items, err := LoadSeed(seeddata.AdditivesJSON)
+	if err != nil {
+		t.Fatalf("LoadSeed: %v", err)
+	}
+	m := NewMatcher(items)
+	raw := "нитритно-посолочная смесь (соль пищевая, фиксатор окраски- нитрит натрия, консервант- нитрат натрия)"
+	got := map[string]bool{}
+	for _, item := range NestedItems(raw) {
+		for _, a := range m.MatchAllNested(item) {
+			got[a.Code] = true
+		}
+	}
+	for _, code := range []string{"E250", "E251"} {
+		if !got[code] {
+			t.Errorf("вложенный подсостав не дал %s; сматчено: %v", code, got)
+		}
+	}
+}
+
+func contains(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+func codesOf(as []*Additive) []string {
+	out := make([]string, len(as))
+	for i, a := range as {
+		out[i] = a.Code
+	}
+	return out
+}
+
 func TestNestedItems(t *testing.T) {
 	// Реальная строка с этикетки йогурта (скан id 10 на проде): вложенность 2 уровня.
 	got := NestedItems("молочный шоколад (сахар, сухое цельное молоко, масло какао, эмульгатор – лецитины (из сои), ароматизатор)")
