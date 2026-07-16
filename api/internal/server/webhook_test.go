@@ -8,15 +8,19 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sostav/api/internal/config"
 )
 
-// tgSpy — стаб Bot API, запоминающий последний вызванный метод и тело.
+// tgSpy — стаб Bot API, запоминающий последний вызванный метод/тело и список всех
+// вызванных методов по порядку (для путей с несколькими вызовами, напр. callback:
+// answerCallbackQuery + sendMessage).
 type tgSpy struct {
 	mu     sync.Mutex
 	method string
 	body   map[string]any
+	calls  []string
 	srv    *httptest.Server
 }
 
@@ -27,11 +31,19 @@ func newTGSpy() *tgSpy {
 		defer spy.mu.Unlock()
 		parts := strings.Split(r.URL.Path, "/")
 		spy.method = parts[len(parts)-1]
+		spy.calls = append(spy.calls, spy.method)
 		spy.body = map[string]any{}
 		_ = json.NewDecoder(r.Body).Decode(&spy.body)
 		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
 	}))
 	return spy
+}
+
+// calledMethods возвращает копию списка вызванных методов (под замком).
+func (spy *tgSpy) calledMethods() []string {
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	return append([]string(nil), spy.calls...)
 }
 
 // webhookServer поднимает сервер с TG-стабом и заданным секретом (store=nil: пути,
@@ -134,10 +146,31 @@ func TestSupportCommand(t *testing.T) {
 	}
 }
 
+func TestSupportState(t *testing.T) {
+	st := newSupportState()
+	if st.consume(42) {
+		t.Fatal("consume до arm должен вернуть false")
+	}
+	st.arm(42)
+	if !st.consume(42) {
+		t.Fatal("consume после arm должен вернуть true")
+	}
+	if st.consume(42) {
+		t.Fatal("consume одноразовый: второй раз false")
+	}
+	// Просроченное окно не считается активным.
+	st.mu.Lock()
+	st.pending[7] = time.Now().Add(-time.Minute)
+	st.mu.Unlock()
+	if st.consume(7) {
+		t.Fatal("просроченное окно не должно активировать поддержку")
+	}
+}
+
 // Обычный текст в личке БОЛЬШЕ не форвардится в поддержку (иначе шум): бот отвечает
-// подсказкой про /support и не трогает БД. store=nil, поэтому любой поход в store
-// уронил бы тест — что и подтверждает отсутствие форварда.
-func TestWebhook_PlainTextGetsHint(t *testing.T) {
+// подсказкой С КНОПКОЙ входа в поддержку и не трогает БД. store=nil, поэтому любой
+// поход в store уронил бы тест — что и подтверждает отсутствие форварда.
+func TestWebhook_PlainTextGetsHintButton(t *testing.T) {
 	spy := newTGSpy()
 	srv := webhookServer(t, spy)
 	upd := `{"update_id":7,"message":{"message_id":3,"chat":{"id":42,"type":"private"},` +
@@ -152,16 +185,36 @@ func TestWebhook_PlainTextGetsHint(t *testing.T) {
 	if spy.method != "sendMessage" {
 		t.Fatalf("метод=%q, ждали sendMessage (подсказку)", spy.method)
 	}
-	if txt, _ := spy.body["text"].(string); !strings.Contains(txt, "/support") {
-		t.Fatalf("подсказка не упоминает /support: %q", txt)
-	}
-	// Форвардили бы обращение → chat_id был бы группой поддержки, а не автором.
+	// Ответ автору, а не форвард в группу поддержки.
 	if id, _ := spy.body["chat_id"].(float64); int64(id) != 42 {
-		t.Fatalf("chat_id=%v, ждали 42 (ответ автору, а не форвард в поддержку)", spy.body["chat_id"])
+		t.Fatalf("chat_id=%v, ждали 42 (ответ автору, а не форвард)", spy.body["chat_id"])
+	}
+	// Под подсказкой — inline-кнопка входа в поддержку.
+	mk, ok := spy.body["reply_markup"].(map[string]any)
+	if !ok || mk["inline_keyboard"] == nil {
+		t.Fatalf("в подсказке нет inline-кнопки поддержки: reply_markup=%v", spy.body["reply_markup"])
 	}
 }
 
-// Голый «/support» без текста — не обращение: просим дописать сообщение, БД не трогаем.
+// Нажатие кнопки «Написать в поддержку» (callback_query): бот гасит «часики»
+// (answerCallbackQuery) и приглашает прислать сообщение (sendMessage). БД не трогает.
+func TestWebhook_SupportCallbackPrompts(t *testing.T) {
+	spy := newTGSpy()
+	srv := webhookServer(t, spy)
+	upd := `{"update_id":9,"callback_query":{"id":"cb1","from":{"id":42},"data":"support"}}`
+	resp := postWebhook(t, srv, "sekret", upd)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("статус=%d, ждали 200", resp.StatusCode)
+	}
+	calls := spy.calledMethods()
+	if len(calls) != 2 || calls[0] != "answerCallbackQuery" || calls[1] != "sendMessage" {
+		t.Fatalf("вызовы=%v, ждали [answerCallbackQuery sendMessage]", calls)
+	}
+}
+
+// Голый «/support» без текста — включает режим поддержки и просит прислать сообщение
+// (sendMessage), БД не трогает.
 func TestWebhook_EmptySupportPrompts(t *testing.T) {
 	spy := newTGSpy()
 	srv := webhookServer(t, spy)
@@ -175,7 +228,7 @@ func TestWebhook_EmptySupportPrompts(t *testing.T) {
 	spy.mu.Lock()
 	defer spy.mu.Unlock()
 	if spy.method != "sendMessage" {
-		t.Fatalf("метод=%q, ждали sendMessage (подсказку про пустую команду)", spy.method)
+		t.Fatalf("метод=%q, ждали sendMessage (приглашение в поддержку)", spy.method)
 	}
 }
 

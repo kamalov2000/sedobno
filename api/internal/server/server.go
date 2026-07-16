@@ -26,6 +26,7 @@ type Server struct {
 	tg          *tg.Client
 	yk          *yookassa.Client
 	scanLimiter *userLimiter
+	support     *supportState
 	log         *slog.Logger
 }
 
@@ -37,6 +38,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, pipe *pipeline.Pipeline, log *s
 		tg:          tg.New(cfg.TelegramAPIBase, cfg.TelegramBotToken),
 		yk:          yookassa.New(cfg.YooKassaAPIBase, cfg.YooKassaShopID, cfg.YooKassaSecretKey),
 		scanLimiter: newUserLimiter(scanRateLimit, time.Minute),
+		support:     newSupportState(),
 		log:         log,
 	}
 }

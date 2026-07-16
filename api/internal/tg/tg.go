@@ -127,6 +127,13 @@ func (c *Client) AnswerPreCheckoutQuery(ctx context.Context, queryID string, ok 
 	return err
 }
 
+// AnswerCallbackQuery закрывает «часики» на inline-кнопке (иначе клиент крутит
+// спиннер на кнопке до таймаута). Без текста — просто подтверждение нажатия.
+func (c *Client) AnswerCallbackQuery(ctx context.Context, queryID string) error {
+	_, err := c.call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": queryID})
+	return err
+}
+
 // WebAppButton собирает inline-клавиатуру с одной кнопкой, открывающей mini-app.
 func WebAppButton(text, url string) map[string]any {
 	return map[string]any{
@@ -134,4 +141,25 @@ func WebAppButton(text, url string) map[string]any {
 			{"text": text, "web_app": map[string]any{"url": url}},
 		}},
 	}
+}
+
+// CallbackButton — inline-клавиатура с одной callback-кнопкой (нажатие прилетает
+// вебхуку как callback_query с заданным data, сообщение при этом не отправляется).
+func CallbackButton(text, data string) map[string]any {
+	return map[string]any{
+		"inline_keyboard": [][]map[string]any{{
+			{"text": text, "callback_data": data},
+		}},
+	}
+}
+
+// StartMarkup — клавиатура приветствия: кнопка открытия mini-app (если задан URL) и
+// под ней callback-кнопка «Написать в поддержку». Без URL — только кнопка поддержки.
+func StartMarkup(webAppText, webAppURL, supportText, supportData string) map[string]any {
+	var rows [][]map[string]any
+	if webAppURL != "" {
+		rows = append(rows, []map[string]any{{"text": webAppText, "web_app": map[string]any{"url": webAppURL}}})
+	}
+	rows = append(rows, []map[string]any{{"text": supportText, "callback_data": supportData}})
+	return map[string]any{"inline_keyboard": rows}
 }

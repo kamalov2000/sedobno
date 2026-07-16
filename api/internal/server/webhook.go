@@ -18,7 +18,16 @@ import (
 
 type tgUpdate struct {
 	Message          *tgMessage          `json:"message"`
+	CallbackQuery    *tgCallbackQuery    `json:"callback_query"`
 	PreCheckoutQuery *tgPreCheckoutQuery `json:"pre_checkout_query"`
+}
+
+// tgCallbackQuery — нажатие inline-кнопки. Нам нужно: id (для answerCallbackQuery),
+// от кого (from) и data кнопки. Личный чат: chat_id == from.id.
+type tgCallbackQuery struct {
+	ID   string  `json:"id"`
+	From *tgUser `json:"from"`
+	Data string  `json:"data"`
 }
 
 type tgMessage struct {
@@ -72,6 +81,8 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case upd.CallbackQuery != nil:
+		s.handleCallback(w, r.Context(), upd.CallbackQuery)
 	case upd.PreCheckoutQuery != nil:
 		s.handlePreCheckout(w, upd.PreCheckoutQuery)
 	case upd.Message != nil && upd.Message.SuccessfulPayment != nil:
@@ -141,46 +152,77 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 	w.WriteHeader(http.StatusOK)
 }
 
-// supportHint — подсказка на произвольное сообщение в личку, не являющееся командой
-// поддержки. Раньше в feedback улетал ЛЮБОЙ текст; теперь канал явный (команда
-// /support), а обычный текст не форвардим — но и не молчим, иначе бот выглядит
-// сломанным. Учим паттерну, а не проглатываем сообщение.
-const supportHint = "Чтобы написать в поддержку, отправьте /support и текст сообщения.\n" +
-	"Например: /support приложение не открывается"
+// callbackSupport — data кнопки «Написать в поддержку». По нажатию включаем режим
+// поддержки (см. supportState) и просим прислать сообщение.
+const callbackSupport = "support"
 
-// supportEmptyHint — ответ на «/support» без текста: команда есть, а обращения нет.
-const supportEmptyHint = "Напишите сообщение после команды.\n" +
-	"Например: /support приложение не открывается"
+const supportButtonText = "✍️ Написать в поддержку"
 
-// handleText разводит произвольный текст в личке: команда /support с текстом →
-// обращение в поддержку; всё остальное (в т.ч. голый /support) → подсказка, БЕЗ
-// форварда. Гейт по команде отсекает шум, который прежде весь шёл в группу поддержки.
-func (s *Server) handleText(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
-	if body, ok := supportCommand(msg.Text); ok {
-		s.handleSupport(w, ctx, msg, body)
-		return
+// supportHint — ответ на произвольное сообщение в личку. Раньше в поддержку улетал
+// ЛЮБОЙ текст (шум); теперь — только осознанное обращение. Не молчим и не заставляем
+// вспоминать команду: под сообщением сразу кнопка входа в поддержку (§8).
+const supportHint = "Не понял сообщение. Если это вопрос или проблема — нажмите кнопку ниже, и я передам разработчику."
+
+// supportPrompt — приглашение прислать обращение после входа в режим поддержки
+// (кнопка или голый /support). Дальше сработает supportState.consume.
+const supportPrompt = "Напишите ваше сообщение — передам разработчику. Одним сообщением, команда не нужна."
+
+// handleCallback обрабатывает нажатия inline-кнопок. Сейчас единственная — «Написать
+// в поддержку»: включаем режим поддержки, следующее сообщение уйдёт как обращение.
+func (s *Server) handleCallback(w http.ResponseWriter, ctx context.Context, cq *tgCallbackQuery) {
+	// Гасим «часики» на кнопке в любом случае, иначе клиент крутит спиннер до таймаута.
+	if err := s.tg.AnswerCallbackQuery(ctx, cq.ID); err != nil {
+		s.log.Warn("webhook: answerCallbackQuery", "err", err)
 	}
-	if msg.Chat != nil {
-		if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportHint, nil); err != nil {
-			s.log.Warn("webhook: подсказка про /support", "err", err)
-		}
+	if cq.Data == callbackSupport && cq.From != nil {
+		s.promptSupport(ctx, cq.From.ID)
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleSupport сохраняет обращение (текст после /support), форвардит владельцу и
-// благодарит пользователя (§8). Источник истины — строка в БД; форвардинг best-effort.
-// Пустой body («/support» без текста) — не обращение: просим дописать сообщение.
-func (s *Server) handleSupport(w http.ResponseWriter, ctx context.Context, msg *tgMessage, body string) {
+// handleText разводит произвольный текст в личке. Порядок:
+//  1. пользователь в режиме поддержки (нажал кнопку / голый /support) → это обращение;
+//  2. явная команда «/support <текст>» → обращение сразу;
+//  3. голый «/support» → включаем режим поддержки и просим прислать сообщение;
+//  4. прочий текст → подсказка с кнопкой входа в поддержку (без форварда — фильтр шума).
+func (s *Server) handleText(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
 	if msg.From == nil || msg.Chat == nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if body == "" {
-		if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportEmptyHint, nil); err != nil {
-			s.log.Warn("webhook: подсказка про пустой /support", "err", err)
+	if s.support.consume(msg.From.ID) {
+		s.forwardSupport(ctx, msg, strings.TrimSpace(msg.Text))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if body, ok := supportCommand(msg.Text); ok {
+		if body == "" {
+			s.promptSupport(ctx, msg.From.ID)
+		} else {
+			s.forwardSupport(ctx, msg, body)
 		}
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportHint, tg.CallbackButton(supportButtonText, callbackSupport)); err != nil {
+		s.log.Warn("webhook: подсказка про поддержку", "err", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// promptSupport включает режим поддержки для пользователя и просит прислать сообщение.
+// Личный чат: chat_id == user_id.
+func (s *Server) promptSupport(ctx context.Context, userID int64) {
+	s.support.arm(userID)
+	if err := s.tg.SendMessage(ctx, userID, supportPrompt, nil); err != nil {
+		s.log.Warn("webhook: приглашение в поддержку", "err", err)
+	}
+}
+
+// forwardSupport сохраняет обращение, форвардит владельцу и благодарит пользователя
+// (§8). Источник истины — строка в БД; форвардинг best-effort. Пустой body не шлём.
+func (s *Server) forwardSupport(ctx context.Context, msg *tgMessage, body string) {
+	if body == "" || msg.From == nil || msg.Chat == nil {
 		return
 	}
 	var uid *int64
@@ -198,7 +240,6 @@ func (s *Server) handleSupport(w http.ResponseWriter, ctx context.Context, msg *
 		s.log.Warn("webhook: форвард обращения владельцу", "err", err)
 	}
 	_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Спасибо, передал разработчику 🙌", nil)
-	w.WriteHeader(http.StatusOK)
 }
 
 // handleStart — приветствие + кнопка открытия mini-app (если задан WEBAPP_URL).
@@ -208,18 +249,15 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
 		}
 	}
-	// Про обратную связь говорим прямо в приветствии. Канал теперь явный: обращение
-	// улетает в поддержку только по команде /support (обычный текст мы не форвардим),
-	// поэтому и приглашаем именно к ней — иначе человек напишет без команды и получит
-	// лишь подсказку.
-	const feedbackNote = "\n\nЕсли что-то не так или есть идея — напиши /support и сообщение, я прочитаю."
+	// Про обратную связь говорим прямо в приветствии и даём кнопку — не команду:
+	// печатать /support неочевидно, поэтому вход в поддержку висит кнопкой под
+	// приветствием (и под любой подсказкой, см. supportHint).
+	const feedbackNote = "\n\nЧто-то не так или есть идея — нажми «" + supportButtonText + "» ниже, я прочитаю."
 	text := "Привет! Я «Съедобно» — проверяю составы продуктов по фото этикетки. Нажми кнопку ниже, чтобы открыть приложение." + feedbackNote
-	var markup any
-	if s.cfg.WebAppURL != "" {
-		markup = tg.WebAppButton("Проверить продукт", s.cfg.WebAppURL)
-	} else {
+	if s.cfg.WebAppURL == "" {
 		text = "Привет! Я «Съедобно» — проверяю составы продуктов по фото этикетки. Приложение скоро будет доступно здесь." + feedbackNote
 	}
+	markup := tg.StartMarkup("Проверить продукт", s.cfg.WebAppURL, supportButtonText, callbackSupport)
 	if msg.Chat != nil {
 		if err := s.tg.SendMessage(ctx, msg.Chat.ID, text, markup); err != nil {
 			s.log.Warn("webhook: приветствие /start", "err", err)
