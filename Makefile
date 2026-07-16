@@ -5,9 +5,6 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-# BOT_MENU_TEXT — надпись на кнопке слева от поля ввода бота (открывает mini-app).
-BOT_MENU_TEXT ?= Открыть
-
 .PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt deploy bot-setup
 
 help: ## список целей
@@ -59,23 +56,25 @@ web-build: ## сборка фронта
 fmt: ## форматирование и статанализ Go
 	cd api && gofmt -w . && go vet ./...
 
-# Разовая настройка боевого бота через Bot API (живёт на стороне Telegram, деплой не
-# нужен). Кнопка слева от поля ввода = открыть mini-app в один тап (web_app); список
-# команд по «/» = start + support. Имена команд только латиницей — описания русские.
-# Запускать там, где .env с БОЕВЫМ токеном (на проде — /opt/sostav). Идемпотентно.
-bot-setup: ## настроить бота: кнопка «Открыть» + команды /start,/support (Bot API, разово)
+# Разовая настройка команд боевого бота через Bot API (живёт на стороне Telegram,
+# деплой не нужен). Список по «/» = start + support. Имена команд только латиницей —
+# описания русские. Запускать там, где .env с БОЕВЫМ токеном (на проде — /opt/sostav).
+# Идемпотентно.
+#
+# Кнопка «Открыть» слева от поля ввода (web_app-меню для ВСЕХ) сюда НЕ входит: дефолтный
+# setChatMenuButton без chat_id Telegram принимает (ok:true), но молча не сохраняет —
+# web_app-кнопку «для всех» ставит только BotFather (Bot Settings → Menu Button → URL
+# мини-аппа), где регистрируется домен. Per-chat через API работает, но всех юзеров так
+# не покрыть. Поэтому кнопка — ручной шаг в BotFather, команды — здесь.
+bot-setup: ## настроить команды бота /start,/support (Bot API, разово; кнопку «Открыть» — в BotFather)
 	@set -e; \
 	TELEGRAM_BOT_TOKEN=$$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' $(ENV_FILE) | head -1); \
-	WEBAPP_URL=$$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1); \
 	test -n "$$TELEGRAM_BOT_TOKEN" || { echo "нет TELEGRAM_BOT_TOKEN в $(ENV_FILE)"; exit 1; }; \
-	test -n "$$WEBAPP_URL" || { echo "нет WEBAPP_URL в $(ENV_FILE) — кнопке-меню нечего открывать"; exit 1; }; \
 	API="https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN"; \
-	echo "→ setChatMenuButton (web_app → $$WEBAPP_URL)"; \
-	curl -sS "$$API/setChatMenuButton" -H 'Content-Type: application/json' \
-	  -d "{\"menu_button\":{\"type\":\"web_app\",\"text\":\"$(BOT_MENU_TEXT)\",\"web_app\":{\"url\":\"$$WEBAPP_URL\"}}}"; echo; \
 	echo "→ setMyCommands (start, support)"; \
 	curl -sS "$$API/setMyCommands" -H 'Content-Type: application/json' \
-	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"}]}'; echo
+	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"}]}'; echo; \
+	echo "Кнопку «Открыть» для всех — в BotFather: /mybots → Bot Settings → Menu Button → $$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1)"
 
 # ВАЖНО (миграции): api в compose зависит от migrate (service_completed_successfully),
 # поэтому обычный `up -d api` МОЛЧА накатил бы goose. Деплой кода и изменение схемы
