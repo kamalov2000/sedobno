@@ -70,11 +70,12 @@ BOT=<TELEGRAM_BOT_TOKEN>; SEC=<TELEGRAM_WEBHOOK_SECRET>; URL=https://<домен
 curl -s "https://api.telegram.org/bot$BOT/setWebhook" \
   --data-urlencode "url=$URL/api/tg/webhook" \
   --data-urlencode "secret_token=$SEC" \
-  --data-urlencode 'allowed_updates=["message","pre_checkout_query"]'
+  --data-urlencode 'allowed_updates=["message","callback_query","pre_checkout_query"]'
 curl -s "https://api.telegram.org/bot$BOT/getWebhookInfo"   # url выставлен, last_error пусто
 ```
 
 - [ ] `getWebhookInfo` показывает нужный url, `pending_update_count` не растёт, `last_error_message` отсутствует.
+- `allowed_updates` обязан включать `callback_query` — иначе нажатия inline-кнопок (в т.ч. «Написать в поддержку») Telegram не доставляет вебхуку, и кнопки «молчат». `message` покрывает и `successful_payment` (он приходит внутри message).
 
 ## 6. Приёмка end-to-end
 
