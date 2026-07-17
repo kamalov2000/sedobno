@@ -124,13 +124,15 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == meal.StatusLabelDetected:
 		// Упаковка с этикеткой — не еда для калорий; подсказываем сканер составов. Не списываем.
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", nil)
+		// В событие кладём confidence/note модели — по ним оцениваем точность промпта на
+		// не-ok исходах (приём в meals не пишем — дневник только про еду).
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", mealDiagProps(res))
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealLabelMessage, MealsLeft: remainingMeals(u),
 		})
 
 	case res.Status == meal.StatusNotFood:
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", mealDiagProps(res))
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: remainingMeals(u),
 		})
@@ -409,6 +411,17 @@ func deref(p *float64) float64 {
 		return 0
 	}
 	return *p
+}
+
+// mealDiagProps — свойства события для НЕ-ok исходов разбора (not_food/label_detected):
+// confidence и note модели. Не-ok приёмы в meals не сохраняются (дневник только про еду),
+// поэтому диагностику точности промпта копим здесь — по ней потом видно, где модель мажет.
+func mealDiagProps(res *meal.Result) map[string]any {
+	props := map[string]any{"confidence": res.Confidence}
+	if res.Note != "" {
+		props["note"] = res.Note
+	}
+	return props
 }
 
 // remainingMeals — остаток бесплатных разборов без списания (подписчик → -1).
