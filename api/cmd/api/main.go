@@ -99,6 +99,7 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	}
 	pipe := pipeline.New(provider, items, scorer, cfg.LLMMaxConcurrent, log)
 	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
+	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
 	return pipe, nil
 }
 

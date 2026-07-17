@@ -55,6 +55,11 @@ type Config struct {
 	ExtractFallbackModel string  // "" — fallback выключен
 	ExtractConfidenceMin float64 // порог confidence основной модели (0<x≤1)
 
+	// ExplainEnabled — включает фазу 4 (LLM-объяснение, §4). По умолчанию ВЫКЛ: фронт
+	// его не показывает, а каждый ok-скан из-за него делал лишний text-LLM-вызов. При
+	// false пайплайн пропускает фазу целиком, result.explanation пустой (контракт цел).
+	ExplainEnabled bool
+
 	SubscriptionStarsPrice int // цена подписки в Telegram Stars (§9)
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
@@ -160,6 +165,9 @@ func MustLoad() *Config {
 			cfg.SubscriptionStarsPrice = p
 		}
 	}
+
+	// Фаза 4 (объяснение) по умолчанию выключена — экономия text-LLM-вызова на скан.
+	cfg.ExplainEnabled = optBool(opt("EXPLAIN_ENABLED", "false"))
 
 	// --- СБП/ЮKassa (§14.1). Канал опционален: при SBP_ENABLED=false ключи не требуются. ---
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))

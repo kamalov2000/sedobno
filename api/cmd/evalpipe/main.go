@@ -54,6 +54,7 @@ func main() {
 
 	pipe := pipeline.New(provider, items, scorer, cfg.LLMMaxConcurrent, log)
 	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
+	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 управляется EXPLAIN_ENABLED (до/после)
 
 	// Кейсы: позиционные аргументы — мультифото-кейсы (файлы через запятую = один скан);
 	// без аргументов — каждый файл из -dir как одиночный кейс (обратная совместимость).

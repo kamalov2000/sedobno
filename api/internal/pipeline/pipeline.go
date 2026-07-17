@@ -121,6 +121,10 @@ type Pipeline struct {
 	candidates []llm.Candidate
 	log        *slog.Logger
 	sem        chan struct{}
+	// explainEnabled — выполнять ли фазу 4 (LLM-объяснение). По умолчанию true (обратная
+	// совместимость: кто не звал SetExplainEnabled, ведёт себя как раньше); прод выключает
+	// через EXPLAIN_ENABLED. При false фаза пропускается, res.Explanation остаётся пустым.
+	explainEnabled bool
 }
 
 // Rescore пересчитывает балл, флаги и разбивку вычетов из уже сохранённых строк
@@ -165,8 +169,14 @@ func New(provider llm.LLMProvider, items []dict.Additive, scorer *scoring.Config
 	return &Pipeline{
 		llm: provider, matcher: dict.NewMatcher(items), scorer: scorer,
 		byCode: byCode, candidates: candidates, log: log, sem: make(chan struct{}, maxConcurrent),
+		explainEnabled: true,
 	}
 }
+
+// SetExplainEnabled включает/выключает фазу 4 (§4). false — пайплайн не зовёт LLM для
+// объяснения и оставляет Result.Explanation пустым (экономия вызова, фронт его не
+// показывает). По умолчанию фаза включена.
+func (p *Pipeline) SetExplainEnabled(v bool) { p.explainEnabled = v }
 
 // Run прогоняет 1–3 фото одной этикетки через весь пайплайн. Несколько фото уходят
 // одним vision-вызовом (фаза 1); фазы 2–4 работают с единым списком ингредиентов.
@@ -326,10 +336,15 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	res.Flags = sc.Flags
 	res.Breakdown = sc.Breakdown
 
-	// Фаза 4 — объяснение (строго из вердиктов).
-	explanation, u4 := p.explain(ctx, sc)
-	tUsage = tUsage.Add(u4)
-	res.Explanation = explanation
+	// Фаза 4 — объяснение (строго из вердиктов). Отключается флагом (EXPLAIN_ENABLED,
+	// по умолчанию выкл в проде): фронт объяснение не показывает, а вызов стоит денег на
+	// каждом ok-скане. При выключенной фазе LLM не зовём, res.Explanation остаётся пустым
+	// — контракт ответа не меняется (поле omitempty).
+	if p.explainEnabled {
+		explanation, u4 := p.explain(ctx, sc)
+		tUsage = tUsage.Add(u4)
+		res.Explanation = explanation
+	}
 
 	res.Status = StatusOK
 	p.finalize(res, vUsage, tUsage, fbUsage, start)

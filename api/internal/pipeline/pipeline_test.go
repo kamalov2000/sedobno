@@ -229,10 +229,11 @@ func TestPipeline_LabelNotFoundReason(t *testing.T) {
 // fakeProvider — управляемый провайдер для проверки fallback фазы 1. Считает вызовы
 // извлечения и возвращает заранее заданный результат.
 type fakeProvider struct {
-	name    string
-	ext     *llm.Extraction
-	calls   *int
-	matches map[string]string // ответ фазы 2 (LLM-добор по несматченным строкам)
+	name         string
+	ext          *llm.Extraction
+	calls        *int
+	explainCalls *int              // число вызовов фазы 4 (для проверки её отключения)
+	matches      map[string]string // ответ фазы 2 (LLM-добор по несматченным строкам)
 }
 
 func (f fakeProvider) Name() string                   { return f.name }
@@ -250,7 +251,53 @@ func (f fakeProvider) MatchIngredients(_ context.Context, _ []string, _ []llm.Ca
 	return map[string]string{}, llm.Usage{}, nil
 }
 func (f fakeProvider) Explain(_ context.Context, _ llm.ExplainInput) (string, llm.Usage, error) {
-	return "ok", llm.Usage{}, nil
+	if f.explainCalls != nil {
+		*f.explainCalls++
+	}
+	return "объяснение из фазы 4", llm.Usage{}, nil
+}
+
+// SetExplainEnabled(false) полностью пропускает фазу 4: LLM.Explain не вызывается,
+// Result.Explanation остаётся пустым. При включённой фазе (дефолт) — наоборот.
+func TestPipeline_ExplainDisabledSkipsPhase4(t *testing.T) {
+	var explainCalls int
+	prov := fakeProvider{name: "primary", explainCalls: &explainCalls, ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9, Ingredients: []string{"сахар", "глутамат натрия"},
+	}}
+	p := newPipeWith(t, prov)
+
+	// Дефолт: фаза 4 включена — объяснение есть, вызов был.
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run (enabled): %v", err)
+	}
+	if res.Status != StatusOK {
+		t.Fatalf("статус=%s, ждали ok", res.Status)
+	}
+	if res.Explanation == "" || explainCalls != 1 {
+		t.Fatalf("при включённой фазе: explanation=%q, вызовов=%d — ждали непустое и 1", res.Explanation, explainCalls)
+	}
+
+	// Выключаем фазу 4: ни вызова, ни объяснения; остальной результат цел.
+	explainCalls = 0
+	p.SetExplainEnabled(false)
+	res, err = p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run (disabled): %v", err)
+	}
+	if res.Status != StatusOK {
+		t.Fatalf("статус=%s, ждали ok даже без фазы 4", res.Status)
+	}
+	if explainCalls != 0 {
+		t.Fatalf("LLM.Explain вызван %d раз при выключенной фазе 4 — вызов не сэкономлен", explainCalls)
+	}
+	if res.Explanation != "" {
+		t.Fatalf("Explanation=%q при выключенной фазе 4, ждали пусто", res.Explanation)
+	}
+	// Контракт цел: балл и состав по-прежнему считаются.
+	if res.Score == 0 || len(res.Matched) == 0 {
+		t.Fatalf("без фазы 4 сломался скоринг/состав: score=%d matched=%d", res.Score, len(res.Matched))
+	}
 }
 
 func newPipeWith(t *testing.T, primary llm.LLMProvider) *Pipeline {
