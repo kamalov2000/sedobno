@@ -293,19 +293,39 @@ func (s *Store) InsertFeedback(ctx context.Context, userID *int64, text string) 
 	return err
 }
 
-// SubscriptionInput — данные успешного платежа для активации подписки (§9).
+// SubscriptionInput — данные успешного Stars-платежа для активации доступа (§9).
 type SubscriptionInput struct {
-	UserID     int64
-	Stars      int
-	ExpiresAt  time.Time
+	UserID int64
+	Stars  int
+	// PeriodSec — оплаченный период в секундах (30 дней). Разовый платёж, не рекуррентная
+	// подписка Telegram: срок окончания считаем сами, «остаток + период», как в СБП-канале
+	// (не абсолютная дата от Telegram).
+	PeriodSec  int
 	ChargeID   string // telegram_payment_charge_id — ключ идемпотентности
 	RawPayload []byte // сырой successful_payment (jsonb) для аудита
 }
 
-// ActivateSubscription идемпотентно применяет успешный платёж: в одной транзакции
+// periodExpiry считает дату окончания доступа при (пере)активации: оплаченный период
+// прибавляется к неистёкшему остатку, при первой оплате/после истечения база = now()
+// (GREATEST). Единая механика Stars и СБП (§9, §14.1) — разовый платёж на период с
+// сохранением остатка. Вызывать В ТРАНЗАКЦИИ и ПОСЛЕ блокировки строки пользователя
+// FOR UPDATE: между чтением остатка и вставкой не должно быть окна, в которое
+// параллельная активация того же пользователя посчитает базу от того же остатка.
+func periodExpiry(ctx context.Context, tx pgx.Tx, userID int64, periodSec int) (time.Time, error) {
+	var exp time.Time
+	err := tx.QueryRow(ctx, `
+SELECT GREATEST(now(), COALESCE(
+  (SELECT max(expires_at) FROM subscriptions WHERE user_id = $1 AND status = 'active'), now()
+)) + make_interval(secs => $2)`, userID, periodSec).Scan(&exp)
+	return exp, err
+}
+
+// ActivateSubscription идемпотентно применяет успешный Stars-платёж: в одной транзакции
 // вставляет строку подписки (уникальность по telegram_charge_id) и, если это первая
-// обработка данного charge_id, помечает пользователя подписчиком. processed=false —
-// платёж уже был обработан (дубликат/ретрай вебхука), вызывающий ничего не делает.
+// обработка данного charge_id, помечает пользователя подписчиком. Срок доступа считается
+// как «остаток + период» (periodExpiry) под FOR UPDATE — та же механика разового платежа
+// на период, что и в СБП-канале (RecordSBPPaymentAndActivate). processed=false — платёж
+// уже был обработан (дубликат/ретрай вебхука), вызывающий ничего не делает.
 func (s *Store) ActivateSubscription(ctx context.Context, sub SubscriptionInput) (processed bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -313,13 +333,22 @@ func (s *Store) ActivateSubscription(ctx context.Context, sub SubscriptionInput)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
 
+	// Сериализуем активации одного пользователя: продление не должно терять остаток.
+	if _, err = tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, sub.UserID); err != nil {
+		return false, err
+	}
+	exp, err := periodExpiry(ctx, tx, sub.UserID, sub.PeriodSec)
+	if err != nil {
+		return false, err
+	}
+
 	var id int64
 	err = tx.QueryRow(ctx, `
 INSERT INTO subscriptions
   (user_id, provider, status, stars_amount, started_at, expires_at, telegram_charge_id, raw_payload)
 VALUES ($1, 'stars', 'active', $2, now(), $3, $4, $5)
 ON CONFLICT (telegram_charge_id) DO NOTHING
-RETURNING id`, sub.UserID, sub.Stars, sub.ExpiresAt, sub.ChargeID, sub.RawPayload).Scan(&id)
+RETURNING id`, sub.UserID, sub.Stars, exp, sub.ChargeID, sub.RawPayload).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return false, nil // charge_id уже вставлен ранее — дубликат, откатываемся
 	}
@@ -341,8 +370,8 @@ type SBPPaymentInput struct {
 	ProviderPaymentID string // id платежа ЮKassa — ключ идемпотентности вебхука
 	AmountRub         int
 	// PeriodSec — оплаченный период в секундах (30 дней). Не абсолютная дата: срок
-	// окончания считается тут же, в транзакции, как «остаток + период» (см. ниже).
-	// В Stars-канале наоборот приходит готовая дата — её присылает Telegram.
+	// окончания считается тут же, в транзакции, как «остаток + период» (periodExpiry).
+	// Stars-канал теперь считает так же (разовый платёж, не рекуррентная подписка).
 	PeriodSec  int
 	RawPayload []byte // объект платежа из API ЮKassa (jsonb) для аудита
 }
@@ -351,16 +380,8 @@ type SBPPaymentInput struct {
 // транзакции вставляет строку sbp_payments (уникальность по provider_payment_id) и, если
 // это первая обработка данного платежа, добавляет подписку (provider='sbp', +период) и
 // помечает пользователя подписчиком. processed=false — платёж уже обработан (дубликат/
-// ретрай вебхука), вызывающий ничего не делает. Зеркалит ActivateSubscription (Stars).
-//
-// Продление: оплаченный период ПРИБАВЛЯЕТСЯ к неистёкшему остатку, а не заменяет его —
-// иначе продлившийся заранее платит деньги и теряет остаток (действующий срок берётся
-// как max(expires_at) по активным, и новая строка на now()+период просто перекрывала бы
-// его). База = GREATEST(now(), остаток): у первой оплаты и после истечения остатка нет,
-// база = now() — то же поведение, что и раньше. Расчёт живёт в SQL внутри транзакции,
-// а строка users берётся FOR UPDATE — иначе между чтением остатка и вставкой есть окно,
-// в которое параллельная активация того же пользователя посчитает базу от того же
-// остатка, и один из оплаченных периодов пропадёт.
+// ретрай вебхука), вызывающий ничего не делает. Зеркалит ActivateSubscription (Stars):
+// срок доступа = «остаток + период» через общий periodExpiry под FOR UPDATE строки users.
 func (s *Store) RecordSBPPaymentAndActivate(ctx context.Context, in SBPPaymentInput) (processed bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -380,22 +401,20 @@ RETURNING id`, in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Sca
 	if err != nil {
 		return false, err
 	}
-	// Сериализуем активации одного пользователя (см. коммент выше): дубликаты гасит
+	// Сериализуем активации одного пользователя (см. periodExpiry): дубликаты гасит
 	// UNIQUE выше, а вот два РАЗНЫХ платежа подряд могут прийти параллельно.
 	if _, err = tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, in.UserID); err != nil {
+		return false, err
+	}
+	exp, err := periodExpiry(ctx, tx, in.UserID, in.PeriodSec)
+	if err != nil {
 		return false, err
 	}
 	// Подписка канала СБП: stars_amount/telegram_charge_id остаются NULL (не Stars),
 	// потому revenue_stars их не суммирует, а UNIQUE(telegram_charge_id) допускает NULL.
 	if _, err = tx.Exec(ctx, `
 INSERT INTO subscriptions (user_id, provider, status, started_at, expires_at, raw_payload)
-VALUES ($1, 'sbp', 'active', now(),
-        GREATEST(
-          now(),
-          COALESCE((SELECT max(s.expires_at) FROM subscriptions s
-                    WHERE s.user_id = $1 AND s.status = 'active'), now())
-        ) + make_interval(secs => $2),
-        $3)`, in.UserID, in.PeriodSec, in.RawPayload); err != nil {
+VALUES ($1, 'sbp', 'active', now(), $2, $3)`, in.UserID, exp, in.RawPayload); err != nil {
 		return false, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE users SET is_subscribed = true WHERE id = $1`, in.UserID); err != nil {

@@ -141,20 +141,25 @@ func TestChargeFreeScan_ГонкаНеПробиваетЛимит(t *testing.T)
 
 // --- ActivateSubscription: Stars (§9) ---
 
-func starsInput(userID int64, chargeID string, expires time.Time, stars int) SubscriptionInput {
+// starsPeriod — оплачиваемый период Stars (30 дней, как accessPeriodSec в проде).
+// Разовый платёж: срок доступа считает store сам («остаток + период»), не Telegram.
+const starsPeriod = 30 * 24 * time.Hour
+
+func starsInput(userID int64, chargeID string, period time.Duration, stars int) SubscriptionInput {
 	raw, _ := json.Marshal(map[string]any{"telegram_payment_charge_id": chargeID, "total_amount": stars})
 	return SubscriptionInput{
-		UserID: userID, Stars: stars, ExpiresAt: expires, ChargeID: chargeID, RawPayload: raw,
+		UserID: userID, Stars: stars, PeriodSec: int(period / time.Second), ChargeID: chargeID, RawPayload: raw,
 	}
 }
 
-// Первая оплата Stars: подписка создана, безлимит включён, срок виден в ActiveSubExpiry.
+// Первая оплата Stars: подписка создана, безлимит включён; без предыдущего остатка
+// срок = now() + период (GREATEST(now(), now())).
 func TestActivateSubscription_ПерваяОплатаStars(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 2001)
-	expires := time.Now().Add(30 * 24 * time.Hour)
+	before := time.Now()
 
-	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-1", expires, 150))
+	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-1", starsPeriod, 150))
 	if err != nil {
 		t.Fatalf("ActivateSubscription: %v", err)
 	}
@@ -171,8 +176,9 @@ func TestActivateSubscription_ПерваяОплатаStars(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("ActiveSubExpiry: %v (got=%v)", err, got)
 	}
-	if d := got.Sub(expires); d > time.Second || d < -time.Second {
-		t.Fatalf("expires_at=%v, ожидалось ~%v", got, expires)
+	want := before.Add(starsPeriod)
+	if d := got.Sub(want); d > clockSkew || d < -clockSkew {
+		t.Fatalf("срок первой оплаты %v, ожидался ~%v (now + период)", got, want)
 	}
 }
 
@@ -182,9 +188,8 @@ func TestActivateSubscription_ПерваяОплатаStars(t *testing.T) {
 func TestActivateSubscription_ДубликатChargeIDНеСоздаётВторуюПодписку(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 2002)
-	expires := time.Now().Add(30 * 24 * time.Hour)
 
-	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-dup", expires, 150)); err != nil || !processed {
+	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-dup", starsPeriod, 150)); err != nil || !processed {
 		t.Fatalf("первая доставка: processed=%v err=%v", processed, err)
 	}
 	first, err := s.ActiveSubExpiry(ctx, uid)
@@ -192,9 +197,9 @@ func TestActivateSubscription_ДубликатChargeIDНеСоздаётВтор
 		t.Fatalf("ActiveSubExpiry: %v", err)
 	}
 
-	// Ретрай того же платежа — с другим (более поздним) сроком в payload: даже так
-	// он не должен применяться, ключ идемпотентности — charge_id, а не срок.
-	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-dup", expires.Add(30*24*time.Hour), 150))
+	// Ретрай того же платежа — с бо́льшим периодом: даже так не должен применяться,
+	// ключ идемпотентности — charge_id, а не период.
+	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-dup", 60*24*time.Hour, 150))
 	if err != nil {
 		t.Fatalf("повторная доставка: %v", err)
 	}
@@ -219,7 +224,6 @@ func TestActivateSubscription_ДубликатChargeIDНеСоздаётВтор
 func TestActivateSubscription_ОдновременныеДубликатыПрименяютсяОдинРаз(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 2003)
-	expires := time.Now().Add(30 * 24 * time.Hour)
 
 	const deliveries = 8
 	var wg sync.WaitGroup
@@ -228,7 +232,7 @@ func TestActivateSubscription_ОдновременныеДубликатыПри
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-race", expires, 150))
+			processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-race", starsPeriod, 150))
 			if err != nil {
 				t.Errorf("параллельная доставка: %v", err)
 				return
@@ -253,20 +257,20 @@ func TestActivateSubscription_ОдновременныеДубликатыПри
 	}
 }
 
-// Продление Stars новым платежом: Telegram присылает авторитетный срок окончания
-// (subscription_expiration_date, уже с учётом остатка), поэтому store обязан лишь
-// не «откатить» подписку назад — действующий срок берётся как максимум по активным.
+// Продление Stars новым платежом ДО истечения: оплаченный период ДОБАВЛЯЕТСЯ к остатку,
+// а не заменяет его. Разовый платёж — срок считает store сам (periodExpiry), поэтому это
+// его ответственность, а не Telegram. Пользователь с 20 днями в запасе, оплативший ещё
+// 30, обязан получить ~50 дней; иначе он платит деньги и теряет остаток.
 func TestActivateSubscription_ПродлениеStarsНеТеряетОстаток(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 2004)
 
-	first := time.Now().Add(30 * 24 * time.Hour)
-	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-a", first, 150)); err != nil || !processed {
-		t.Fatalf("первая оплата: processed=%v err=%v", processed, err)
-	}
-	// Продление приходит до истечения: Telegram отдаёт срок «старый + 30 дней».
-	renewed := first.Add(30 * 24 * time.Hour)
-	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-b", renewed, 150)); err != nil || !processed {
+	// Действующая подписка: остаток 20 дней (вставлена напрямую, без charge_id).
+	remaining := time.Now().Add(20 * 24 * time.Hour)
+	mkSub(t, ctx, uid, "stars", "active", remaining)
+
+	// Пользователь платит ещё за 30 дней (новый charge_id — не дубликат).
+	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-renew", starsPeriod, 150)); err != nil || !processed {
 		t.Fatalf("продление: processed=%v err=%v", processed, err)
 	}
 
@@ -274,11 +278,48 @@ func TestActivateSubscription_ПродлениеStarsНеТеряетОстат�
 	if err != nil || got == nil {
 		t.Fatalf("ActiveSubExpiry: %v (got=%v)", err, got)
 	}
-	if d := got.Sub(renewed); d > time.Second || d < -time.Second {
-		t.Fatalf("действующий срок %v, ожидался %v — продление потеряло оплаченный период", got, renewed)
+	want := remaining.Add(starsPeriod) // остаток + оплаченный период ≈ 50 дней
+	if got.Before(want.Add(-time.Minute)) {
+		t.Fatalf("действующий срок %v, ожидался ~%v: продление потеряло оплаченный остаток",
+			got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+	// И не больше: период прибавляется однократно (не задваивается).
+	if got.After(want.Add(time.Minute)) {
+		t.Fatalf("действующий срок %v, ожидался ~%v — период начислен больше одного раза",
+			got.Format(time.RFC3339), want.Format(time.RFC3339))
 	}
 	if !isSubscribed(t, ctx, uid) {
 		t.Fatal("is_subscribed=false после продления")
+	}
+}
+
+// Продление Stars ПОСЛЕ истечения (остаток отрицательный): база = now(), а не прошедшая
+// дата — иначе оплаченный период частично «сгорал» бы в прошлом. GREATEST(now(), …).
+func TestActivateSubscription_ПродлениеПослеИстеченияСчитаетОтСейчас(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2006)
+
+	// Подписка истекла 10 дней назад и уже снята свипом.
+	mkSub(t, ctx, uid, "stars", "active", time.Now().Add(-10*24*time.Hour))
+	if _, err := s.LapseExpiredSubscriptions(ctx); err != nil {
+		t.Fatalf("LapseExpiredSubscriptions: %v", err)
+	}
+
+	before := time.Now()
+	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-after-lapse", starsPeriod, 150)); err != nil || !processed {
+		t.Fatalf("оплата после истечения: processed=%v err=%v", processed, err)
+	}
+	got, err := s.ActiveSubExpiry(ctx, uid)
+	if err != nil || got == nil {
+		t.Fatalf("ActiveSubExpiry: %v (got=%v)", err, got)
+	}
+	want := before.Add(starsPeriod)
+	if d := got.Sub(want); d > clockSkew || d < -clockSkew {
+		t.Fatalf("срок %v, ожидался ~%v (now + период): просроченный остаток не должен "+
+			"съедать оплаченный период", got.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+	if !isSubscribed(t, ctx, uid) {
+		t.Fatal("is_subscribed=false после повторной оплаты")
 	}
 }
 
@@ -287,9 +328,8 @@ func TestActivateSubscription_ПродлениеStarsНеТеряетОстат�
 func TestActivateSubscription_ДубликатПослеИстеченияНеВоскрешаетБезлимит(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 2005)
-	expires := time.Now().Add(24 * time.Hour)
 
-	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-old", expires, 150)); err != nil || !processed {
+	if processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-old", starsPeriod, 150)); err != nil || !processed {
 		t.Fatalf("оплата: processed=%v err=%v", processed, err)
 	}
 	// Подписка истекла и была снята свипом.
@@ -303,7 +343,7 @@ func TestActivateSubscription_ДубликатПослеИстеченияНеВ
 		t.Fatal("подготовка: подписка должна была истечь")
 	}
 
-	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-old", time.Now().Add(30*24*time.Hour), 150))
+	processed, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-old", starsPeriod, 150))
 	if err != nil {
 		t.Fatalf("запоздавший дубликат: %v", err)
 	}
@@ -317,7 +357,7 @@ func TestActivateSubscription_ДубликатПослеИстеченияНеВ
 
 // --- RecordSBPPaymentAndActivate: ЮKassa/СБП (§14.1) ---
 
-// sbpPeriod — оплачиваемый период канала СБП (30 дней, как subscriptionPeriodSec в проде).
+// sbpPeriod — оплачиваемый период канала СБП (30 дней, как accessPeriodSec в проде).
 const sbpPeriod = 30 * 24 * time.Hour
 
 func sbpInput(userID int64, paymentID string, period time.Duration, rub int) SBPPaymentInput {

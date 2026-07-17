@@ -71,27 +71,31 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 	return ar.Result, nil
 }
 
-// InvoiceParams — параметры Stars-инвойса подписки (§9).
+// InvoiceParams — параметры Stars-инвойса (§9).
 type InvoiceParams struct {
 	Title       string
 	Description string
 	Payload     string // внутренняя привязка платежа к пользователю (вебхук 3.4)
 	Stars       int    // цена в Telegram Stars
-	PeriodSec   int    // период подписки в секундах (для Stars-подписки строго 2592000)
+	// PeriodSec > 0 делает инвойс РЕКУРРЕНТНОЙ Stars-подпиской (subscription_period).
+	// 0 (по умолчанию) — обычный РАЗОВЫЙ инвойс. Прод использует разовый.
+	PeriodSec int
 }
 
-// CreateInvoiceLink создаёт ссылку на оплату подписки через Telegram Stars и
-// возвращает её. Для Stars currency="XTR", provider_token пустой; subscription_period
-// делает инвойс рекуррентным (авто-продление средствами Stars).
+// CreateInvoiceLink создаёт ссылку на оплату через Telegram Stars и возвращает её.
+// Для Stars currency="XTR", provider_token пустой. subscription_period добавляется
+// только при PeriodSec>0 (рекуррент); иначе инвойс разовый.
 func (c *Client) CreateInvoiceLink(ctx context.Context, p InvoiceParams) (string, error) {
 	params := map[string]any{
-		"title":               p.Title,
-		"description":         p.Description,
-		"payload":             p.Payload,
-		"provider_token":      "", // Stars — без внешнего провайдера
-		"currency":            "XTR",
-		"prices":              []map[string]any{{"label": p.Title, "amount": p.Stars}},
-		"subscription_period": p.PeriodSec,
+		"title":          p.Title,
+		"description":    p.Description,
+		"payload":        p.Payload,
+		"provider_token": "", // Stars — без внешнего провайдера
+		"currency":       "XTR",
+		"prices":         []map[string]any{{"label": p.Title, "amount": p.Stars}},
+	}
+	if p.PeriodSec > 0 {
+		params["subscription_period"] = p.PeriodSec
 	}
 	raw, err := c.call(ctx, "createInvoiceLink", params)
 	if err != nil {

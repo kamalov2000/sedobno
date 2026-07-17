@@ -22,8 +22,8 @@ func TestCreateInvoiceLink_OK(t *testing.T) {
 
 	c := New(srv.URL, "123:TESTTOKEN")
 	link, err := c.CreateInvoiceLink(context.Background(), InvoiceParams{
-		Title: "Съедобно — подписка", Description: "Безлимит на месяц",
-		Payload: "sub_v1:42", Stars: 150, PeriodSec: 2592000,
+		Title: "Съедобно — доступ на 30 дней", Description: "Безлимит на 30 дней",
+		Payload: "sub_v1:42", Stars: 150, // PeriodSec не задан — разовый инвойс
 	})
 	if err != nil {
 		t.Fatalf("ждали успех, ошибка: %v", err)
@@ -35,15 +35,17 @@ func TestCreateInvoiceLink_OK(t *testing.T) {
 	if !strings.HasSuffix(gotPath, "/bot123:TESTTOKEN/createInvoiceLink") {
 		t.Fatalf("path=%q", gotPath)
 	}
-	// Ключевые параметры Stars-подписки.
+	// Ключевые параметры Stars-инвойса.
 	if body["currency"] != "XTR" {
 		t.Fatalf("currency=%v, ждали XTR", body["currency"])
 	}
 	if body["provider_token"] != "" {
 		t.Fatalf("provider_token=%v, ждали пустой", body["provider_token"])
 	}
-	if body["subscription_period"].(float64) != 2592000 {
-		t.Fatalf("subscription_period=%v", body["subscription_period"])
+	// РАЗОВЫЙ инвойс: subscription_period НЕ передаётся (иначе Telegram сделает
+	// рекуррентную подписку). Ключа быть не должно вовсе.
+	if _, ok := body["subscription_period"]; ok {
+		t.Fatalf("subscription_period присутствует (%v) — инвойс стал рекуррентным", body["subscription_period"])
 	}
 	if body["payload"] != "sub_v1:42" {
 		t.Fatalf("payload=%v", body["payload"])
@@ -52,6 +54,25 @@ func TestCreateInvoiceLink_OK(t *testing.T) {
 	amount := prices[0].(map[string]any)["amount"].(float64)
 	if amount != 150 {
 		t.Fatalf("amount=%v, ждали 150", amount)
+	}
+}
+
+// PeriodSec>0 сохраняет рекуррентный режим (subscription_period) — механизм на месте,
+// хотя прод его сейчас не использует.
+func TestCreateInvoiceLink_RecurringSetsPeriod(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"ok":true,"result":"https://t.me/$x"}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "T")
+	if _, err := c.CreateInvoiceLink(context.Background(), InvoiceParams{Title: "x", Stars: 1, PeriodSec: 2592000}); err != nil {
+		t.Fatalf("CreateInvoiceLink: %v", err)
+	}
+	if body["subscription_period"].(float64) != 2592000 {
+		t.Fatalf("subscription_period=%v, ждали 2592000 при PeriodSec>0", body["subscription_period"])
 	}
 }
 

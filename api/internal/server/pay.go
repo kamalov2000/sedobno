@@ -7,18 +7,19 @@ import (
 	"github.com/sostav/api/internal/tg"
 )
 
-// subscriptionPeriodSec — период Stars-подписки. Telegram требует строго 2592000
-// (30 дней) для рекуррентных инвойсов Stars (§9).
-const subscriptionPeriodSec = 2592000
+// accessPeriodSec — срок доступа за один платёж: 30 дней (§9). Разовый платёж, НЕ
+// рекуррентная подписка Telegram: срок доступа начисляет store как «остаток + период»
+// (одинаково для Stars и СБП). Значение передаётся в store из sbp.go и webhook.go.
+const accessPeriodSec = 2592000
 
 type payCreateResponse struct {
 	InvoiceLink string `json:"invoice_link"`
 }
 
-// handlePayCreate — POST /api/pay/create (защищённый). Создаёт invoice-ссылку Stars
-// на месячную подписку и возвращает её; фронт открывает через WebApp.openInvoice (§8).
-// Подписка создаётся/продлевается не здесь, а в вебхуке successful_payment (3.4) —
-// этот роут только выдаёт ссылку. Уже подписанному — 409, чтобы не плодить инвойсы.
+// handlePayCreate — POST /api/pay/create (защищённый). Создаёт invoice-ссылку Stars на
+// РАЗОВЫЙ платёж (доступ на 30 дней, не рекуррентная подписка) и возвращает её; фронт
+// открывает через WebApp.openInvoice (§8). Доступ начисляется не здесь, а в вебхуке
+// successful_payment (3.4) — этот роут только выдаёт ссылку. Уже подписанному — 409.
 func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
@@ -39,12 +40,13 @@ func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link, err := s.tg.CreateInvoiceLink(ctx, tg.InvoiceParams{
-		Title:       "Съедобно — подписка",
-		Description: "Безлимитные сканы составов на месяц",
+		Title:       "Съедобно — доступ на 30 дней",
+		Description: "Безлимитные проверки составов на 30 дней",
 		// payload привязывает будущий платёж к пользователю: вебхук 3.4 разберёт его.
-		Payload:   fmt.Sprintf("sub_v1:%d", u.ID),
-		Stars:     s.cfg.SubscriptionStarsPrice,
-		PeriodSec: subscriptionPeriodSec,
+		Payload: fmt.Sprintf("sub_v1:%d", u.ID),
+		Stars:   s.cfg.SubscriptionStarsPrice,
+		// PeriodSec не задаём: инвойс РАЗОВЫЙ (не рекуррентная Stars-подписка). Срок
+		// доступа начисляет вебхук successful_payment через store (остаток + период).
 	})
 	if err != nil {
 		s.log.Error("pay: createInvoiceLink", "err", err, "user", u.ID)

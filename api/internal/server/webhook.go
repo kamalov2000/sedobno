@@ -57,11 +57,10 @@ type tgPreCheckoutQuery struct {
 }
 
 type tgSuccessfulPayment struct {
-	Currency                   string `json:"currency"`
-	TotalAmount                int    `json:"total_amount"`
-	InvoicePayload             string `json:"invoice_payload"`
-	TelegramPaymentChargeID    string `json:"telegram_payment_charge_id"`
-	SubscriptionExpirationDate int64  `json:"subscription_expiration_date"`
+	Currency                string `json:"currency"`
+	TotalAmount             int    `json:"total_amount"`
+	InvoicePayload          string `json:"invoice_payload"`
+	TelegramPaymentChargeID string `json:"telegram_payment_charge_id"`
 }
 
 // handleWebhook — POST /api/tg/webhook (§8). Не под requireAuth: зовёт Telegram.
@@ -128,14 +127,13 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 		return
 	}
 
-	expires := time.Now().Add(30 * 24 * time.Hour)
-	if sp.SubscriptionExpirationDate > 0 {
-		expires = time.Unix(sp.SubscriptionExpirationDate, 0)
-	}
 	raw, _ := json.Marshal(sp)
 
+	// Разовый платёж на 30 дней (не рекуррентная подписка): срок доступа считает store
+	// как «остаток + период», как в СБП-канале. subscription_expiration_date у разового
+	// инвойса Telegram не присылает — мы его и не используем.
 	processed, err := s.store.ActivateSubscription(ctx, store.SubscriptionInput{
-		UserID: userID, Stars: sp.TotalAmount, ExpiresAt: expires,
+		UserID: userID, Stars: sp.TotalAmount, PeriodSec: accessPeriodSec,
 		ChargeID: sp.TelegramPaymentChargeID, RawPayload: raw,
 	})
 	if err != nil {
@@ -146,7 +144,7 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 	if processed {
 		_ = s.store.InsertEvent(ctx, &userID, "pay_ok", map[string]any{"stars": sp.TotalAmount})
 		if msg.Chat != nil {
-			_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Подписка активна ✅ Теперь сканы без ограничений.", nil)
+			_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Оплата прошла ✅ Безлимитные проверки на 30 дней.", nil)
 		}
 	}
 	w.WriteHeader(http.StatusOK)

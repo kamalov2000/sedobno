@@ -132,7 +132,7 @@ func (s *Server) handleSBPWebhook(w http.ResponseWriter, r *http.Request) {
 		AmountRub:         rubFromValue(p.Amount.Value),
 		// Передаём период, а не дату: срок = остаток + период, считается в транзакции
 		// (store) — продлившийся заранее не должен терять оплаченный остаток.
-		PeriodSec:  subscriptionPeriodSec,
+		PeriodSec:  accessPeriodSec,
 		RawPayload: raw,
 	})
 	if err != nil {
