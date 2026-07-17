@@ -116,22 +116,37 @@
   --dot-high: #ec7a72;
 }
 
-/* Янтарный акцент модуля калорий (feature/calories) — отделяет его от зелёного сканера
-   составов. На нём кольцо прогресса, норма, кнопки визарда. --cal-over: превышение нормы
-   (спокойный нейтральный, НЕ красный — за еду не стыдим). */
+/* Токены модуля калорий (feature/calories) — тёплый янтарь против зелёного сканера
+   составов. Значения из финального дизайна «Съедобно - калории». На них герои-цифры,
+   кольцо, кнопки, чипы, онбординг. Сегмент-цвета Б/Ж/У — не тут (тема-независимы, в meal.ts). */
 :root {
-  --cal-accent: #c9821a;
-  --cal-accent-soft: #fbf1df;
-  --cal-on-accent: #ffffff;
-  --cal-track: #ece9e2;
-  --cal-over: #8f8b83;
+  --cal: #a65213;
+  --cal-press: #8b430d;
+  --on-cal: #ffffff;
+  --cal-soft: #fbf1e3;
+  --cal-border: #ebd5b4;
+  --cal-num: #a65213;
+  --cal-track: #ece7da;
 }
 [data-theme="dark"] {
-  --cal-accent: #d9a85b;
-  --cal-accent-soft: #3f331b;
-  --cal-on-accent: #1c1c1e;
-  --cal-track: #333330;
-  --cal-over: #9c988f;
+  --cal: #e4993f;
+  --cal-press: #ce8330;
+  --on-cal: #26190b;
+  --cal-soft: #362819;
+  --cal-border: #59431f;
+  --cal-num: #ecab5e;
+  --cal-track: #3a3226;
+}
+
+/* Граммовка блюда: number-инпут без стрелок-спиннеров (степпер задаёт значение). */
+input.cal-g {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input.cal-g::-webkit-outer-spin-button,
+input.cal-g::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 @keyframes sjspin {

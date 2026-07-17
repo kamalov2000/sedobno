@@ -70,3 +70,43 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   dinner: "Ужин",
   snack: "Перекус",
 };
+
+// Иконки типов приёма (финальный дизайн: заря/солнце/луна/яблоко).
+export const MEAL_TYPE_ICONS: Record<MealType, string> = {
+  breakfast: "ti-sunrise",
+  lunch: "ti-sun",
+  dinner: "ti-moon",
+  snack: "ti-apple",
+};
+
+// Сегмент-цвета Б/Ж/У — тема-независимы (одинаковы в свете/тьме, из дизайна модуля).
+export const MACRO_COLORS = { p: "#C4671B", f: "#E0A32A", c: "#B49A6A" };
+
+/** Доли Б/Ж/У в общей калорийности (по 4/9/4 ккал на грамм) — ширины сегментов полоски. */
+export function macroPercents(m: { protein_g: number; fat_g: number; carb_g: number }): { p: number; f: number; c: number } {
+  const pc = m.protein_g * 4;
+  const fc = m.fat_g * 9;
+  const cc = m.carb_g * 4;
+  const sum = pc + fc + cc || 1;
+  return { p: Math.round((pc / sum) * 100), f: Math.round((fc / sum) * 100), c: Math.round((cc / sum) * 100) };
+}
+
+/** Калорийность на 100 г (для подписи «132 ккал/100 г» в карточке блюда). */
+export function per100(kcal: number, grams: number): number {
+  return grams > 0 ? Math.round((kcal / grams) * 100) : 0;
+}
+
+/** Слово пустого дня по времени: до 11:00 — завтрак, до 16:00 — обед, иначе ужин. */
+export function emptyMealWord(hours: number): "завтрак" | "обед" | "ужин" {
+  return hours < 11 ? "завтрак" : hours < 16 ? "обед" : "ужин";
+}
+
+/** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
+export function pluralDishes(n: number): string {
+  const a = Math.abs(n) % 100;
+  const b = a % 10;
+  if (a > 10 && a < 20) return "блюд";
+  if (b === 1) return "блюдо";
+  if (b >= 2 && b <= 4) return "блюда";
+  return "блюд";
+}
