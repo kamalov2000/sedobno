@@ -3,7 +3,7 @@
 // - 401 → тихой re-auth и один повтор (silent re-auth, см. заметку по Этапу 4).
 // 402/429 обрабатываются на уровне /scan (4.2), здесь — только базовый транспорт.
 
-import { getInitData } from "./telegram";
+import { authBody } from "./telegram";
 import type { AuthResponse, Me, ScanResult, ScanHistoryPage } from "./types";
 
 let token: string | null = null;
@@ -32,7 +32,8 @@ async function authenticate(): Promise<Me> {
   const res = await fetch("/api/auth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ init_data: getInitData() }),
+    // В Telegram — {init_data}; в браузере (dev-сборка) — {dev_user_id} для dev-обхода.
+    body: JSON.stringify(authBody()),
   });
   if (!res.ok) {
     token = null;
