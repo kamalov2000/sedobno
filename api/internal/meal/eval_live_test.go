@@ -8,8 +8,9 @@
 // results_<model>.json и сравнительный отчёт results_report.md. Требует ANTHROPIC_API_KEY.
 //
 // Запуск:
-//   set -a; . ./.env; set +a
-//   cd api && go test -tags live ./internal/meal/ -run TestMealEval -v -timeout 30m
+//
+//	set -a; . ./.env; set +a
+//	cd api && go test -tags live ./internal/meal/ -run TestMealEval -v -timeout 30m
 package meal_test
 
 import (
