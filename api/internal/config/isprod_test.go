@@ -2,19 +2,19 @@ package config
 
 import "testing"
 
-// IsProd: реальные платежи или боевой https-WEBAPP_URL = прод; пусто/localhost = не прод.
+// IsProd: продом считается всё, кроме явного APP_ENV=dev; включённый SBP — прод всегда.
 func TestIsProd(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     Config
 		wantOut bool
 	}{
-		{"пусто — dev", Config{}, false},
-		{"localhost WEBAPP_URL — dev", Config{WebAppURL: "https://localhost:5173"}, false},
-		{"127.0.0.1 — dev", Config{WebAppURL: "http://127.0.0.1:8080"}, false},
-		{"http-домен без https — не прод-сигнал", Config{WebAppURL: "http://example.com"}, false},
-		{"боевой https-домен — прод", Config{WebAppURL: "https://sedobno-pay.ru"}, true},
-		{"включён СБП — прод", Config{SBPEnabled: true}, true},
+		{"пусто (APP_ENV не задан) — прод (безопасный дефолт)", Config{}, true},
+		{"APP_ENV=prod — прод", Config{AppEnv: "prod"}, true},
+		{"APP_ENV=dev — не прод", Config{AppEnv: "dev"}, false},
+		{"APP_ENV=DEV (регистр) — не прод", Config{AppEnv: "DEV"}, false},
+		{"боевой https WEBAPP_URL при APP_ENV=dev — НЕ прод (туннель dev)", Config{AppEnv: "dev", WebAppURL: "https://x.trycloudflare.com"}, false},
+		{"включён СБП — прод даже при APP_ENV=dev", Config{AppEnv: "dev", SBPEnabled: true}, true},
 	}
 	for _, c := range cases {
 		if got := c.cfg.IsProd(); got != c.wantOut {

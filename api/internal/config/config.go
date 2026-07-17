@@ -78,10 +78,14 @@ type Config struct {
 	LandingLinkSecret string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
 	YooKassaAllowlist []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
 
-	// DevAuthBypass — dev-обход авторизации (feature/calories): при true И непродовой
-	// конфигурации /auth принимает {dev_user_id} и выдаёт JWT без Telegram initData, чтобы
-	// открывать mini-app в обычном браузере. На проде (IsProd) игнорируется с warning —
-	// двойная защита. По умолчанию false.
+	// AppEnv — маркер окружения: "dev" разрешает dev-инструменты (обход авторизации),
+	// любое другое значение (и пустое) трактуется как прод — БЕЗОПАСНЫЙ ДЕФОЛТ: боевой
+	// сервер, где APP_ENV не выставлен, остаётся продом. Задаётся docker-compose.dev.yml.
+	AppEnv string
+
+	// DevAuthBypass — dev-обход авторизации (feature/calories): при true И dev-окружении
+	// (IsProd()==false) /auth принимает {dev_user_id} и выдаёт JWT без Telegram initData,
+	// чтобы открывать mini-app в обычном браузере. На проде игнорируется с warning. false по умолчанию.
 	DevAuthBypass bool
 
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
@@ -185,6 +189,7 @@ func MustLoad() *Config {
 	cfg.ExplainEnabled = optBool(opt("EXPLAIN_ENABLED", "false"))
 
 	// --- СБП/ЮKassa (§14.1). Канал опционален: при SBP_ENABLED=false ключи не требуются. ---
+	cfg.AppEnv = opt("APP_ENV", "prod") // безопасный дефолт: неизвестное окружение = прод
 	cfg.DevAuthBypass = optBool(opt("DEV_AUTH_BYPASS", "false"))
 
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
@@ -247,21 +252,17 @@ func MustLoad() *Config {
 	return cfg
 }
 
-// IsProd эвристически определяет продовую конфигурацию — для гейта dev-обходов
-// (DevAuthBypass). Безопасно по умолчанию: реальный боевой прод эти сигналы уже несёт,
-// поэтому обход там отключится даже при случайно выставленном флаге. Сигналы:
-//   - SBPEnabled: настоящий приём платежей ЮKassa включают только на проде;
-//   - WebAppURL: боевой https-домен mini-app (на проде обязателен, локально пуст).
-// Локалхост/пустой WEBAPP_URL продом НЕ считаются.
+// IsProd определяет продовую конфигурацию — для гейта dev-обходов (DevAuthBypass).
+// Безопасно по умолчанию: продом считается ВСЁ, кроме явного APP_ENV=dev, поэтому боевой
+// сервер без APP_ENV остаётся продом. Дополнительный жёсткий сигнал — включённый приём
+// платежей (SBPEnabled): если сервер берёт реальные деньги, это прод при любом APP_ENV.
+// WEBAPP_URL для детекта НЕ используем: в dev проекта это боевой https-туннель
+// (trycloudflare), неотличимый по схеме от прод-домена.
 func (c *Config) IsProd() bool {
 	if c.SBPEnabled {
 		return true
 	}
-	u := strings.TrimSpace(strings.ToLower(c.WebAppURL))
-	if u == "" || strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") {
-		return false
-	}
-	return strings.HasPrefix(u, "https://")
+	return !strings.EqualFold(strings.TrimSpace(c.AppEnv), "dev")
 }
 
 // optInt разбирает целое; при ошибке добавляет имя переменной в invalid и возвращает def.
