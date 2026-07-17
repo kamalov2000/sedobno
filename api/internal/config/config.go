@@ -78,6 +78,12 @@ type Config struct {
 	LandingLinkSecret string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
 	YooKassaAllowlist []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
 
+	// DevAuthBypass — dev-обход авторизации (feature/calories): при true И непродовой
+	// конфигурации /auth принимает {dev_user_id} и выдаёт JWT без Telegram initData, чтобы
+	// открывать mini-app в обычном браузере. На проде (IsProd) игнорируется с warning —
+	// двойная защита. По умолчанию false.
+	DevAuthBypass bool
+
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
 	// Нужен для разбора распознавания: какое ИМЕННО изображение (после Normalize)
 	// видела модель. На проде держать выключенным (приватность/место).
@@ -179,6 +185,8 @@ func MustLoad() *Config {
 	cfg.ExplainEnabled = optBool(opt("EXPLAIN_ENABLED", "false"))
 
 	// --- СБП/ЮKassa (§14.1). Канал опционален: при SBP_ENABLED=false ключи не требуются. ---
+	cfg.DevAuthBypass = optBool(opt("DEV_AUTH_BYPASS", "false"))
+
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")
 
@@ -237,6 +245,23 @@ func MustLoad() *Config {
 	}
 
 	return cfg
+}
+
+// IsProd эвристически определяет продовую конфигурацию — для гейта dev-обходов
+// (DevAuthBypass). Безопасно по умолчанию: реальный боевой прод эти сигналы уже несёт,
+// поэтому обход там отключится даже при случайно выставленном флаге. Сигналы:
+//   - SBPEnabled: настоящий приём платежей ЮKassa включают только на проде;
+//   - WebAppURL: боевой https-домен mini-app (на проде обязателен, локально пуст).
+// Локалхост/пустой WEBAPP_URL продом НЕ считаются.
+func (c *Config) IsProd() bool {
+	if c.SBPEnabled {
+		return true
+	}
+	u := strings.TrimSpace(strings.ToLower(c.WebAppURL))
+	if u == "" || strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") {
+		return false
+	}
+	return strings.HasPrefix(u, "https://")
 }
 
 // optInt разбирает целое; при ошибке добавляет имя переменной в invalid и возвращает def.

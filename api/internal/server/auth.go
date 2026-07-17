@@ -21,6 +21,9 @@ const (
 
 type authRequest struct {
 	InitData string `json:"init_data"`
+	// DevUserID — dev-обход авторизации (только при cfg.DevAuthBypass и непродовой
+	// конфигурации): открыть mini-app в браузере без Telegram. На проде игнорируется.
+	DevUserID int64 `json:"dev_user_id,omitempty"`
 }
 
 // meView — снимок лимитов/подписки для фронта. ScansLeft == -1 → безлимит (подписка):
@@ -58,6 +61,13 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
 		return
 	}
+	// Dev-обход: при включённом флаге и непродовой конфигурации выдаём JWT по dev_user_id
+	// без Telegram initData (открытие mini-app в браузере). Гейт IsProd — вторая защита.
+	if s.cfg.DevAuthBypass && !s.cfg.IsProd() && req.DevUserID != 0 {
+		s.devAuth(w, r, req.DevUserID)
+		return
+	}
+
 	if strings.TrimSpace(req.InitData) == "" {
 		writeError(w, http.StatusBadRequest, "bad_request", "init_data обязателен")
 		return
@@ -88,6 +98,30 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	// Аналитика §10 — best-effort, не влияет на ответ.
 	_ = s.store.InsertEvent(r.Context(), &u.ID, "app_open", nil)
 
+	writeJSON(w, http.StatusOK, authResponse{
+		Token:     token,
+		ExpiresIn: int(jwtTTL.Seconds()),
+		Me:        s.meViewFor(r.Context(), u),
+	})
+}
+
+// devAuth выдаёт JWT для dev-пользователя без Telegram (dev-обход, §Часть А). Апсертит
+// пользователя по синтетическому telegram_id = dev_user_id и отдаёт тот же authResponse,
+// что и обычный путь. Вызывается ТОЛЬКО после гейта DevAuthBypass && !IsProd в handleAuth.
+func (s *Server) devAuth(w http.ResponseWriter, r *http.Request, devUserID int64) {
+	s.log.Warn("DEV-AUTH: выдан JWT без Telegram initData (dev-обход)", "dev_user_id", devUserID)
+	u, err := s.store.UpsertUser(r.Context(), devUserID, "dev", "")
+	if err != nil {
+		s.log.Error("dev-auth: upsert user", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
+		return
+	}
+	token, err := auth.Issue(s.cfg.JWTSecret, u.ID, u.TelegramID, jwtTTL)
+	if err != nil {
+		s.log.Error("dev-auth: выпуск JWT", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
+		return
+	}
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:     token,
 		ExpiresIn: int(jwtTTL.Seconds()),

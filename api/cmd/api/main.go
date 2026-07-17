@@ -37,6 +37,13 @@ func main() {
 	cfg := config.MustLoad()
 	log := logging.New(cfg.LogLevel)
 
+	// Dev-обход авторизации не должен работать на проде даже при случайно выставленном
+	// флаге: гасим его и громко предупреждаем (двойная защита к гейту IsProd в хендлере).
+	if cfg.DevAuthBypass && cfg.IsProd() {
+		log.Warn("DEV_AUTH_BYPASS проигнорирован: конфигурация выглядит как прод (SBP/боевой WEBAPP_URL)")
+		cfg.DevAuthBypass = false
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
