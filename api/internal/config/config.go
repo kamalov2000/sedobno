@@ -55,6 +55,12 @@ type Config struct {
 	ExtractFallbackModel string  // "" — fallback выключен
 	ExtractConfidenceMin float64 // порог confidence основной модели (0<x≤1)
 
+	// MealVisionModel — vision-модель модуля калорий по фото (feature/calories).
+	// "" — использовать дефолтную vision-модель выбранного провайдера (Haiku у
+	// anthropic). Переопределяется MEAL_VISION_MODEL, чтобы прогнать качество на
+	// более сильной модели (Sonnet) без влияния на сканер составов.
+	MealVisionModel string
+
 	// ExplainEnabled — включает фазу 4 (LLM-объяснение, §4). По умолчанию ВЫКЛ: фронт
 	// его не показывает, а каждый ok-скан из-за него делал лишний text-LLM-вызов. При
 	// false пайплайн пропускает фазу целиком, result.explanation пустой (контракт цел).
@@ -135,6 +141,9 @@ func MustLoad() *Config {
 		AnthropicTextModel:   opt("ANTHROPIC_TEXT_MODEL", "claude-haiku-4-5"),
 
 		ExtractFallbackModel: opt("EXTRACT_FALLBACK_MODEL", "claude-sonnet-5"),
+
+		// Пусто → NewMealAnalyzer возьмёт дефолтную vision-модель провайдера.
+		MealVisionModel: opt("MEAL_VISION_MODEL", ""),
 	}
 
 	cfg.LLMMaxConcurrent = optInt(opt("LLM_MAX_CONCURRENT", "20"), 20, &invalid, "LLM_MAX_CONCURRENT")
