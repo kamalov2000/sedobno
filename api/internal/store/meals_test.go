@@ -142,7 +142,7 @@ func TestUpdateMeal_ПересчётИВладение(t *testing.T) {
 	}
 
 	newItems, _ := json.Marshal([]map[string]any{{"name": "гречка", "grams": 200, "kcal": 300}})
-	updated, err := s.UpdateMeal(ctx, id, owner, newItems, fptr(300), fptr(10), fptr(5), fptr(55), nil)
+	updated, err := s.UpdateMeal(ctx, id, owner, newItems, fptr(300), fptr(10), fptr(5), fptr(55), nil, nil)
 	if err != nil {
 		t.Fatalf("UpdateMeal(owner): %v", err)
 	}
@@ -153,8 +153,18 @@ func TestUpdateMeal_ПересчётИВладение(t *testing.T) {
 		t.Errorf("kcal после правки=%v, ждали 300", updated.Kcal)
 	}
 
+	// Тип приёма: проставляется правкой (COALESCE — nil не затирает существующий).
+	mt := "lunch"
+	withType, err := s.UpdateMeal(ctx, id, owner, newItems, fptr(300), fptr(10), fptr(5), fptr(55), nil, &mt)
+	if err != nil {
+		t.Fatalf("UpdateMeal(meal_type): %v", err)
+	}
+	if withType.MealType == nil || *withType.MealType != "lunch" {
+		t.Errorf("meal_type=%v, ждали lunch", withType.MealType)
+	}
+
 	// Чужой пользователь не может править — pgx.ErrNoRows, приём не меняется.
-	_, err = s.UpdateMeal(ctx, id, other, newItems, fptr(999), fptr(0), fptr(0), fptr(0), nil)
+	_, err = s.UpdateMeal(ctx, id, other, newItems, fptr(999), fptr(0), fptr(0), fptr(0), nil, nil)
 	if err != pgx.ErrNoRows {
 		t.Fatalf("UpdateMeal(чужой): err=%v, ждали ErrNoRows (владение)", err)
 	}

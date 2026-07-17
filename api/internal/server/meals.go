@@ -45,10 +45,16 @@ type mealDiaryItem struct {
 	CreatedAt  time.Time       `json:"created_at"`
 	Status     string          `json:"status"`
 	Source     string          `json:"source"`
+	MealType   string          `json:"meal_type,omitempty"` // завтрак/обед/ужин/перекус (breakfast|lunch|dinner|snack)
 	Dishes     []llm.MealItem  `json:"dishes"`
 	Total      *llm.MealMacros `json:"total,omitempty"`
 	Edited     bool            `json:"edited"`
 	Confidence *float64        `json:"confidence,omitempty"`
+}
+
+// validMealTypes — допустимые типы приёма (проставляются пользователем в дневник).
+var validMealTypes = map[string]struct{}{
+	"breakfast": {}, "lunch": {}, "dinner": {}, "snack": {},
 }
 
 // mealsByDayResponse — дневник за конкретный день: агрегат дня + список приёмов.
@@ -192,16 +198,23 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req struct {
-		Dishes  *[]llm.MealItem `json:"dishes"`
-		EatenAt *time.Time      `json:"eaten_at"`
+		Dishes   *[]llm.MealItem `json:"dishes"`
+		EatenAt  *time.Time      `json:"eaten_at"`
+		MealType *string         `json:"meal_type"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
 		return
 	}
-	if req.Dishes == nil && req.EatenAt == nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "нечего менять: передайте dishes и/или eaten_at")
+	if req.Dishes == nil && req.EatenAt == nil && req.MealType == nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "нечего менять: передайте dishes, eaten_at и/или meal_type")
 		return
+	}
+	if req.MealType != nil {
+		if _, ok := validMealTypes[*req.MealType]; !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "meal_type: breakfast|lunch|dinner|snack")
+			return
+		}
 	}
 
 	// Владение + существование: читаем приём (404 если нет или чужой — существование не палим).
@@ -223,7 +236,7 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		kcal, protein, fat, carb = &total.Kcal, &total.ProteinG, &total.FatG, &total.CarbG
 	}
 
-	updated, err := s.store.UpdateMeal(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt)
+	updated, err := s.store.UpdateMeal(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType)
 	if err != nil {
 		s.log.Error("meal: правка приёма", "err", err, "user", claims.UserID, "meal", id)
 		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить правку")
@@ -391,6 +404,9 @@ func toDiaryItem(m store.Meal) mealDiaryItem {
 		ID: m.ID, EatenAt: m.EatenAt, CreatedAt: m.CreatedAt, Status: m.Status,
 		Source: m.Source, Edited: m.Edited, Confidence: m.Confidence,
 		Dishes: []llm.MealItem{},
+	}
+	if m.MealType != nil {
+		item.MealType = *m.MealType
 	}
 	if len(m.Items) > 0 {
 		_ = json.Unmarshal(m.Items, &item.Dishes)

@@ -43,6 +43,7 @@ type MealRow struct {
 	FatG       *float64
 	CarbG      *float64
 	Confidence *float64
+	MealType   string // breakfast|lunch|dinner|snack|"" (не указан) — пустое пишет NULL
 	Provider   string
 	LatencyMs  int64
 	CostRUB    float64
@@ -65,6 +66,7 @@ type Meal struct {
 	CarbG      *float64
 	Edited     bool
 	Confidence *float64
+	MealType   *string // NULL → nil (тип приёма не указан)
 }
 
 // MealDaily — дневной агрегат из view meal_daily (граница дня — Europe/Moscow).
@@ -80,14 +82,14 @@ type MealDaily struct {
 // mealCols — единый список колонок для чтения приёма (numeric → float8 для скана в
 // *float64; NULL приходит как nil).
 const mealCols = `id, user_id, created_at, eaten_at, status, source, items,
-	kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8, edited, confidence::float8`
+	kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8, edited, confidence::float8, meal_type`
 
 // scanMeal читает одну строку приёма из pgx.Row/Rows в порядке mealCols.
 func scanMeal(row pgx.Row) (Meal, error) {
 	var m Meal
 	var items []byte
 	err := row.Scan(&m.ID, &m.UserID, &m.CreatedAt, &m.EatenAt, &m.Status, &m.Source,
-		&items, &m.Kcal, &m.ProteinG, &m.FatG, &m.CarbG, &m.Edited, &m.Confidence)
+		&items, &m.Kcal, &m.ProteinG, &m.FatG, &m.CarbG, &m.Edited, &m.Confidence, &m.MealType)
 	m.Items = items
 	return m, err
 }
@@ -96,12 +98,12 @@ func scanMeal(row pgx.Row) (Meal, error) {
 func (s *Store) InsertMeal(ctx context.Context, m MealRow) (int64, error) {
 	const q = `
 INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fat_g, carb_g,
-                   confidence, provider, latency_ms, cost_estimate)
-VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                   confidence, meal_type, provider, latency_ms, cost_estimate)
+VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14)
 RETURNING id`
 	var id int64
 	err := s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
-		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.Provider, m.LatencyMs, m.CostRUB).Scan(&id)
+		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB).Scan(&id)
 	return id, err
 }
 
@@ -114,13 +116,13 @@ func (s *Store) GetMeal(ctx context.Context, id int64) (Meal, error) {
 // edited=true. Владение проверяется в WHERE (id И user_id) — правка чужого приёма
 // вернёт pgx.ErrNoRows. eatenAt nil → время приёма не меняется (COALESCE).
 func (s *Store) UpdateMeal(ctx context.Context, id, userID int64, items []byte,
-	kcal, protein, fat, carb *float64, eatenAt *time.Time) (Meal, error) {
+	kcal, protein, fat, carb *float64, eatenAt *time.Time, mealType *string) (Meal, error) {
 	const q = `
 UPDATE meals SET items = $3, kcal = $4, protein_g = $5, fat_g = $6, carb_g = $7,
-    eaten_at = COALESCE($8, eaten_at), edited = true
+    eaten_at = COALESCE($8, eaten_at), meal_type = COALESCE($9, meal_type), edited = true
 WHERE id = $1 AND user_id = $2
 RETURNING ` + mealCols
-	return scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt))
+	return scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt, mealType))
 }
 
 // DeleteMeal удаляет приём с проверкой владения. false — приёма нет или он чужой.
