@@ -26,4 +26,7 @@ const (
 	Extract = "extract_v1.txt"
 	Match   = "match_v1.txt"
 	Explain = "explain_v1.txt"
+	// Meal — промпт модуля калорий по фото (feature/calories): распознавание блюд на
+	// тарелке, оценка граммовки и КБЖУ. Отдельный от сканера составов пайплайн.
+	Meal = "meal_v1.txt"
 )
