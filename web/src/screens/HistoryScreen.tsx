@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ScanHistoryItem } from "../types";
+import type { ScanHistoryItem, ScanHistoryPage } from "../types";
 import { scansHistory } from "../api";
 import { scoreToVerdict } from "../risk";
 import { haptic } from "../telegram";
@@ -11,6 +11,9 @@ import { haptic } from "../telegram";
 interface Props {
   onBack: () => void;
   onOpen: (item: ScanHistoryItem) => void;
+  // Загрузчик страницы истории. По умолчанию — реальный API; инъекция нужна витрине
+  // (?preview) и тестам, чтобы показать список/пустоту без сети.
+  load?: (cursor?: number) => Promise<ScanHistoryPage>;
 }
 
 // Короткая подпись статуса для карточки (у не-ok балла нет).
@@ -34,15 +37,15 @@ const fmtDate = (iso: string) => {
   return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
 };
 
-export default function HistoryScreen({ onBack, onOpen }: Props) {
+export default function HistoryScreen({ onBack, onOpen, load = scansHistory }: Props) {
   const [items, setItems] = useState<ScanHistoryItem[]>([]);
   const [cursor, setCursor] = useState<number | undefined>(undefined);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [more, setMore] = useState(false); // подгрузка следующей страницы
 
-  const load = useCallback(async (cur?: number) => {
+  const fetchPage = useCallback(async (cur?: number) => {
     try {
-      const page = await scansHistory(cur);
+      const page = await load(cur);
       setItems((prev) => (cur ? [...prev, ...page.items] : page.items));
       setCursor(page.next_cursor);
       setPhase("ready");
@@ -51,17 +54,17 @@ export default function HistoryScreen({ onBack, onOpen }: Props) {
     } finally {
       setMore(false);
     }
-  }, []);
+  }, [load]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void fetchPage();
+  }, [fetchPage]);
 
   const loadMore = () => {
     if (!cursor || more) return;
     setMore(true);
     haptic("light");
-    void load(cursor);
+    void fetchPage(cursor);
   };
 
   const tappable = (s: string) => s === "ok" || s === "not_scored";

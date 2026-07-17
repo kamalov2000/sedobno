@@ -30,6 +30,16 @@ export function isFlagLevel(level: RiskLevel): boolean {
   return level === "mid" || level === "high";
 }
 
+/** Уровень бейджа флаг-карточки. Добавки (risk 2/3) — по классу риска, как раньше.
+ *  Маркерные правила §5 (risk≤1, но крупный вычет — сахар в топ-3 и т.п.) по risk дали
+ *  бы «низкий» рядом с −15: бейдж врал бы. Для них — по величине вычета: ≥15 высокий,
+ *  10–14 средний. Вход в карточку (penalty≥10) фильтрует ResultScreen. */
+export function flagBadgeLevel(risk: number, penalty: number): "mid" | "high" {
+  const byRisk = riskToLevel(risk);
+  if (byRisk === "high" || byRisk === "mid") return byRisk;
+  return penalty >= 15 ? "high" : "mid";
+}
+
 export type VerdictKey = "bad" | "mid" | "good";
 
 /** Оценка 0..100 → ключ палитры ценника и слово вердикта (§3: 0–39 / 40–69 / 70–100). */

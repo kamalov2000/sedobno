@@ -13,6 +13,11 @@ interface Props {
   onHistory: () => void;
 }
 
+// Дата окончания доступа под бейджем подписчика: «16 августа» (день + месяц в
+// родительном падеже даёт связка Intl day+long-month для ru-RU).
+const fmtExpiry = (iso: string) =>
+  new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
+
 export default function HomeScreen({ me, onScan, onSubscribe, onHistory }: Props) {
   // Бесплатные проверки исчерпаны и подписки нет: на месте счётчика «осталось X из 10»
   // показываем объяснение + CTA подписки (сканировать всё равно нечем — упрётся в пейволл).
@@ -109,7 +114,7 @@ export default function HomeScreen({ me, onScan, onSubscribe, onHistory }: Props
       {/* Счётчик / бейдж подписки + CTA (или панель стейджинга при наборе кадров) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {me.is_subscribed ? (
-          <div style={{ display: "flex", justifyContent: "center" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
             <span
               style={{
                 display: "inline-flex",
@@ -126,10 +131,13 @@ export default function HomeScreen({ me, onScan, onSubscribe, onHistory }: Props
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }} />
               Подписка активна
             </span>
+            {me.subscription_expires_at && (
+              <span style={{ fontSize: 12, color: "var(--text3)" }}>до {fmtExpiry(me.subscription_expires_at)}</span>
+            )}
           </div>
         ) : outOfScans ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-            Бесплатные проверки закончились (0&nbsp;из&nbsp;10). Оформите подписку — 249&nbsp;₽/мес, проверки без ограничений.
+            Бесплатные проверки закончились (0&nbsp;из&nbsp;10). 249&nbsp;₽ за 30&nbsp;дней, без автопродления — проверки без ограничений.
           </div>
         ) : (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>

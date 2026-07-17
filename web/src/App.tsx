@@ -7,7 +7,7 @@ import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
-import ErrorScreen from "./screens/ErrorScreen";
+import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. 4.2: полный флоу фото → лоадер → результат/ошибка/пейволл.
@@ -17,6 +17,7 @@ type Phase = "booting" | "ready" | "error";
 interface ErrorCopy {
   title: string;
   subtitle: string;
+  hints?: Hint[]; // не задан — ErrorScreen покажет «камерные» советы по умолчанию
 }
 
 // Копия экрана ошибки для «не распознал состав» (label_not_found) — дизайн-текст.
@@ -142,6 +143,7 @@ export default function App() {
         setErrorCopy({
           title: "Это не еда",
           subtitle: data.message || "Похоже, продукт несъедобный — оценку состава для него не считаем.",
+          hints: NOT_FOOD_HINTS,
         });
         setView("error");
       } else if (data.status === "mixed_frames") {
@@ -150,6 +152,7 @@ export default function App() {
         setErrorCopy({
           title: "Кадры от разных продуктов",
           subtitle: data.message || "Проверяйте по одному продукту за раз.",
+          hints: MIXED_FRAMES_HINTS,
         });
         setView("error");
       } else {
@@ -299,7 +302,7 @@ export default function App() {
         <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />
       )}
       {view === "error" && (
-        <ErrorScreen title={errorCopy.title} subtitle={errorCopy.subtitle} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
+        <ErrorScreen title={errorCopy.title} subtitle={errorCopy.subtitle} hints={errorCopy.hints} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
       )}
       {view === "paywall" && (
         <PaywallScreen

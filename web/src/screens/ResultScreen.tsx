@@ -1,5 +1,5 @@
 import type { ScanResult } from "../types";
-import { isFlagLevel, riskToLevel, scoreToVerdict } from "../risk";
+import { flagBadgeLevel, isFlagLevel, riskToLevel, scoreToVerdict } from "../risk";
 import PriceTag from "../components/PriceTag";
 import FlagCard from "../components/FlagCard";
 import IngredientList from "../components/IngredientList";
@@ -25,9 +25,7 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
   // спец-правилу §5. Иначе сахар в первых позициях (маркер risk=1, но −15 баллов)
   // молча срезал балл, а экран писал «проблемных ингредиентов не найдено» — прямое
   // враньё пользователю. Порог 10 = вычет за средний риск (risk2_each).
-  const flags = result.flags
-    .map((f) => ({ ...f, level: riskToLevel(f.risk) }))
-    .filter((f) => isFlagLevel(f.level) || f.penalty >= 10);
+  const flags = result.flags.filter((f) => isFlagLevel(riskToLevel(f.risk)) || f.penalty >= 10);
 
   const deductions = result.deductions ?? [];
 
@@ -64,7 +62,7 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
 
         {flags.length > 0 ? (
           flags.map((f, i) => (
-            <FlagCard key={i} name={f.title} why={f.verdict} level={f.level as "mid" | "high"} />
+            <FlagCard key={i} name={f.title} why={f.verdict} level={flagBadgeLevel(f.risk, f.penalty)} />
           ))
         ) : (
           <div style={{ background: "var(--bg-soft)", borderRadius: 12, padding: 14, marginTop: 10 }}>

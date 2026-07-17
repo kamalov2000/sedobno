@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
-import type { Me, ScanResult } from "./types";
+import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult } from "./types";
 import HomeScreen from "./screens/HomeScreen";
+import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
-import ErrorScreen from "./screens/ErrorScreen";
+import NotScoredScreen from "./screens/NotScoredScreen";
+import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Офлайн-витрина экранов для визуального прохода (обе темы рядом, мок-данные).
@@ -13,7 +15,7 @@ const noop = () => {};
 const asyncNoop = async () => {};
 
 const meFree: Me = { scans_left: 8, free_scans_used: 2, is_subscribed: false, sbp_available: true };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, is_subscribed: true, sbp_available: true };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z" };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
@@ -22,7 +24,8 @@ const mockResult: ScanResult = {
   scan_number: 47,
   scans_left: 6,
   flags: [
-    { title: "Сахар — 2-й в списке", verdict: "Чем ближе к началу состава, тем его больше в продукте.", risk: 3, penalty: 15 },
+    // Маркерное правило §5: risk=1, но −15 → бейдж «высокий» по вычету (не «низкий»).
+    { title: "Сахар — 2-й в списке", verdict: "Чем ближе к началу состава, тем его больше в продукте.", risk: 1, penalty: 15 },
     { title: "Пальмовое масло", verdict: "Дешёвый жир, нежелателен в ежедневном рационе.", risk: 2, penalty: 5 },
     { title: "Сироп глюкозы", verdict: "Ещё один сахар, записанный под другим именем.", risk: 2, penalty: 5 },
   ],
@@ -54,17 +57,53 @@ const mockResult: ScanResult = {
   ],
 };
 
+// Алкоголь: балла нет (not_scored), но факты показываем — экран без вердикта.
+const mockNotScored: ScanResult = {
+  status: "not_scored",
+  score: 0,
+  scans_left: 5,
+  flags: [],
+  ingredients: [
+    { raw: "вода", risk: 0, position: 1, matched: false },
+    { raw: "солод ячменный", risk: 0, position: 2, matched: false },
+    { raw: "хмель", risk: 0, position: 3, matched: false },
+  ],
+  nutrition: { basis: "100ml", kcal: 42, protein_g: 0.5, fat_g: 0, carb_g: 3.5 },
+};
+
+// История: смешанные исходы — оценённый, алкоголь (тапается), нераспознанный (нет).
+const mockHistory: ScanHistoryItem[] = [
+  { ...mockResult, id: 101, created_at: "2026-07-15T09:30:00Z", deductions: [{ title: "сахар в топ-3", penalty: 15 }, { title: "пальмовое масло", penalty: 5 }] },
+  { ...mockNotScored, id: 102, created_at: "2026-07-14T18:05:00Z" },
+  { id: 103, created_at: "2026-07-12T12:00:00Z", status: "label_not_found", score: 0, scans_left: 6, flags: [], ingredients: [] },
+];
+
+const historyLoad = async (cur?: number): Promise<ScanHistoryPage> => (cur ? { items: [] } : { items: mockHistory });
+const historyEmpty = async (): Promise<ScanHistoryPage> => ({ items: [] });
+
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
   { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
   { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
   { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} /> },
+  { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} /> },
   {
-    title: "04 · ОШИБКА",
+    title: "04 · ОШИБКА · состав не распознан",
     node: <ErrorScreen title="Не разглядел состав" subtitle="На фото не нашлось читаемого списка ингредиентов." onAgain={noop} />,
   },
-  { title: "05 · ПЕЙВОЛЛ", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable onSbpPay={asyncNoop} /> },
+  {
+    title: "04 · ОШИБКА · это не еда",
+    node: <ErrorScreen title="Это не еда" subtitle="Похоже, продукт несъедобный — оценку состава для него не считаем." hints={NOT_FOOD_HINTS} onAgain={noop} />,
+  },
+  {
+    title: "04 · ОШИБКА · кадры от разных продуктов",
+    node: <ErrorScreen title="Кадры от разных продуктов" subtitle="Проверяйте по одному продукту за раз." hints={MIXED_FRAMES_HINTS} onAgain={noop} />,
+  },
+  { title: "05 · ПЕЙВОЛЛ · Stars + СБП", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable onSbpPay={asyncNoop} /> },
+  { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} /> },
+  { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
+  { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
 ];
 
 function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNode }) {

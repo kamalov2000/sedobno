@@ -106,7 +106,7 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
             <span style={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 500, fontSize: 42, lineHeight: 1, color: "var(--text)" }}>
               {PRICE_RUB} ₽
             </span>
-            <span style={{ display: "block", fontSize: 14, color: "var(--text2)", marginTop: 8 }}>в месяц</span>
+            <span style={{ display: "block", fontSize: 14, color: "var(--text2)", marginTop: 8 }}>за 30 дней</span>
           </div>
         </div>
       </div>
@@ -137,9 +137,11 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
           }}
         >
           <i className={`ti ${busy ? "ti-loader-2" : "ti-star"}`} aria-hidden="true" style={{ fontSize: 19, animation: busy ? "sjspin 0.9s linear infinite" : "none" }} />
-          {busy ? "Открываем оплату…" : `Оформить за ${PRICE_RUB} ₽/мес`}
+          {busy ? "Открываем оплату…" : `Оплатить ${PRICE_RUB} ₽ — 30 дней безлимита`}
         </button>
-        <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text3)", marginTop: 9 }}>Оплата через Telegram Stars</div>
+        <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text3)", marginTop: 9, lineHeight: 1.4 }}>
+          Разовый платёж, без автопродления. Оплата через Telegram Stars
+        </div>
 
         {sbpAvailable && (
           <button

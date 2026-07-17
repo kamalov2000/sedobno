@@ -1,22 +1,39 @@
 import PhotoStager from "../components/PhotoStager";
 
-// Экран 04 · Ошибка «не разглядел состав». Лимит не списывается (и при
-// label_not_found, и при scan_failed) — плашка «Эта попытка не списана».
-// Заголовок/подзаголовок параметризованы: разные тексты для двух причин.
+// Экран 04 · Ошибка-исход скана. Лимит не списывается (label_not_found, not_food,
+// mixed_frames, scan_failed) — плашка «Эта попытка не списана».
+// Заголовок/подзаголовок/подсказки параметризованы: советы зависят от того, ЧТО
+// именно пошло не так (App выбирает набор по статусу скана).
+export interface Hint {
+  icon: string;
+  text: string;
+}
+
 interface Props {
   title: string;
   subtitle: string;
   onAgain: (files: File[]) => void;
   isSubscribed?: boolean; // у подписчика попыток нет — плашку «не списана» не показываем
+  hints?: Hint[]; // по умолчанию — «камерные» советы (плохо прочитанный состав)
 }
 
-const HINTS = [
+// Не разглядели состав: советы про съёмку.
+export const CAMERA_HINTS: Hint[] = [
   { icon: "ti-zoom-in", text: "Ближе к тексту состава" },
   { icon: "ti-sun", text: "Больше света" },
   { icon: "ti-frame", text: "В кадре — только блок «Состав»" },
 ];
+// Несъедобный продукт: советовать «снять ближе» бессмысленно — это в принципе не еда.
+export const NOT_FOOD_HINTS: Hint[] = [
+  { icon: "ti-tools-kitchen-2", text: "Съедобно оценивает только еду и напитки" },
+];
+// Кадры от разных упаковок: про склейку мультифото, а не про свет/резкость.
+export const MIXED_FRAMES_HINTS: Hint[] = [
+  { icon: "ti-stack-2", text: "Снимите все кадры с одной упаковки" },
+  { icon: "ti-focus-2", text: "Проверяйте по одному продукту за раз" },
+];
 
-export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = false }: Props) {
+export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = false, hints = CAMERA_HINTS }: Props) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", boxSizing: "border-box", minHeight: 0 }}>
       <div style={{ marginTop: 36 }}>
@@ -33,7 +50,7 @@ export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = f
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 28 }}>
-        {HINTS.map((h) => (
+        {hints.map((h) => (
           <div key={h.icon} style={{ display: "flex", alignItems: "center", gap: 13, minHeight: 48 }}>
             <span style={{ width: 40, height: 40, borderRadius: 11, background: "var(--bg-soft)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
               <i className={`ti ${h.icon}`} aria-hidden="true" style={{ fontSize: 19, color: "var(--text2)" }} />
