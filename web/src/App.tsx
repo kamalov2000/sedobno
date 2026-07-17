@@ -1,29 +1,29 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, payCreate, sbpPay, getMe, ApiError } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
-import type { Me, ScanResult } from "./types";
-import HomeScreen from "./screens/HomeScreen";
+import type { Me, ScanResult, MealResult } from "./types";
+import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
+import MealResultScreen from "./screens/MealResultScreen";
+import DiaryScreen from "./screens/DiaryScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
-import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
+import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
-// Стейт-машина mini-app. 4.2: полный флоу фото → лоадер → результат/ошибка/пейволл.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history";
+// Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
+// Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
   title: string;
   subtitle: string;
-  hints?: Hint[]; // не задан — ErrorScreen покажет «камерные» советы по умолчанию
+  hints?: Hint[];
+  primaryAction?: { label: string; icon?: string; onClick: () => void };
 }
 
-// Копия экрана ошибки для «не распознал состав» (label_not_found) — дизайн-текст.
-// Подсказка зависит от того, ЧТО именно модель увидела в кадре (reason с бэка):
-// советовать «снимите ближе и при свете» бессмысленно, если человек вообще
-// сфотографировал лицевую сторону пачки.
 const LABEL_ERRORS: Record<string, ErrorCopy> = {
   not_a_label: {
     title: "Это не похоже на состав продукта",
@@ -39,7 +39,6 @@ const LABEL_ERRORS: Record<string, ErrorCopy> = {
   },
 };
 
-// Старый бэк без reason (и неожиданный error в теле 200) — прежний общий текст.
 const LABEL_ERROR_FALLBACK: ErrorCopy = {
   title: "Не разглядел состав",
   subtitle: "На фото не нашлось читаемого списка ингредиентов.",
@@ -50,9 +49,10 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [bootError, setBootError] = useState<string>("");
   const [view, setView] = useState<View>("home");
+  const [mode, setMode] = useState<HomeMode>("scan"); // режим главного экрана: состав | калории
   const [result, setResult] = useState<ScanResult | null>(null);
+  const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
-  // Открыт ли текущий экран результата ИЗ истории: тогда «назад» ведёт в историю, а не домой.
   const [fromHistory, setFromHistory] = useState(false);
 
   const boot = useCallback(async () => {
@@ -80,15 +80,14 @@ export default function App() {
     void boot();
   }, [boot]);
 
-  // Нативная кнопка «назад» Telegram. Показываем на любом экране-исходе скана
-  // (результат/алкоголь/ошибка) и в истории — иначе после скана из результата некуда
-  // уйти, кроме «проверить ещё». Исход, открытый ИЗ истории → назад в историю; свежий
-  // скан и сама история → на главный.
+  // Нативная кнопка «назад» Telegram. Показываем на экранах-исходах и в списках
+  // (история/дневник). Исход из истории → назад в историю; остальное → на главный.
   useEffect(() => {
     const bb = tg()?.BackButton;
     if (!bb) return;
-    const isOutcome = view === "result" || view === "not_scored" || view === "error";
-    if (!(view === "history" || isOutcome)) {
+    const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result";
+    const isList = view === "history" || view === "meal_diary";
+    if (!(isList || isOutcome)) {
       bb.hide();
       return;
     }
@@ -108,9 +107,70 @@ export default function App() {
     };
   }, [view, fromHistory]);
 
+  // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/ошибка/пейволл.
+  const runMeal = useCallback(async (files: File[]) => {
+    setMealResult(null);
+    setView("loading");
+    try {
+      const outcome = await analyzeMeal(files);
+      if (outcome.kind === "paywall") {
+        setMe((m) => (m ? { ...m, meals_left: 0 } : m));
+        setView("paywall");
+        return;
+      }
+      if (outcome.kind === "error") {
+        notify("error");
+        setErrorCopy({ title: "Не удалось разобрать фото", subtitle: outcome.message });
+        setView("error");
+        return;
+      }
+      const data = outcome.data;
+      setMe((m) => (m ? { ...m, meals_left: data.meals_left } : m));
+      if (data.status === "ok") {
+        notify("success");
+        setMealResult(data);
+        setView("meal_result");
+      } else if (data.status === "label_detected") {
+        // В кадре упаковка с этикеткой — подсказываем переключиться на сканер состава.
+        notify("warning");
+        setErrorCopy({
+          title: "Похоже, это упаковка",
+          subtitle: data.message || "Для продукта с составом точнее сработает сканер состава.",
+          hints: MEAL_LABEL_HINTS,
+          primaryAction: {
+            label: "Открыть сканер состава",
+            icon: "ti-scan",
+            onClick: () => {
+              setMode("scan");
+              setView("home");
+            },
+          },
+        });
+        setView("error");
+      } else {
+        // not_food (или неожиданный error в теле 200) — попытка не списана.
+        notify("warning");
+        setErrorCopy({
+          title: "На фото не видно еды",
+          subtitle: data.message || "Сфотографируйте готовое блюдо на тарелке.",
+          hints: MEAL_NOT_FOOD_HINTS,
+        });
+        setView("error");
+      }
+    } catch (err) {
+      notify("error");
+      setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
+      setView("error");
+    }
+  }, []);
+
   const onScan = useCallback(async (files: File[]) => {
-    setFromHistory(false); // свежий скан — не из истории: его «назад» ведёт домой
-    setResult(null); // не даём прошлому результату «залипнуть», если что-то пойдёт не так
+    if (mode === "meal") {
+      void runMeal(files);
+      return;
+    }
+    setFromHistory(false);
+    setResult(null);
     setView("loading");
     try {
       const outcome = await scanPhoto(files);
@@ -125,7 +185,6 @@ export default function App() {
         setView("error");
         return;
       }
-      // outcome.kind === "result"
       const data = outcome.data;
       setMe((m) => (m ? { ...m, scans_left: data.scans_left } : m));
       if (data.status === "ok") {
@@ -133,12 +192,9 @@ export default function App() {
         setResult(data);
         setView("result");
       } else if (data.status === "not_scored") {
-        // Алкоголь: балла нет, но факты (состав, КБЖУ) показываем. Не ошибка — экран
-        // результата без вердикта, поэтому notify не "warning", а нейтральный.
         setResult(data);
         setView("not_scored");
       } else if (data.status === "not_food") {
-        // Косметика/химия/лекарство — не оцениваем; попытка не списана.
         notify("warning");
         setErrorCopy({
           title: "Это не еда",
@@ -147,7 +203,6 @@ export default function App() {
         });
         setView("error");
       } else if (data.status === "mixed_frames") {
-        // Кадры от разных продуктов — попытка не списана.
         notify("warning");
         setErrorCopy({
           title: "Кадры от разных продуктов",
@@ -156,20 +211,16 @@ export default function App() {
         });
         setView("error");
       } else {
-        // label_not_found (или неожиданный error в теле 200) — попытка не списана.
         notify("warning");
         setErrorCopy(LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK);
         setView("error");
       }
     } catch (err) {
       notify("error");
-      setErrorCopy({
-        title: "Что-то пошло не так",
-        subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз.",
-      });
+      setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
       setView("error");
     }
-  }, []);
+  }, [mode, runMeal]);
 
   // Оплата подписки: создаём Stars-инвойс → tg.openInvoice → по "paid" обновляем профиль.
   const onPay = useCallback(async () => {
@@ -189,10 +240,10 @@ export default function App() {
     }
     if (out.kind === "error") {
       notify("error");
-      return; // остаёмся на пейволле; пользователь может повторить
+      return;
     }
     const wa = tg();
-    if (!wa) return; // вне Telegram оплату не открыть
+    if (!wa) return;
     wa.openInvoice(out.url, (status) => {
       if (status === "paid") {
         notify("success");
@@ -201,16 +252,12 @@ export default function App() {
     });
   }, []);
 
-  // Оплата картой/СБП: создаём платёж и открываем ПРЯМУЮ ссылку ЮKassa (openLink) —
-  // без промежуточного лендинга. Подписка активируется вебхуком ЮKassa на бэке; при
-  // возврате в mini-app обновляем профиль.
   const onSbpPay = useCallback(async () => {
     const out = await sbpPay();
     if (out.kind === "error") {
       notify("error");
-      return; // остаёмся на пейволле
+      return;
     }
-    // Одноразовый рефреш профиля, когда пользователь вернётся из браузера оплаты.
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       document.removeEventListener("visibilitychange", onVisible);
@@ -254,19 +301,7 @@ export default function App() {
             <button
               type="button"
               className="sj-cta"
-              style={{
-                marginTop: 20,
-                height: 48,
-                padding: "0 24px",
-                background: "var(--accent)",
-                color: "var(--on-accent)",
-                border: "none",
-                borderRadius: 12,
-                fontFamily: "'Golos Text', sans-serif",
-                fontSize: 15,
-                fontWeight: 500,
-                cursor: "pointer",
-              }}
+              style={{ marginTop: 20, height: 48, padding: "0 24px", background: "var(--accent)", color: "var(--on-accent)", border: "none", borderRadius: 12, fontFamily: "'Golos Text', sans-serif", fontSize: 15, fontWeight: 500, cursor: "pointer" }}
               onClick={() => void boot()}
             >
               Повторить
@@ -281,7 +316,15 @@ export default function App() {
   return (
     <Shell>
       {view === "home" && me && (
-        <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} onHistory={() => setView("history")} />
+        <HomeScreen
+          me={me}
+          mode={mode}
+          onModeChange={setMode}
+          onScan={onScan}
+          onSubscribe={() => setView("paywall")}
+          onHistory={() => setView("history")}
+          onDiary={() => setView("meal_diary")}
+        />
       )}
       {view === "history" && (
         <HistoryScreen
@@ -293,24 +336,30 @@ export default function App() {
           }}
         />
       )}
+      {view === "meal_diary" && <DiaryScreen onBack={() => setView("home")} />}
       {view === "loading" && <ScanLoader />}
-      {view === "not_scored" && result && (
-        <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
-      )}
-
-      {view === "result" && result && (
-        <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />
+      {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />}
+      {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />}
+      {view === "meal_result" && mealResult && (
+        <MealResultScreen
+          result={mealResult}
+          isSubscribed={me?.is_subscribed ?? false}
+          onDone={() => setView("meal_diary")}
+          onRetake={() => setView("home")}
+        />
       )}
       {view === "error" && (
-        <ErrorScreen title={errorCopy.title} subtitle={errorCopy.subtitle} hints={errorCopy.hints} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />
+        <ErrorScreen
+          title={errorCopy.title}
+          subtitle={errorCopy.subtitle}
+          hints={errorCopy.hints}
+          primaryAction={errorCopy.primaryAction}
+          onAgain={onScan}
+          isSubscribed={me?.is_subscribed ?? false}
+        />
       )}
       {view === "paywall" && (
-        <PaywallScreen
-          onPay={onPay}
-          onDismiss={() => setView("home")}
-          sbpAvailable={me?.sbp_available ?? false}
-          onSbpPay={onSbpPay}
-        />
+        <PaywallScreen onPay={onPay} onDismiss={() => setView("home")} sbpAvailable={me?.sbp_available ?? false} onSbpPay={onSbpPay} />
       )}
     </Shell>
   );
@@ -343,11 +392,5 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 function Spinner() {
-  return (
-    <i
-      className="ti ti-loader-2"
-      aria-hidden="true"
-      style={{ fontSize: 28, color: "var(--accent)", animation: "sjspin 0.9s linear infinite", display: "block" }}
-    />
-  );
+  return <i className="ti ti-loader-2" aria-hidden="true" style={{ fontSize: 28, color: "var(--accent)", animation: "sjspin 0.9s linear infinite", display: "block" }} />;
 }

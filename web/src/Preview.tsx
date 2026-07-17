@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
-import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult } from "./types";
+import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult, MealResult, MealsByDay, MealDays } from "./types";
 import HomeScreen from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
-import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
+import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
+import MealResultScreen from "./screens/MealResultScreen";
+import DiaryScreen from "./screens/DiaryScreen";
 
 // Офлайн-витрина экранов для визуального прохода (обе темы рядом, мок-данные).
 // Открывается по ?preview; тема задаётся на контейнере <Frame> через data-theme.
@@ -81,10 +83,42 @@ const mockHistory: ScanHistoryItem[] = [
 const historyLoad = async (cur?: number): Promise<ScanHistoryPage> => (cur ? { items: [] } : { items: mockHistory });
 const historyEmpty = async (): Promise<ScanHistoryPage> => ({ items: [] });
 
+// --- Моки модуля калорий ---
+const mockMeal: MealResult = {
+  status: "ok",
+  id: 1,
+  meals_left: 6,
+  confidence: 0.55, // низкая → покажет пометку «оценка на глаз»
+  note: "Соус оценён приблизительно.",
+  dishes: [
+    { name: "Борщ", grams: 300, kcal: 172, protein_g: 5, fat_g: 8, carb_g: 20, confidence: 0.8 },
+    { name: "Гречка с котлетой", grams: 250, kcal: 420, protein_g: 24, fat_g: 18, carb_g: 40, confidence: 0.6 },
+    { name: "Хлеб ржаной", grams: 30, kcal: 70, protein_g: 2, fat_g: 1, carb_g: 14, confidence: 0.9 },
+  ],
+  total: { kcal: 662, protein_g: 31, fat_g: 27, carb_g: 74 },
+};
+const diaryDay = async (): Promise<MealsByDay> => ({
+  day: "2026-07-17",
+  total: { day: "2026-07-17", meals_count: 2, kcal: 980, protein_g: 42, fat_g: 33, carb_g: 108 },
+  items: [
+    { id: 1, eaten_at: "2026-07-17T09:10:00Z", created_at: "2026-07-17T09:10:00Z", status: "ok", source: "photo", meal_type: "breakfast", edited: false, dishes: [{ name: "Овсянка с бананом", grams: 250, kcal: 318, protein_g: 8, fat_g: 6, carb_g: 58, confidence: 0.8 }], total: { kcal: 318, protein_g: 8, fat_g: 6, carb_g: 58 } },
+    { id: 2, eaten_at: "2026-07-17T14:20:00Z", created_at: "2026-07-17T14:20:00Z", status: "ok", source: "photo", meal_type: "lunch", edited: true, dishes: [{ name: "Борщ", grams: 300, kcal: 172, protein_g: 5, fat_g: 8, carb_g: 20, confidence: 0.8 }, { name: "Гречка с котлетой", grams: 250, kcal: 490, protein_g: 29, fat_g: 19, carb_g: 30, confidence: 0.6 }], total: { kcal: 662, protein_g: 34, fat_g: 27, carb_g: 50 } },
+  ],
+});
+const diaryWeek = async (): Promise<MealDays> => ({
+  days: [
+    { day: "2026-07-13", meals_count: 3, kcal: 1820, protein_g: 78, fat_g: 60, carb_g: 210 },
+    { day: "2026-07-14", meals_count: 2, kcal: 1420, protein_g: 62, fat_g: 48, carb_g: 160 },
+    { day: "2026-07-16", meals_count: 4, kcal: 2100, protein_g: 90, fat_g: 70, carb_g: 240 },
+    { day: "2026-07-17", meals_count: 2, kcal: 980, protein_g: 42, fat_g: 33, carb_g: 108 },
+  ],
+});
+
 const SCREENS: { title: string; node: ReactNode }[] = [
-  { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
   { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} /> },
   { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} /> },
@@ -104,6 +138,16 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} /> },
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
+  { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
+  {
+    title: "07 · КАЛОРИИ · не еда",
+    node: <ErrorScreen title="На фото не видно еды" subtitle="Сфотографируйте готовое блюдо на тарелке." hints={MEAL_NOT_FOOD_HINTS} onAgain={noop} />,
+  },
+  {
+    title: "07 · КАЛОРИИ · это упаковка",
+    node: <ErrorScreen title="Похоже, это упаковка" subtitle="Для продукта с составом точнее сработает сканер состава." hints={MEAL_LABEL_HINTS} primaryAction={{ label: "Открыть сканер состава", icon: "ti-scan", onClick: noop }} onAgain={noop} />,
+  },
+  { title: "08 · ДНЕВНИК · день", node: <DiaryScreen onBack={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
 ];
 
 function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNode }) {
