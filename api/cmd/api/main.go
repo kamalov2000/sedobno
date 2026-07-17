@@ -20,6 +20,7 @@ import (
 	"github.com/sostav/api/internal/dict"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/logging"
+	"github.com/sostav/api/internal/meal"
 	"github.com/sostav/api/internal/pipeline"
 	"github.com/sostav/api/internal/scoring"
 	"github.com/sostav/api/internal/server"
@@ -54,6 +55,16 @@ func main() {
 	}
 
 	srv := server.New(cfg, pool, pipe, log)
+
+	// Пайплайн модуля калорий (feature/calories): отдельный vision-провайдер, свой
+	// семафор. Строится из того же LLM_PROVIDER; ошибка сборки фатальна, как у сканера.
+	mealPipe, err := buildMealPipeline(cfg, log)
+	if err != nil {
+		log.Error("сборка пайплайна калорий не удалась", "err", err)
+		os.Exit(1)
+	}
+	srv.SetMealPipeline(mealPipe)
+
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Router(),
@@ -101,6 +112,16 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
 	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
 	return pipe, nil
+}
+
+// buildMealPipeline собирает пайплайн модуля калорий: vision-провайдер (MealVisionModel
+// или дефолтная vision-модель провайдера) + семафор конкурентности. Отдельно от сканера.
+func buildMealPipeline(cfg *config.Config, log *slog.Logger) (*meal.Pipeline, error) {
+	analyzer, err := llm.NewMealAnalyzer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("инициализация vision-провайдера калорий: %w", err)
+	}
+	return meal.New(analyzer, cfg.LLMMaxConcurrent, log), nil
 }
 
 // healthcheck дёргает локальный /api/health и завершает процесс с кодом 0/1.
