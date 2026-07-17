@@ -4,7 +4,18 @@
 // 402/429 обрабатываются на уровне /scan (4.2), здесь — только базовый транспорт.
 
 import { authBody } from "./telegram";
-import type { AuthResponse, Me, ScanResult, ScanHistoryPage } from "./types";
+import type {
+  AuthResponse,
+  Me,
+  ScanResult,
+  ScanHistoryPage,
+  MealResult,
+  MealDiaryItem,
+  MealItem,
+  MealType,
+  MealsByDay,
+  MealDays,
+} from "./types";
 
 let token: string | null = null;
 
@@ -140,4 +151,74 @@ export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
 
     return { kind: "result", data: (await res.json()) as ScanResult };
   }
+}
+
+// --- Модуль калорий по фото (feature/calories) ---
+
+/** Результат разбора фото еды для UI (зеркалит ScanOutcome сканера). */
+export type MealOutcome =
+  | { kind: "result"; data: MealResult }
+  | { kind: "paywall" }
+  | { kind: "error"; message: string };
+
+/** POST /api/meals — разбор фото приёма. Тот же паттерн, что scanPhoto: FormData поле
+ *  photo (1–3 кадра), ретраи 429 с бэкоффом, 402 → пейволл. */
+export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
+  const maxBusyRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    const form = new FormData();
+    for (const f of files) form.append("photo", f);
+    const res = await apiFetch("/api/meals", { method: "POST", body: form });
+
+    if (res.status === 402) return { kind: "paywall" };
+
+    if (res.status === 429 && attempt < maxBusyRetries) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || 3;
+      await sleep(retryAfter * 1000 * (attempt + 1));
+      continue;
+    }
+
+    if (!res.ok) return { kind: "error", message: await readMessage(res) };
+
+    return { kind: "result", data: (await res.json()) as MealResult };
+  }
+}
+
+/** GET /api/meals?day=YYYY-MM-DD — приёмы за день + агрегат. Без day — сегодня (МСК). */
+export async function getMeals(day?: string): Promise<MealsByDay> {
+  const q = day ? `?day=${day}` : "";
+  const res = await apiFetch(`/api/meals${q}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** GET /api/meals/days?from&to — дневные агрегаты за период (недельный экран). */
+export async function getMealDays(from: string, to: string): Promise<MealDays> {
+  const res = await apiFetch(`/api/meals/days?from=${from}&to=${to}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** Тело правки приёма: любое подмножество полей. */
+export interface MealPatch {
+  dishes?: MealItem[];
+  eaten_at?: string;
+  meal_type?: MealType;
+}
+
+/** PATCH /api/meals/{id} — правка приёма (сервер пересчитывает суммы). */
+export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryItem> {
+  const res = await apiFetch(`/api/meals/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** DELETE /api/meals/{id} — удаление приёма. */
+export async function deleteMeal(id: number): Promise<void> {
+  const res = await apiFetch(`/api/meals/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
 }

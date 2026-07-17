@@ -4,6 +4,8 @@
 export interface Me {
   scans_left: number; // для подписчика бэк отдаёт -1 — в UI не показываем (см. is_subscribed)
   free_scans_used: number;
+  meals_left: number; // остаток разборов еды (модуль калорий); -1 = безлимит (подписчик)
+  free_meals_used: number;
   is_subscribed: boolean;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла
@@ -90,4 +92,77 @@ export interface ScanResult {
   message?: string;
   scan_number?: number; // порядковый номер проверки (фолбэк ценника)
   scans_left: number; // -1 == безлимит (подписчик)
+}
+
+// --- Модуль калорий по фото (feature/calories). Зеркалит api/internal/server/meals.go ---
+
+export type MealStatus = "ok" | "not_food" | "label_detected" | "error";
+export type MealType = "breakfast" | "lunch" | "dinner" | "snack";
+
+/** Одно распознанное блюдо. КБЖУ — для оценённой порции (grams), не на 100 г. */
+export interface MealItem {
+  name: string;
+  grams: number;
+  kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+  confidence: number; // 0..1
+}
+
+/** Суммарные КБЖУ приёма (сумма по блюдам). */
+export interface MealMacros {
+  kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+}
+
+/** POST /api/meals — разбор фото приёма. При ok несёт id/блюда/итог; иначе — message. */
+export interface MealResult {
+  status: MealStatus;
+  id?: number;
+  eaten_at?: string;
+  dishes?: MealItem[];
+  total?: MealMacros;
+  confidence?: number; // общая уверенность разбора (0..1)
+  note?: string; // ремарка модели о допущениях
+  message?: string; // текст для не-ok исходов (not_food/label_detected)
+  meals_left: number; // -1 == безлимит (подписчик)
+}
+
+/** Приём в дневнике (GET /api/meals, PATCH). */
+export interface MealDiaryItem {
+  id: number;
+  eaten_at: string; // RFC3339
+  created_at: string;
+  status: MealStatus;
+  source: string; // photo | manual
+  meal_type?: MealType; // завтрак/обед/ужин/перекус — проставляется в дневник
+  dishes: MealItem[];
+  total?: MealMacros;
+  edited: boolean;
+  confidence?: number;
+}
+
+/** Дневной агрегат (view meal_daily, граница дня Europe/Moscow). */
+export interface MealDaily {
+  day: string; // YYYY-MM-DD
+  meals_count: number;
+  kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+}
+
+/** GET /api/meals?day= — дневник за день: агрегат + приёмы. */
+export interface MealsByDay {
+  day: string;
+  total: MealDaily;
+  items: MealDiaryItem[];
+}
+
+/** GET /api/meals/days?from&to — дневные агрегаты за период (недельный экран). */
+export interface MealDays {
+  days: MealDaily[];
 }

@@ -14,8 +14,8 @@ import PaywallScreen from "./screens/PaywallScreen";
 const noop = () => {};
 const asyncNoop = async () => {};
 
-const meFree: Me = { scans_left: 8, free_scans_used: 2, is_subscribed: false, sbp_available: true };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z" };
+const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z" };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
