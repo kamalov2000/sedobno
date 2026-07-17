@@ -27,8 +27,12 @@ type authRequest struct {
 // фронт показывает «∞»/скрывает счётчик, а НЕ «-1 проверок» (Этап 4). Тот же контракт,
 // что и у scanResponse.ScansLeft.
 type meView struct {
-	ScansLeft     int  `json:"scans_left"`
-	FreeScansUsed int  `json:"free_scans_used"`
+	ScansLeft     int `json:"scans_left"`
+	FreeScansUsed int `json:"free_scans_used"`
+	// MealsLeft — остаток бесплатных разборов еды (модуль калорий, feature/calories),
+	// -1 = безлимит. Отдельная квота от ScansLeft; тот же контракт «-1 = ∞».
+	MealsLeft     int  `json:"meals_left"`
+	FreeMealsUsed int  `json:"free_meals_used"`
 	IsSubscribed  bool `json:"is_subscribed"`
 	// SubscriptionExpiresAt — когда истекает активная подписка (для бейджа на главном
 	// экране). Опущено, если активной подписки нет.
@@ -96,14 +100,21 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 // ошибке чтения просто не отдаём поле, ответ не роняем).
 func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 	left := -1
+	mealsLeft := -1
 	if !u.IsSubscribed {
 		left = freeScanLimit - u.FreeScansUsed
 		if left < 0 {
 			left = 0
 		}
+		mealsLeft = freeMealLimit - u.FreeMealsUsed
+		if mealsLeft < 0 {
+			mealsLeft = 0
+		}
 	}
 	v := meView{
-		ScansLeft: left, FreeScansUsed: u.FreeScansUsed, IsSubscribed: u.IsSubscribed,
+		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
+		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
+		IsSubscribed: u.IsSubscribed,
 		SBPAvailable: s.cfg.SBPEnabled,
 	}
 	if u.IsSubscribed {
