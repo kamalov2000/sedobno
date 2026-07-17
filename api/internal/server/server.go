@@ -95,6 +95,9 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/meals/{id}", s.handleMealUpdate)
 			r.Delete("/meals/{id}", s.handleMealDelete)
 
+			// Профиль питания и дневная норма (feature/calories).
+			r.Patch("/profile/nutrition", s.handleProfileNutrition)
+
 			r.Get("/me", s.handleMe)
 			r.Post("/pay/create", s.handlePayCreate)
 			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa

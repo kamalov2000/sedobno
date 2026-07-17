@@ -43,6 +43,9 @@ type meView struct {
 	// SBPAvailable — включён ли канал оплаты по СБП/карте (§14.1). Фронт по нему решает,
 	// показывать ли вторую кнопку пейволла. Всегда присутствует (не omitempty).
 	SBPAvailable bool `json:"sbp_available"`
+	// NutritionProfile — профиль питания и дневная норма (feature/calories): заполнен ли,
+	// введённые поля (префилл визарда) и таргеты. Всегда присутствует (filled=false, если пуст).
+	NutritionProfile nutritionProfileView `json:"nutrition_profile"`
 }
 
 type authResponse struct {
@@ -157,6 +160,12 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		} else {
 			v.SubscriptionExpiresAt = exp
 		}
+	}
+	// Профиль питания (best-effort — при ошибке отдаём пустой, ответ не роняем).
+	if p, err := s.store.GetNutritionProfile(ctx, u.ID); err != nil {
+		s.log.Warn("me: чтение профиля питания", "err", err, "user", u.ID)
+	} else {
+		v.NutritionProfile = profileView(p)
 	}
 	return v
 }

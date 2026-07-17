@@ -47,6 +47,12 @@ const (
 // ErrInvalid — вход вне допустимых диапазонов или неизвестный enum.
 var ErrInvalid = errors.New("некорректный профиль питания")
 
+// ValidSex/ValidActivity/ValidGoal — проверка отдельных enum-полей (для пофайловой
+// валидации в API с внятными сообщениями об ошибке).
+func ValidSex(s string) bool      { return s == SexMale || s == SexFemale }
+func ValidActivity(a string) bool { _, ok := activityFactor[a]; return ok }
+func ValidGoal(g string) bool     { _, ok := goalFactor[g]; return ok }
+
 // Input — данные для расчёта нормы (возраст, не год рождения — чтобы функция была чистой).
 type Input struct {
 	Sex      string
