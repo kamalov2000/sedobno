@@ -5,7 +5,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe tidy web-build fmt deploy bot-setup
+.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup
 
 help: ## список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -46,6 +46,10 @@ test: ## юнит-тесты backend
 
 evalpipe: env ## тест-харнесс пайплайна: прогон testdata/labels через 4 фазы (§12)
 	set -a; . ./$(ENV_FILE); set +a; cd api && go run ./cmd/evalpipe --dir ../testdata/labels
+
+meal-eval: env ## калибровка калорий: прогон testdata/meals через Haiku+Sonnet → results_report.md (нужен ANTHROPIC_API_KEY)
+	# Live-тег: платные vision-вызовы, вне CI. Кладите фото в testdata/meals + ground_truth.md.
+	set -a; . ./$(ENV_FILE); set +a; cd api && go test -tags live ./internal/meal/ -run TestMealEval -v -timeout 30m
 
 tidy: ## go mod tidy
 	cd api && go mod tidy
