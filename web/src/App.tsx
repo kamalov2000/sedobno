@@ -8,13 +8,14 @@ import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import DiaryScreen from "./screens/DiaryScreen";
+import ProfileWizard from "./screens/ProfileWizard";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -336,7 +337,23 @@ export default function App() {
           }}
         />
       )}
-      {view === "meal_diary" && <DiaryScreen onBack={() => setView("home")} />}
+      {view === "meal_diary" && (
+        <DiaryScreen
+          onBack={() => setView("home")}
+          profile={me?.nutrition_profile}
+          onOpenWizard={() => setView("profile_wizard")}
+        />
+      )}
+      {view === "profile_wizard" && (
+        <ProfileWizard
+          initial={me?.nutrition_profile}
+          onDone={(profile) => {
+            setMe((m) => (m ? { ...m, nutrition_profile: profile } : m));
+            setView("meal_diary");
+          }}
+          onCancel={() => setView("meal_diary")}
+        />
+      )}
       {view === "loading" && <ScanLoader />}
       {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />}
       {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />}

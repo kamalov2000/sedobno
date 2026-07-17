@@ -15,6 +15,10 @@ import type {
   MealType,
   MealsByDay,
   MealDays,
+  NutritionProfile,
+  Sex,
+  ActivityLevel,
+  Goal,
 } from "./types";
 
 let token: string | null = null;
@@ -221,4 +225,25 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
 export async function deleteMeal(id: number): Promise<void> {
   const res = await apiFetch(`/api/meals/${id}`, { method: "DELETE" });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+}
+
+/** Тело правки профиля питания: любое подмножество полей. */
+export interface NutritionProfilePatch {
+  sex?: Sex;
+  birth_year?: number;
+  height_cm?: number;
+  weight_kg?: number;
+  activity_level?: ActivityLevel;
+  goal?: Goal;
+}
+
+/** PATCH /api/profile/nutrition — сохранить профиль, сервер пересчитывает норму. */
+export async function patchProfileNutrition(body: NutritionProfilePatch): Promise<NutritionProfile> {
+  const res = await apiFetch("/api/profile/nutrition", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
 }

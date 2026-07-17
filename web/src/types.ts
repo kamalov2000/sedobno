@@ -1,5 +1,25 @@
 // Контракты API (см. api/internal/server/*.go). Держим в синхроне с бэком.
 
+export type Sex = "male" | "female";
+export type ActivityLevel = "sedentary" | "light" | "moderate" | "high";
+export type Goal = "lose" | "maintain" | "gain";
+
+/** Профиль питания и дневная норма (feature/calories). filled — все таргеты посчитаны;
+ *  введённые поля возвращаются для префилла визарда. */
+export interface NutritionProfile {
+  filled: boolean;
+  sex?: Sex;
+  birth_year?: number;
+  height_cm?: number;
+  weight_kg?: number;
+  activity_level?: ActivityLevel;
+  goal?: Goal;
+  daily_kcal_target?: number;
+  daily_protein_g?: number;
+  daily_fat_g?: number;
+  daily_carb_g?: number;
+}
+
 /** GET /api/me и authResponse.me */
 export interface Me {
   scans_left: number; // для подписчика бэк отдаёт -1 — в UI не показываем (см. is_subscribed)
@@ -9,6 +29,7 @@ export interface Me {
   is_subscribed: boolean;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла
+  nutrition_profile: NutritionProfile; // всегда присутствует (filled=false, если профиль пуст)
 }
 
 /** POST /api/auth */

@@ -9,6 +9,7 @@ import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, M
 import PaywallScreen from "./screens/PaywallScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import DiaryScreen from "./screens/DiaryScreen";
+import ProfileWizard from "./screens/ProfileWizard";
 
 // Офлайн-витрина экранов для визуального прохода (обе темы рядом, мок-данные).
 // Открывается по ?preview; тема задаётся на контейнере <Frame> через data-theme.
@@ -16,8 +17,10 @@ import DiaryScreen from "./screens/DiaryScreen";
 const noop = () => {};
 const asyncNoop = async () => {};
 
-const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z" };
+const emptyProfile = { filled: false };
+const filledProfile = { filled: true, sex: "male" as const, birth_year: 1994, height_cm: 180, weight_kg: 80, activity_level: "moderate" as const, goal: "lose" as const, daily_kcal_target: 2345, daily_protein_g: 144, daily_fat_g: 65, daily_carb_g: 296 };
+const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true, nutrition_profile: emptyProfile };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
@@ -147,7 +150,9 @@ const SCREENS: { title: string; node: ReactNode }[] = [
     title: "07 · КАЛОРИИ · это упаковка",
     node: <ErrorScreen title="Похоже, это упаковка" subtitle="Для продукта с составом точнее сработает сканер состава." hints={MEAL_LABEL_HINTS} primaryAction={{ label: "Открыть сканер состава", icon: "ti-scan", onClick: noop }} onAgain={noop} />,
   },
-  { title: "08 · ДНЕВНИК · день", node: <DiaryScreen onBack={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
+  { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
+  { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
+  { title: "09 · ВИЗАРД · профиль питания", node: <ProfileWizard onDone={noop} onCancel={noop} /> },
 ];
 
 function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNode }) {

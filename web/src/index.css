@@ -116,6 +116,24 @@
   --dot-high: #ec7a72;
 }
 
+/* Янтарный акцент модуля калорий (feature/calories) — отделяет его от зелёного сканера
+   составов. На нём кольцо прогресса, норма, кнопки визарда. --cal-over: превышение нормы
+   (спокойный нейтральный, НЕ красный — за еду не стыдим). */
+:root {
+  --cal-accent: #c9821a;
+  --cal-accent-soft: #fbf1df;
+  --cal-on-accent: #ffffff;
+  --cal-track: #ece9e2;
+  --cal-over: #8f8b83;
+}
+[data-theme="dark"] {
+  --cal-accent: #d9a85b;
+  --cal-accent-soft: #3f331b;
+  --cal-on-accent: #1c1c1e;
+  --cal-track: #333330;
+  --cal-over: #9c988f;
+}
+
 @keyframes sjspin {
   to {
     transform: rotate(360deg);
