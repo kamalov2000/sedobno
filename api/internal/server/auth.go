@@ -14,6 +14,7 @@ import (
 // Лимиты и сроки (§8, §9).
 const (
 	freeScanLimit  = 10               // бесплатных сканов навсегда на telegram_id
+	freeMealLimit  = 10               // бесплатных разборов еды навсегда (модуль калорий, отдельно от сканов)
 	jwtTTL         = 30 * time.Minute // короткий JWT; фронт делает silent re-auth по 401
 	initDataMaxAge = 24 * time.Hour   // предельная давность Telegram initData
 )

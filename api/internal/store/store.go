@@ -25,6 +25,9 @@ type User struct {
 	TelegramID    int64
 	Username      string
 	FreeScansUsed int
+	// FreeMealsUsed — счётчик бесплатной квоты модуля калорий (feature/calories),
+	// независимый от FreeScansUsed. Премиум (IsSubscribed) даёт безлимит на оба.
+	FreeMealsUsed int
 	IsSubscribed  bool
 }
 
@@ -38,21 +41,21 @@ VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
 ON CONFLICT (telegram_id) DO UPDATE
   SET username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
       acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source)
-RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, is_subscribed`
+RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed`
 	var u User
 	err := s.pool.QueryRow(ctx, q, tgID, username, acquisitionSource).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.IsSubscribed)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed)
 	return u, err
 }
 
 // GetUserByID читает пользователя по внутреннему id (пре-чек лимита в /api/scan).
 func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	const q = `
-SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, is_subscribed
+SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed
 FROM users WHERE id = $1`
 	var u User
 	err := s.pool.QueryRow(ctx, q, id).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.IsSubscribed)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed)
 	return u, err
 }
 
