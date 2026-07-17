@@ -72,19 +72,19 @@ a:hover{color:#495F17}
       <div style="font-size:13.5px;color:var(--ink3);margin-top:14px">Без установки — бот живёт в Telegram. 10 проверок бесплатно, дальше — 249 ₽ за 30 дней безлимитных проверок.</div>
     </div>
     <div class="lp-hero-art" style="position:relative;display:flex;flex-direction:column;align-items:center;gap:14px">
-      <div style="position:absolute;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(122,154,46,0.16),transparent 70%)"></div>
-      <div class="lp-float" style="position:relative;width:100%;max-width:320px;box-sizing:border-box;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 30px 60px -22px rgba(15,60,35,0.3);animation:lpfloat 6s ease-in-out infinite">
+      <div style="position:absolute;width:300px;height:300px;border-radius:50%;background:radial-gradient(circle,rgba(22,168,90,0.14),transparent 70%)"></div>
+      <div class="lp-float" style="position:relative;width:358px;max-width:100%;box-sizing:border-box;min-height:240px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;box-shadow:0 30px 60px -22px rgba(15,60,35,0.3);animation:lpfloat 6s ease-in-out infinite">
         <div style="display:flex;align-items:center;justify-content:space-between">
-          <span style="font-family:'PT Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:var(--ink2)">РЕЗУЛЬТАТ ПРОВЕРКИ</span>
-          <span style="font-family:'PT Mono',monospace;font-size:10px;color:var(--ink2);background:var(--paper);border-radius:99px;padding:3px 9px">Пример: детский творожок</span>
+          <span style="font-family:'PT Mono',monospace;font-size:10.5px;letter-spacing:0.08em;color:var(--ink2);white-space:nowrap">РЕЗУЛЬТАТ ПРОВЕРКИ</span>
+          <span style="font-family:'PT Mono',monospace;font-size:10px;color:var(--ink2);background:var(--paper);border-radius:99px;padding:3px 9px;white-space:nowrap">Пример: детский творожок</span>
         </div>
-        <div style="position:relative;margin-top:12px;border-radius:14px;background:#FCEEED;border:1px solid #F2CBC8;padding:15px">
+        <div id="heroCard" style="position:relative;margin-top:12px;border-radius:14px;background:#FCEEED;border:1px solid #F2CBC8;padding:15px;transition:background .45s ease,border-color .45s ease">
           <div style="display:flex;align-items:center;gap:14px">
-            <span style="font-family:'Unbounded',sans-serif;font-weight:500;font-size:52px;line-height:1;color:#CC3B36;font-variant-numeric:tabular-nums;min-width:72px">28</span>
-            <span><span style="display:block;font-size:16px;font-weight:600;color:#CC3B36">Плохой состав</span><span style="display:block;font-size:12px;color:var(--ink3);margin-top:2px">из 100 баллов</span></span>
+            <span id="heroNum" style="font-family:'Unbounded',sans-serif;font-weight:500;font-size:52px;line-height:1;color:#CC3B36;font-variant-numeric:tabular-nums;min-width:72px">28</span>
+            <span><span id="heroWord" style="display:block;font-size:16px;font-weight:600;color:#CC3B36">Плохой состав</span><span style="display:block;font-size:12px;color:var(--ink3);margin-top:2px">из 100 баллов</span></span>
           </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:7px;margin-top:10px">
+        <div id="heroFlags" style="display:flex;flex-direction:column;gap:7px;margin-top:10px">
           <div style="border:1px solid var(--line);border-radius:11px;padding:9px 11px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:13px;font-weight:500;color:var(--ink)">Сахар — 2-й в списке</span><span style="font-size:10px;font-weight:600;background:#FBE4E3;color:#B93A36;border-radius:99px;padding:2px 8px;white-space:nowrap">много сахара</span></div></div>
           <div style="border:1px solid var(--line);border-radius:11px;padding:9px 11px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:13px;font-weight:500;color:var(--ink)">Растительный жир</span><span style="font-size:10px;font-weight:600;background:#FBF0DC;color:#96660F;border-radius:99px;padding:2px 8px;white-space:nowrap">пальмовое масло</span></div></div>
         </div>
@@ -95,9 +95,9 @@ a:hover{color:#495F17}
           <span style="font-size:12px;color:var(--ink2)">выше — чище состав</span>
         </div>
         <div style="position:relative;height:22px;margin-top:10px">
-          <div style="position:absolute;bottom:0;left:28%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center">
-            <span style="font-family:'Unbounded',sans-serif;font-weight:500;font-size:12px;line-height:1;color:#CC3B36">28</span>
-            <span style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #CC3B36;margin-top:3px"></span>
+          <div id="scaleMarker" style="position:absolute;bottom:0;left:28%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;transition:left .9s cubic-bezier(.33,1,.68,1)">
+            <span id="scaleNum" style="font-family:'Unbounded',sans-serif;font-weight:500;font-size:12px;line-height:1;color:#CC3B36">28</span>
+            <span id="scaleTri" style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid #CC3B36;margin-top:3px"></span>
           </div>
         </div>
         <div style="position:relative;height:10px;border-radius:99px;margin-top:2px;display:flex;overflow:hidden">
@@ -437,5 +437,56 @@ a:hover{color:#495F17}
     </div>
   </footer>
 </div>
+<script>
+/* Ротация hero-карточки «Результат проверки»: 3 состояния (плохой/средний/хороший)
+   из дизайн-хендоффа. Без JS остаётся статичный дефолт (product A) — разметка выше. */
+(function(){
+  var P=[
+    {score:28,word:'Плохой состав',bg:'#FCEEED',border:'#F2CBC8',num:'#CC3B36',flags:[
+      {name:'Сахар — 2-й в списке',badge:'много сахара',bg:'#FBE4E3',color:'#B93A36'},
+      {name:'Растительный жир',badge:'пальмовое масло',bg:'#FBF0DC',color:'#96660F'}]},
+    {score:57,word:'Средний состав',bg:'#FCF5E1',border:'#EBD79F',num:'#A4720F',flags:[
+      {name:'Сахар — 4-й в списке',badge:'есть сахар',bg:'#FBF0DC',color:'#96660F'},
+      {name:'Ароматизатор и крахмал',badge:'2 добавки',bg:'#FBF0DC',color:'#96660F'}]},
+    {score:89,word:'Хороший состав',bg:'#E7F5EC',border:'#B9E0C6',num:'#0E8A48',flags:[
+      {name:'Всего 3 ингредиента',badge:'короткий состав',bg:'#DCF0E3',color:'#0E8A48'},
+      {name:'Без добавленного сахара',badge:'без сахара',bg:'#DCF0E3',color:'#0E8A48'}]}
+  ];
+  var id=function(x){return document.getElementById(x);};
+  var card=id('heroCard'),num=id('heroNum'),word=id('heroWord'),flags=id('heroFlags'),
+      sMark=id('scaleMarker'),sNum=id('scaleNum'),sTri=id('scaleTri');
+  if(!card||!num||!word||!flags||!sMark||!sNum||!sTri) return;
+  var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var raf=null;
+  function fhtml(f){
+    return '<div style="border:1px solid var(--line);border-radius:11px;padding:9px 11px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'+
+      '<span style="font-size:13px;font-weight:500;color:var(--ink)">'+f.name+'</span>'+
+      '<span style="font-size:10px;font-weight:600;background:'+f.bg+';color:'+f.color+
+      ';border-radius:99px;padding:2px 8px;white-space:nowrap">'+f.badge+'</span></div></div>';
+  }
+  function setNum(v){ num.textContent=v; sNum.textContent=v; }
+  function render(p){
+    card.style.background=p.bg; card.style.borderColor=p.border;
+    word.textContent=p.word; word.style.color=p.num;
+    num.style.color=p.num; sNum.style.color=p.num; sTri.style.borderTopColor=p.num;
+    flags.innerHTML=p.flags.map(fhtml).join('');
+    sMark.style.left=p.score+'%';
+    if(raf) cancelAnimationFrame(raf);
+    if(reduce){ setNum(p.score); return; }
+    var t0=null,dur=550;
+    (function loop(ts){
+      if(t0===null) t0=ts;
+      var pr=Math.min(1,(ts-t0)/dur), e=1-Math.pow(1-pr,3);
+      setNum(Math.round(p.score*e));
+      if(pr<1) raf=requestAnimationFrame(loop); else setNum(p.score);
+    });
+    raf=requestAnimationFrame(function s(ts){ if(t0===null)t0=ts; var pr=Math.min(1,(ts-t0)/dur),e=1-Math.pow(1-pr,3); setNum(Math.round(p.score*e)); if(pr<1) raf=requestAnimationFrame(s); else setNum(p.score); });
+  }
+  var i=0;
+  render(P[0]);
+  setInterval(function(){ i=(i+1)%P.length; render(P[i]); }, 4600);
+})();
+</script>
 </body>
 </html>
