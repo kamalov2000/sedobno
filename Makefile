@@ -5,7 +5,10 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup
+.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup beta-up beta-deploy beta-down beta-logs beta-web
+
+# --- Бета-инстанс модуля калорий (feature/calories), отдельный проект sostav-beta. ---
+BETA_COMPOSE := docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta
 
 help: ## список целей
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
@@ -70,6 +73,27 @@ fmt: ## форматирование и статанализ Go
 # web_app-кнопку «для всех» ставит только BotFather (Bot Settings → Menu Button → URL
 # мини-аппа), где регистрируется домен. Per-chat через API работает, но всех юзеров так
 # не покрыть. Поэтому кнопка — ручной шаг в BotFather, команды — здесь.
+beta-web: ## собрать статику фронта беты (с username тестового бота)
+	docker run --rm -e VITE_BOT_USERNAME=@sedobno_beta_bot -v "$(CURDIR)/web:/w" -w /w node:20-alpine \
+	  sh -c 'npm ci --no-audit --no-fund && npm run build'
+
+beta-up: ## поднять/пересобрать бету (БД sedobno_beta + api-beta + web-beta + словарь). Прод не трогает
+	@test -f deploy/.env.beta || { echo "нет deploy/.env.beta — cp deploy/.env.beta.example deploy/.env.beta и заполни секреты"; exit 1; }
+	$(MAKE) beta-web
+	$(BETA_COMPOSE) up -d --build
+	$(BETA_COMPOSE) --profile tools run --rm seed-beta
+	@echo "бета поднята. Проверь: https://<beta-домен>/api/health"
+
+beta-deploy: ## ОБНОВИТЬ бету на свежие коммиты ветки одной командой (pull + пересборка)
+	git pull --ff-only origin feature/calories
+	$(MAKE) beta-up
+
+beta-down: ## остановить бету (том БД sedobno_beta сохраняется)
+	$(BETA_COMPOSE) down
+
+beta-logs: ## логи беты
+	$(BETA_COMPOSE) logs -f --tail=100
+
 bot-setup: ## настроить команды бота /start,/support (Bot API, разово; кнопку «Открыть» — в BotFather)
 	@set -e; \
 	TELEGRAM_BOT_TOKEN=$$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' $(ENV_FILE) | head -1); \
