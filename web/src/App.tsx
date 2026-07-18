@@ -9,6 +9,7 @@ import ResultScreen from "./screens/ResultScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import DiaryScreen from "./screens/DiaryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
+import { dayCardData, downloadShareCard } from "./shareCard";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
@@ -342,6 +343,12 @@ export default function App() {
           onBack={() => setView("home")}
           profile={me?.nutrition_profile}
           onOpenWizard={() => setView("profile_wizard")}
+          onShare={(data, profile) => {
+            // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
+            // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
+            const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+            void downloadShareCard(dayCardData(data, profile), "post", theme);
+          }}
         />
       )}
       {view === "profile_wizard" && (
