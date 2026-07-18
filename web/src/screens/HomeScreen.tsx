@@ -3,10 +3,10 @@ import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
 import { haptic } from "../telegram";
 
-// Home. Сегмент «Состав / Калории» с акцентом режима. Съёмка — через PhotoStager (мультикадр
-// со стейджингом: превью кадров, «Добавить ещё фото», «Готово, проверить (N)») в ОБОИХ
-// режимах: для состава мультикадр критичен (длинная этикетка в 2–3 кадра), для калорий
-// опционален. Иконка дневника с янтарной точкой при записях сегодня.
+// Home (финальный дизайн). Сегмент «Состав / Калории» с акцентом режима; большая круглая
+// кнопка съёмки по центру. Кнопка — стартовое состояние PhotoStager: по первому кадру
+// раскрывается стейджинг (превью, «Добавить ещё фото», «Готово, проверить N») — мультикадр
+// сохранён (для состава критичен, для калорий опционален). Иконка дневника с точкой.
 
 export type HomeMode = "scan" | "meal";
 
@@ -21,8 +21,16 @@ interface Props {
   todayHasMeals?: boolean;
 }
 
-// Хинт стейджинга для калорий (мультикадр опционален — просто ещё ракурс).
 const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
+
+function Caption({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div style={{ textAlign: "center", maxWidth: 300 }}>
+      <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)" }}>{title}</div>
+      <div style={{ fontSize: 13.5, color: "var(--text2)", marginTop: 4, lineHeight: 1.4 }}>{subtitle}</div>
+    </div>
+  );
+}
 
 export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, todayHasMeals }: Props) {
   const meal = mode === "meal";
@@ -49,7 +57,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
         {/* Переключатель режимов */}
-        <div style={{ display: "flex", background: "var(--bg-soft)", borderRadius: 13, padding: 4, marginTop: 16 }}>
+        <div style={{ display: "flex", background: "var(--bg-soft)", borderRadius: 13, padding: 4, marginTop: 20 }}>
           {(["scan", "meal"] as const).map((m) => {
             const active = mode === m;
             const color = m === "meal" ? "var(--cal-num)" : "var(--accent)";
@@ -70,48 +78,44 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           })}
         </div>
 
-        {/* Иллюстрация-подсказка по режиму */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, minHeight: 0 }}>
-          {meal ? (
-            <span style={{ width: 96, height: 96, borderRadius: 28, background: "var(--cal-soft)", color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <i className="ti ti-tools-kitchen-2" aria-hidden="true" style={{ fontSize: 44 }} />
-            </span>
+        {/* Центр: круглая кнопка съёмки (стартовое состояние PhotoStager) + подпись */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
+          {outOfActive ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
+              <button type="button" onClick={onSubscribe} aria-label="Оформить подписку" style={{ width: 112, height: 112, borderRadius: "50%", background: accent, color: onAccent, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 16px 34px -12px color-mix(in srgb, ${accent} 60%, transparent)` }}>
+                <i className="ti ti-crown" aria-hidden="true" style={{ fontSize: 42 }} />
+              </button>
+              <Caption title="Оформить подписку" subtitle={`Бесплатные ${meal ? "разборы еды" : "проверки состава"} кончились`} />
+            </div>
+          ) : meal ? (
+            <PhotoStager
+              key="meal"
+              startShape="circle"
+              onScan={onScan}
+              startLabel="Сфоткать блюдо"
+              startIcon="ti-tools-kitchen-2"
+              accentColor="var(--cal)"
+              onColor="var(--on-cal)"
+              hint={MEAL_HINT}
+              caption={<Caption title="Сфоткать блюдо" subtitle="Калории и КБЖУ порции по фото" />}
+            />
           ) : (
-            <div style={{ width: 206, background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", transform: "rotate(-2deg)" }}>
-              <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, lineHeight: 1.7, color: "var(--text2)" }}>
-                <span style={{ color: "var(--text)" }}>СОСТАВ:</span> творог, сахар, сироп глюкозы, масло пальмовое, крахмал кукурузный, ароматизатор…
-              </div>
-            </div>
+            <PhotoStager
+              key="scan"
+              startShape="circle"
+              onScan={onScan}
+              startLabel="Сканировать состав"
+              startIcon="ti-scan"
+              caption={<Caption title="Сканировать состав" subtitle="Оценка добавок и вердикт по этикетке" />}
+            />
           )}
-          <div style={{ textAlign: "center", maxWidth: 300 }}>
-            <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)" }}>{meal ? "Сфоткай блюдо" : "Сфотографируй состав"}</div>
-            <div style={{ fontSize: 13.5, color: "var(--text2)", marginTop: 4, lineHeight: 1.4 }}>
-              {meal ? "Калории и КБЖУ порции по фото" : "Оценка добавок и вердикт по этикетке"}
-            </div>
-          </div>
         </div>
 
-        {/* Квоты + съёмка + правовые ссылки */}
+        {/* Квоты + правовые ссылки */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 20 }}>
           <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.04em", color: "var(--text3)", textAlign: "center" }}>
             {me.is_subscribed ? "БЕЗЛИМИТ · ПОДПИСКА АКТИВНА" : `СОСТАВ ${Math.max(0, me.scans_left)}/10 · КАЛОРИИ ${Math.max(0, me.meals_left)}/10`}
           </div>
-
-          {outOfActive ? (
-            <button
-              type="button"
-              onClick={onSubscribe}
-              style={{ width: "100%", height: 56, background: accent, color: onAccent, border: "none", borderRadius: 14, fontFamily: "'Golos Text',sans-serif", fontSize: 16, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer" }}
-            >
-              <i className="ti ti-crown" aria-hidden="true" style={{ fontSize: 20 }} />
-              Оформить подписку
-            </button>
-          ) : meal ? (
-            <PhotoStager key="meal" onScan={onScan} startLabel="Сфоткать блюдо" startIcon="ti-camera" accentColor="var(--cal)" onColor="var(--on-cal)" hint={MEAL_HINT} />
-          ) : (
-            <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
-          )}
-
           <LegalLinks items={["about", "oferta", "privacy"]} />
         </div>
       </div>

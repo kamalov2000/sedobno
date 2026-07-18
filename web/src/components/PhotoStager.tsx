@@ -24,6 +24,10 @@ interface Props {
   startIcon?: string; // иконка первого кадра (Tabler без префикса ti)
   startHeight?: number;
   startFontSize?: number;
+  // Форма стартовой кнопки: "bar" (умолч., результат/ошибка) или "circle" (главный экран).
+  startShape?: "bar" | "circle";
+  startDiameter?: number; // диаметр круглой стартовой кнопки
+  caption?: React.ReactNode; // подпись под круглой кнопкой (пустое состояние)
   // Акцент кнопок (для режима «Калории» — янтарь; по умолчанию зелёный сканера).
   accentColor?: string;
   onColor?: string;
@@ -37,6 +41,9 @@ export default function PhotoStager({
   startIcon = "ti-scan",
   startHeight = 56,
   startFontSize = 16,
+  startShape = "bar",
+  startDiameter = 112,
+  caption,
   accentColor = "var(--accent)",
   onColor = "var(--on-accent)",
   hint = SCAN_HINT,
@@ -61,23 +68,26 @@ export default function PhotoStager({
   };
 
   if (photos.length === 0) {
+    const readErr = readError && (
+      <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>
+        Не удалось прочитать фото — снимите ещё раз.
+      </p>
+    );
+    // Круглая стартовая кнопка (главный экран) + подпись под ней; по первому кадру
+    // переключается на стейджинг миниатюр (мультикадр сохранён).
+    if (startShape === "circle") {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
+          {readErr}
+          <ScanButton shape="circle" diameter={startDiameter} icon={startIcon} label={startLabel} accentColor={accentColor} onColor={onColor} onFile={addPhoto} onReadError={() => setReadError(true)} />
+          {caption && <div style={{ textAlign: "center" }}>{caption}</div>}
+        </div>
+      );
+    }
     return (
       <>
-        {readError && (
-          <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>
-            Не удалось прочитать фото — снимите ещё раз.
-          </p>
-        )}
-        <ScanButton
-          label={startLabel}
-          icon={startIcon}
-          height={startHeight}
-          fontSize={startFontSize}
-          accentColor={accentColor}
-          onColor={onColor}
-          onFile={addPhoto}
-          onReadError={() => setReadError(true)}
-        />
+        {readErr}
+        <ScanButton label={startLabel} icon={startIcon} height={startHeight} fontSize={startFontSize} accentColor={accentColor} onColor={onColor} onFile={addPhoto} onReadError={() => setReadError(true)} />
       </>
     );
   }
