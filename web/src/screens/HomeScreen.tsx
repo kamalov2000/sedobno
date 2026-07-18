@@ -1,12 +1,12 @@
+import type { CSSProperties } from "react";
 import type { Me } from "../types";
 import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
 import { haptic } from "../telegram";
 
-// Home (финальный дизайн). Сегмент «Состав / Калории» с акцентом режима; большая круглая
-// кнопка съёмки по центру. Кнопка — стартовое состояние PhotoStager: по первому кадру
-// раскрывается стейджинг (превью, «Добавить ещё фото», «Готово, проверить N») — мультикадр
-// сохранён (для состава критичен, для калорий опционален). Иконка дневника с точкой.
+// Экран 01 · ГЛАВНЫЙ. Стиль master (заголовок + рамка-иллюстрация + прямоугольный
+// PhotoStager + счётчик) с добавлением сегмента «Состав / Калории», иконки дневника и
+// калорийного варианта. Съёмка — PhotoStager (мультикадр со стейджингом), как в master.
 
 export type HomeMode = "scan" | "meal";
 
@@ -21,16 +21,9 @@ interface Props {
   todayHasMeals?: boolean;
 }
 
-const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
+const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
 
-function Caption({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div style={{ textAlign: "center", maxWidth: 300 }}>
-      <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)" }}>{title}</div>
-      <div style={{ fontSize: 13.5, color: "var(--text2)", marginTop: 4, lineHeight: 1.4 }}>{subtitle}</div>
-    </div>
-  );
-}
+const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
 
 export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, todayHasMeals }: Props) {
   const meal = mode === "meal";
@@ -38,87 +31,127 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
   const accent = meal ? "var(--cal)" : "var(--accent)";
   const onAccent = meal ? "var(--on-cal)" : "var(--on-accent)";
+  const leftWord = meal ? "разборов еды" : "проверок";
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      {/* Шапка */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px 4px", flex: "none" }}>
-        <span style={{ fontSize: 17, fontWeight: 600, color: "var(--text)" }}>Съедобно</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button type="button" onClick={onDiary} aria-label="Дневник питания" style={{ position: "relative", width: 34, height: 34, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text2)" }}>
-            <i className="ti ti-notebook" aria-hidden="true" style={{ fontSize: 19 }} />
-            {todayHasMeals && <span style={{ position: "absolute", top: 5, right: 5, width: 7, height: 7, borderRadius: "50%", background: "var(--cal)", border: "1.5px solid var(--bg)" }} />}
-          </button>
-          <button type="button" onClick={onHistory} aria-label="История проверок" style={{ width: 34, height: 34, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text2)" }}>
-            <i className="ti ti-history" aria-hidden="true" style={{ fontSize: 19 }} />
-          </button>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
+      {/* Шапка: дневник (с точкой) + история справа сверху. */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 2, marginTop: 12, marginRight: -4 }}>
+        <button type="button" onClick={onDiary} aria-label="Дневник питания" style={{ position: "relative", background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}>
+          <i className="ti ti-notebook" aria-hidden="true" style={{ fontSize: 22 }} />
+          {todayHasMeals && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: "var(--cal)", border: "1.5px solid var(--bg)" }} />}
+        </button>
+        <button type="button" onClick={onHistory} aria-label="История проверок" style={{ background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}>
+          <i className="ti ti-history" aria-hidden="true" style={{ fontSize: 22 }} />
+        </button>
+      </div>
+
+      {/* Переключатель режимов */}
+      <div style={{ display: "flex", background: "var(--bg-soft)", borderRadius: 12, padding: 3, marginTop: 8 }}>
+        {(["scan", "meal"] as const).map((m) => {
+          const active = mode === m;
+          const color = m === "meal" ? "var(--cal-num)" : "var(--accent)";
+          return (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                if (!active) haptic("light");
+                onModeChange(m);
+              }}
+              style={{ flex: 1, height: 38, borderRadius: 9, border: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: active ? 600 : 500, fontFamily: "'Golos Text',sans-serif", cursor: "pointer", background: active ? "var(--bg)" : "transparent", color: active ? color : "var(--text3)", boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : "none" }}
+            >
+              <i className={`ti ${m === "scan" ? "ti-list-check" : "ti-flame"}`} aria-hidden="true" style={{ fontSize: 16 }} />
+              {m === "scan" ? "Состав" : "Калории"}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Заголовок */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontSize: 25, fontWeight: 600, lineHeight: 1.25, letterSpacing: "-0.01em", color: "var(--text)", textWrap: "balance" }}>
+          {meal ? "Сфотографируйте тарелку с едой" : "Сфотографируйте состав на упаковке"}
+        </div>
+        <div style={{ fontSize: 15, color: "var(--text2)", lineHeight: 1.5, marginTop: 10, textWrap: "pretty" }}>
+          {meal
+            ? "Оценим блюда и калорийность порции по фото. Цифры приблизительные — их можно поправить."
+            : "Мы прочитаем этикетку и скажем, что внутри: оценка и главные проблемы за несколько секунд."}
         </div>
       </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
-        {/* Переключатель режимов */}
-        <div style={{ display: "flex", background: "var(--bg-soft)", borderRadius: 13, padding: 4, marginTop: 20 }}>
-          {(["scan", "meal"] as const).map((m) => {
-            const active = mode === m;
-            const color = m === "meal" ? "var(--cal-num)" : "var(--accent)";
-            return (
-              <button
-                key={m}
-                type="button"
-                onClick={() => {
-                  if (!active) haptic("light");
-                  onModeChange(m);
-                }}
-                style={{ flex: 1, height: 40, borderRadius: 10, border: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: active ? 600 : 500, fontFamily: "'Golos Text',sans-serif", cursor: "pointer", background: active ? "var(--bg)" : "transparent", color: active ? color : "var(--text3)", boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : "none" }}
-              >
-                <i className={`ti ${m === "scan" ? "ti-list-check" : "ti-flame"}`} aria-hidden="true" style={{ fontSize: 16 }} />
-                {m === "scan" ? "Состав" : "Калории"}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Центр: круглая кнопка съёмки (стартовое состояние PhotoStager) + подпись */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
-          {outOfActive ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
-              <button type="button" onClick={onSubscribe} aria-label="Оформить подписку" style={{ width: 112, height: 112, borderRadius: "50%", background: accent, color: onAccent, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: `0 16px 34px -12px color-mix(in srgb, ${accent} 60%, transparent)` }}>
-                <i className="ti ti-crown" aria-hidden="true" style={{ fontSize: 42 }} />
-              </button>
-              <Caption title="Оформить подписку" subtitle={`Бесплатные ${meal ? "разборы еды" : "проверки состава"} кончились`} />
+      {/* Иллюстрация-подсказка: рамка камеры + пример (состав / тарелка) */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
+        <div style={{ position: "relative", padding: 12 }}>
+          <Corner style={{ top: 0, left: 0, borderTop: "2px solid var(--text3)", borderLeft: "2px solid var(--text3)", borderTopLeftRadius: 5 }} />
+          <Corner style={{ top: 0, right: 0, borderTop: "2px solid var(--text3)", borderRight: "2px solid var(--text3)", borderTopRightRadius: 5 }} />
+          <Corner style={{ bottom: 0, left: 0, borderBottom: "2px solid var(--text3)", borderLeft: "2px solid var(--text3)", borderBottomLeftRadius: 5 }} />
+          <Corner style={{ bottom: 0, right: 0, borderBottom: "2px solid var(--text3)", borderRight: "2px solid var(--text3)", borderBottomRightRadius: 5 }} />
+          {meal ? (
+            <div style={{ width: 206, height: 96, background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(-2deg)" }}>
+              <i className="ti ti-tools-kitchen-2" aria-hidden="true" style={{ fontSize: 44, color: "var(--text3)" }} />
             </div>
-          ) : meal ? (
-            <PhotoStager
-              key="meal"
-              startShape="circle"
-              onScan={onScan}
-              startLabel="Сфоткать блюдо"
-              startIcon="ti-tools-kitchen-2"
-              accentColor="var(--cal)"
-              onColor="var(--on-cal)"
-              hint={MEAL_HINT}
-              caption={<Caption title="Сфоткать блюдо" subtitle="Калории и КБЖУ порции по фото" />}
-            />
           ) : (
-            <PhotoStager
-              key="scan"
-              startShape="circle"
-              onScan={onScan}
-              startLabel="Сканировать состав"
-              startIcon="ti-scan"
-              caption={<Caption title="Сканировать состав" subtitle="Оценка добавок и вердикт по этикетке" />}
-            />
+            <div style={{ width: 206, background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", transform: "rotate(-2deg)" }}>
+              <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, lineHeight: 1.7, color: "var(--text2)" }}>
+                <span style={{ color: "var(--text)" }}>СОСТАВ:</span> творог, сахар, сироп глюкозы, масло пальмовое, крахмал кукурузный, ароматизатор…
+              </div>
+            </div>
           )}
         </div>
-
-        {/* Квоты + правовые ссылки */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 20 }}>
-          <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.04em", color: "var(--text3)", textAlign: "center" }}>
-            {me.is_subscribed ? "БЕЗЛИМИТ · ПОДПИСКА АКТИВНА" : `СОСТАВ ${Math.max(0, me.scans_left)}/10 · КАЛОРИИ ${Math.max(0, me.meals_left)}/10`}
-          </div>
-          <LegalLinks items={["about", "oferta", "privacy"]} />
+        <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", marginTop: 14, textAlign: "center", lineHeight: 1.7 }}>
+          {meal ? (
+            <>
+              НАВЕДИТЕ КАМЕРУ НА ТАРЕЛКУ
+              <br />
+              ОДИН ПРИЁМ ПИЩИ ЗА РАЗ
+            </>
+          ) : (
+            <>
+              НАВЕДИТЕ КАМЕРУ НА БЛОК «СОСТАВ»
+              <br />
+              ОДИН ПРОДУКТ ЗА РАЗ
+            </>
+          )}
         </div>
+      </div>
+
+      {/* Счётчик / бейдж подписки + CTA (или стейджинг при наборе кадров) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {me.is_subscribed ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 14px", border: "1px solid var(--border)", borderRadius: 99, fontSize: 12.5, fontWeight: 500, color: "var(--text2)" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent }} />
+              Подписка активна
+            </span>
+            {me.subscription_expires_at && <span style={{ fontSize: 12, color: "var(--text3)" }}>до {fmtExpiry(me.subscription_expires_at)}</span>}
+          </div>
+        ) : outOfActive ? (
+          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
+            Бесплатные {leftWord} закончились (0&nbsp;из&nbsp;10). 249&nbsp;₽ за 30&nbsp;дней, без автопродления — {meal ? "разборы и составы" : "проверки"} без ограничений.
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>
+            Осталось {Math.max(0, activeLeft)} из 10 {leftWord}
+          </div>
+        )}
+
+        {outOfActive ? (
+          <button type="button" className="sj-cta" onClick={onSubscribe} style={{ width: "100%", height: 56, background: accent, color: onAccent, border: "none", borderRadius: 14, fontFamily: "'Golos Text', sans-serif", fontSize: 16, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer" }}>
+            <i className="ti ti-crown" aria-hidden="true" style={{ fontSize: 20 }} />
+            Оформить подписку
+          </button>
+        ) : meal ? (
+          <PhotoStager key="meal" onScan={onScan} startLabel="Сфотографировать еду" startIcon="ti-camera" accentColor="var(--cal)" onColor="var(--on-cal)" hint={MEAL_HINT} />
+        ) : (
+          <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
+        )}
+        <LegalLinks items={["about", "oferta", "privacy"]} />
       </div>
     </div>
   );
+}
+
+function Corner({ style }: { style: CSSProperties }) {
+  return <span style={{ position: "absolute", width: 16, height: 16, ...style }} />;
 }
