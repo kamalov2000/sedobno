@@ -406,7 +406,15 @@ function WeekView({ week, target, loading, onPick }: { week: MealDaily[] | null;
           <span key={d.day} style={{ flex: 1, textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)" }}>{weekdayShort(d.day)}</span>
         ))}
       </div>
-      <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text3)", textAlign: "center", marginTop: 16 }}>ТАП ПО СТОЛБИКУ → ЭТОТ ДЕНЬ</div>
+      {allEmpty ? (
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 13.5, color: "var(--text2)", lineHeight: 1.5 }}>
+          За эту неделю записей пока нет.
+          <br />
+          Сфоткай первый приём — и он появится тут.
+        </div>
+      ) : (
+        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text3)", textAlign: "center", marginTop: 16 }}>ТАП ПО СТОЛБИКУ → ЭТОТ ДЕНЬ</div>
+      )}
 
       {/* Резерв под стрики (скоро). */}
       <div style={{ marginTop: 18, border: "1px dashed var(--border)", borderRadius: 14, padding: 16, display: "flex", alignItems: "center", gap: 12, opacity: 0.7 }}>
