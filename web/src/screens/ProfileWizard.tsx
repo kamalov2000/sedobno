@@ -133,7 +133,7 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
                 type="number"
                 value={birthYear}
                 onChange={(e) => setBirthYear(Number(e.target.value) || 0)}
-                style={{ width: 150, textAlign: "center", border: "none", background: "none", fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 60, lineHeight: 1, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums", outline: "none" }}
+                style={{ width: 220, maxWidth: "100%", textAlign: "center", border: "none", background: "none", fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 46, letterSpacing: "0.02em", lineHeight: 1, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums", outline: "none", boxSizing: "border-box", padding: 0 }}
               />
               <RoundBtn icon="ti-chevron-down" onClick={() => setBirthYear((y) => Math.max(nowYear - 120, y - 1))} />
               <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, letterSpacing: "0.05em", color: "var(--text3)", marginTop: 6, textTransform: "uppercase" }}>{age} {yearsWord(age)} · листайте или введите</div>
