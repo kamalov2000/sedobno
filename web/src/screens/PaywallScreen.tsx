@@ -18,8 +18,9 @@ interface Props {
 }
 
 const BENEFITS = [
-  { icon: "ti-scan", text: "Проверки без ограничений" },
-  { icon: "ti-book-2", text: "Справочник добавок, который пополняется" },
+  { icon: "ti-flame", text: "Разборы калорий и КБЖУ по фото" },
+  { icon: "ti-list-check", text: "Проверка составов и оценка добавок" },
+  { icon: "ti-notebook", text: "Дневник, неделя и шер-карточки" },
 ];
 
 export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAvailable = false, onSbpPay }: Props) {
@@ -80,11 +81,11 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
               lineHeight: 1.28,
               color: "var(--brand-ink)",
               marginTop: 14,
-              maxWidth: 220,
+              maxWidth: 260,
               textWrap: "balance",
             }}
           >
-            Бесплатные проверки закончились
+            Безлимит на разборы еды и составы
           </div>
         </div>
       </div>

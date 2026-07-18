@@ -5,18 +5,20 @@ import type { Me, ScanResult, MealResult } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
+import MealLoader from "./components/MealLoader";
 import ResultScreen from "./screens/ResultScreen";
 import MealResultScreen from "./screens/MealResultScreen";
+import MealStateScreen from "./screens/MealStateScreen";
 import DiaryScreen from "./screens/DiaryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 import { dayCardData, downloadShareCard } from "./shareCard";
 import NotScoredScreen from "./screens/NotScoredScreen";
-import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
+import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -54,6 +56,7 @@ export default function App() {
   const [mode, setMode] = useState<HomeMode>("scan"); // режим главного экрана: состав | калории
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
+  const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
   const [fromHistory, setFromHistory] = useState(false);
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
@@ -94,7 +97,7 @@ export default function App() {
   useEffect(() => {
     const bb = tg()?.BackButton;
     if (!bb) return;
-    const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result";
+    const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
     const isList = view === "history" || view === "meal_diary";
     if (!(isList || isOutcome)) {
       bb.hide();
@@ -141,31 +144,15 @@ export default function App() {
         setMealResult(data);
         setView("meal_result");
       } else if (data.status === "label_detected") {
-        // В кадре упаковка с этикеткой — подсказываем переключиться на сканер состава.
+        // В кадре упаковка с этикеткой — отдельный экран с переходом на сканер состава.
         notify("warning");
-        setErrorCopy({
-          title: "Похоже, это упаковка",
-          subtitle: data.message || "Для продукта с составом точнее сработает сканер состава.",
-          hints: MEAL_LABEL_HINTS,
-          primaryAction: {
-            label: "Открыть сканер состава",
-            icon: "ti-scan",
-            onClick: () => {
-              setMode("scan");
-              setView("home");
-            },
-          },
-        });
-        setView("error");
+        setMealStateKind("label");
+        setView("meal_state");
       } else {
         // not_food (или неожиданный error в теле 200) — попытка не списана.
         notify("warning");
-        setErrorCopy({
-          title: "На фото не видно еды",
-          subtitle: data.message || "Сфотографируйте готовое блюдо на тарелке.",
-          hints: MEAL_NOT_FOOD_HINTS,
-        });
-        setView("error");
+        setMealStateKind("not_food");
+        setView("meal_state");
       }
     } catch (err) {
       notify("error");
@@ -370,7 +357,18 @@ export default function App() {
           onCancel={() => setView("meal_diary")}
         />
       )}
-      {view === "loading" && <ScanLoader />}
+      {view === "loading" && (mode === "meal" ? <MealLoader /> : <ScanLoader />)}
+      {view === "meal_state" && (
+        <MealStateScreen
+          kind={mealStateKind}
+          onScan={onScan}
+          onOpenScanner={() => {
+            setMode("scan");
+            setView("home");
+          }}
+          isSubscribed={me?.is_subscribed ?? false}
+        />
+      )}
       {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />}
       {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />}
       {view === "meal_result" && mealResult && (

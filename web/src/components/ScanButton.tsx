@@ -29,7 +29,7 @@ interface Props {
 // пива дал четыре разных «состава» — лимонада, сгущёнки, сливок, мороженого. Это были
 // реальные чужие картинки, а не галлюцинации модели (та же банка, прогнанная напрямую
 // через пайплайн, читается верно 3 раза из 3).
-async function snapshot(file: File): Promise<File> {
+export async function snapshot(file: File): Promise<File> {
   const bytes = await file.arrayBuffer(); // читаем СЕЙЧАС, пока URI жив
   return new File([bytes], file.name || "photo.jpg", {
     type: file.type || "image/jpeg",
@@ -71,8 +71,8 @@ export default function ScanButton({
     : {
         width: "100%",
         height,
-        background: outline ? "transparent" : "var(--accent)",
-        color: outline ? "var(--text)" : "var(--on-accent)",
+        background: outline ? "transparent" : accentColor,
+        color: outline ? "var(--text)" : onColor,
         border: outline ? "1px solid var(--border)" : "none",
         borderRadius: 14,
         fontFamily: "'Golos Text', sans-serif",
