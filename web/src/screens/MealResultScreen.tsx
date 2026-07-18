@@ -13,6 +13,7 @@ import MacroSegments from "../components/MacroSegments";
 interface Props {
   result: MealResult; // status ok: id, dishes, total
   isSubscribed: boolean;
+  mealsLeft?: number; // остаток разборов из актуального /me (единый источник правды)
   onDone: () => void;
   onRetake: () => void;
 }
@@ -20,7 +21,7 @@ interface Props {
 const GRAM_STEP = 10;
 const fmtInt = (v: number) => String(Math.round(v));
 
-export default function MealResultScreen({ result, isSubscribed, onDone, onRetake }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake }: Props) {
   const [dishes, setDishes] = useState<MealItem[]>(result.dishes ?? []);
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +71,8 @@ export default function MealResultScreen({ result, isSubscribed, onDone, onRetak
   };
 
   const n = dishes.length;
-  const chip = isSubscribed || result.meals_left < 0 ? "БЕЗЛИМИТ" : `КАЛОРИИ ${Math.max(0, result.meals_left)}/10`;
+  const left = mealsLeft ?? result.meals_left; // из me; фолбэк на result (витрина)
+  const chip = isSubscribed || left < 0 ? "БЕЗЛИМИТ" : `КАЛОРИИ ${Math.max(0, left)}/10`;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>

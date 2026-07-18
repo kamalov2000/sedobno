@@ -11,15 +11,20 @@ interface Props {
   result: ScanResult;
   isSubscribed: boolean;
   onAgain: (files: File[]) => void;
+  // Остаток проверок из АКТУАЛЬНОГО профиля (/me) — единый источник правды. Скан из
+  // истории не несёт scans_left (бэк его не восстанавливает), поэтому чип берём из me,
+  // а не из result.scans_left — иначе «0 из 10» на любом открытом из истории результате.
+  scansLeft?: number;
 }
 
-export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
+export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft }: Props) {
   const verdict = scoreToVerdict(result.score);
   const count = result.ingredients.length;
   const productLine = result.scan_number
     ? `ПРОВЕРКА №${result.scan_number} · ИНГРЕДИЕНТОВ: ${count}`
     : `ИНГРЕДИЕНТОВ: ${count}`;
-  const checksChip = isSubscribed ? "БЕЗЛИМИТ" : `ОСТАЛОСЬ ${Math.max(0, result.scans_left)} ИЗ 10 ПРОВЕРОК`;
+  const left = scansLeft ?? result.scans_left; // из me; фолбэк на result (витрина/старый вызов)
+  const checksChip = isSubscribed ? "БЕЗЛИМИТ" : `ОСТАЛОСЬ ${Math.max(0, left)} ИЗ 10 ПРОВЕРОК`;
 
   // Правило #2: во флаг-карточки средний/высокий риск — ЛИБО крупный вычет по
   // спец-правилу §5. Иначе сахар в первых позициях (маркер risk=1, но −15 баллов)

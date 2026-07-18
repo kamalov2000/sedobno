@@ -370,11 +370,12 @@ export default function App() {
         />
       )}
       {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />}
-      {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} onAgain={onScan} />}
+      {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} scansLeft={me?.scans_left} onAgain={onScan} />}
       {view === "meal_result" && mealResult && (
         <MealResultScreen
           result={mealResult}
           isSubscribed={me?.is_subscribed ?? false}
+          mealsLeft={me?.meals_left}
           onDone={() => setView("meal_diary")}
           onRetake={() => setView("home")}
         />
