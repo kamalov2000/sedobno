@@ -3,11 +3,61 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// Гонка на ПОСЛЕДНЕЙ бесплатной попытке: N параллельных списаний — ровно одно проходит,
+// счётчик не уходит за лимит и не в минус (атомарный UPDATE ... WHERE < limit).
+func TestChargeFree_ГонкаНаПоследнейПопытке(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		limit  int
+		col    string
+		charge func(*Store, context.Context, int64, int) (int, bool, error)
+	}{
+		{"meal", freeMealLimit, "free_meals_used", (*Store).ChargeFreeMeal},
+		{"scan", freeScanLimit, "free_scans_used", (*Store).ChargeFreeScan},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ctx := newStore(t)
+			uid := mkUser(t, s, ctx, 5100)
+			if _, err := testPool.Exec(ctx, "UPDATE users SET "+tc.col+"=$2 WHERE id=$1", uid, tc.limit-1); err != nil {
+				t.Fatal(err)
+			}
+			const N = 24
+			var charged int64
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			for i := 0; i < N; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					if _, ok, err := tc.charge(s, ctx, uid, tc.limit); err == nil && ok {
+						atomic.AddInt64(&charged, 1)
+					}
+				}()
+			}
+			close(start)
+			wg.Wait()
+			if charged != 1 {
+				t.Fatalf("списаний=%d, ждали ровно 1 (гонка на последней попытке)", charged)
+			}
+			var used int
+			if err := testPool.QueryRow(ctx, "SELECT "+tc.col+" FROM users WHERE id=$1", uid).Scan(&used); err != nil {
+				t.Fatal(err)
+			}
+			if used != tc.limit {
+				t.Fatalf("%s=%d, ждали %d (не за лимит, не в минус)", tc.col, used, tc.limit)
+			}
+		})
+	}
+}
 
 // freeMealLimit — тот же лимит, что в проде (модуль калорий: 10 бесплатных разборов).
 const freeMealLimit = 10

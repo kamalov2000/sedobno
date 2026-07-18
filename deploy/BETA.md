@@ -90,6 +90,36 @@ docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta \
 
 Это сырьё для калибровки промпта `meal_v1.txt` и выбора модели (Haiku vs Sonnet).
 
+## Выдать тестеру подписку вручную
+
+Чтобы тестер проверял без лимита в 10 бесплатных (обходя оплату Stars), выдай подписку по
+его `telegram_id` (узнаётся из первого захода — строка в `users` создаётся при первом `/me`).
+Идемпотентно: помечает прошлые ручные гранты этого юзера истёкшими и ставит свежий на год.
+
+```bash
+docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta \
+  exec postgres-beta psql -U sostav -d sedobno_beta -v tg=<TELEGRAM_ID> <<'SQL'
+INSERT INTO subscriptions (user_id, provider, status, telegram_charge_id, started_at, expires_at)
+SELECT id, 'manual', 'active', 'beta_grant_'||id, now(), now() + interval '365 days'
+FROM users WHERE telegram_id = :tg
+ON CONFLICT (telegram_charge_id) DO UPDATE
+  SET status='active', started_at=now(), expires_at=now() + interval '365 days';
+UPDATE users SET is_subscribed = true WHERE telegram_id = :tg;
+SELECT telegram_id, is_subscribed FROM users WHERE telegram_id = :tg;
+SQL
+```
+
+Снять подписку (вернуть тестера на бесплатный лимит):
+
+```bash
+docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta \
+  exec postgres-beta psql -U sostav -d sedobno_beta -v tg=<TELEGRAM_ID> <<'SQL'
+UPDATE subscriptions SET status='expired'
+  WHERE user_id=(SELECT id FROM users WHERE telegram_id=:tg) AND status='active';
+UPDATE users SET is_subscribed=false WHERE telegram_id=:tg;
+SQL
+```
+
 ## Что беты НЕ делает
 
 - Не трогает прод-контейнеры, прод-БД (`pgdata`), прод-Caddy-сайт и ветку `main`.
