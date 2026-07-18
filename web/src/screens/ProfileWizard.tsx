@@ -1,38 +1,39 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import type { NutritionProfile, Sex, ActivityLevel, Goal } from "../types";
 import { patchProfileNutrition } from "../api";
 import { haptic, notify } from "../telegram";
+import { useRolledNumber } from "../useRoll";
+import MacroSegments from "../components/MacroSegments";
 
-// Онбординг-визард профиля питания (feature/calories). Шаги: пол → год рождения →
-// рост/вес → активность → цель → итог с дневной нормой. Норму считает сервер (PATCH).
-// Янтарный акцент модуля (--cal-accent). Дизайн-система проекта.
+// Блок 4 · Онбординг питания (финальный дизайн). Шаги: пол → год → рост/вес → активность
+// → цель → итог. Заголовки Piazzolla, «ШАГ N ИЗ 5» PT Mono, точки прогресса, «Далее»
+// янтарная. Норму считает сервер (PATCH). Выход стрелкой с шага 1 — без сохранения.
 
 interface Props {
-  initial?: NutritionProfile; // префилл при повторном расчёте
+  initial?: NutritionProfile;
   onDone: (profile: NutritionProfile) => void;
   onCancel: () => void;
 }
 
-const ACTIVITY: { key: ActivityLevel; title: string; desc: string }[] = [
-  { key: "sedentary", title: "Сидячий образ жизни", desc: "Почти без движения — офис, дом, транспорт" },
-  { key: "light", title: "Лёгкая активность", desc: "Лёгкие тренировки 1–3 раза в неделю" },
-  { key: "moderate", title: "Умеренная активность", desc: "Спорт 3–5 раз в неделю" },
-  { key: "high", title: "Высокая активность", desc: "Интенсивно 6–7 раз в неделю или физический труд" },
+const ACTIVITY: { key: ActivityLevel; icon: string; title: string; sub: string }[] = [
+  { key: "sedentary", icon: "ti-device-laptop", title: "Сижу за компом", sub: "Работа сидя, мало движения" },
+  { key: "light", icon: "ti-walk", title: "Хожу пешком", sub: "Прогулки, лёгкие тренировки" },
+  { key: "moderate", icon: "ti-run", title: "Тренируюсь регулярно", sub: "3–5 раз в неделю" },
+  { key: "high", icon: "ti-barbell", title: "Тяжёлые нагрузки", sub: "Интенсивный спорт или физработа" },
+];
+const GOALS: { key: Goal; icon: string; title: string; sub: string }[] = [
+  { key: "lose", icon: "ti-trending-down", title: "Похудеть", sub: "дефицит ≈ 15%" },
+  { key: "maintain", icon: "ti-minus", title: "Держать вес", sub: "норма поддержания" },
+  { key: "gain", icon: "ti-trending-up", title: "Набрать", sub: "профицит ≈ 10%" },
 ];
 
-const GOALS: { key: Goal; title: string; desc: string }[] = [
-  { key: "lose", title: "Сбросить вес", desc: "Дефицит калорий" },
-  { key: "maintain", title: "Поддерживать вес", desc: "Держать текущую форму" },
-  { key: "gain", title: "Набрать массу", desc: "Профицит калорий" },
-];
-
-const STEPS = 5; // 0..4 ввод, 5 — итог
+const STEPS = 5; // 0 пол · 1 год · 2 рост/вес · 3 активность · 4 цель · (5 итог)
 
 export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
   const nowYear = new Date().getFullYear();
   const [step, setStep] = useState(0);
   const [sex, setSex] = useState<Sex | null>(initial?.sex ?? null);
-  const [birthYear, setBirthYear] = useState<string>(initial?.birth_year ? String(initial.birth_year) : "");
+  const [birthYear, setBirthYear] = useState<number>(initial?.birth_year ?? nowYear - 30);
   const [heightCm, setHeightCm] = useState<string>(initial?.height_cm ? String(initial.height_cm) : "");
   const [weightKg, setWeightKg] = useState<string>(initial?.weight_kg ? String(initial.weight_kg) : "");
   const [activity, setActivity] = useState<ActivityLevel | null>(initial?.activity_level ?? null);
@@ -41,25 +42,26 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const yearNum = Number(birthYear);
-  const age = yearNum >= 1900 ? nowYear - yearNum : NaN;
+  // Дефолты роста/веса по полу при входе на шаг 2, если поля пусты.
+  useEffect(() => {
+    if (step !== 2 || !sex) return;
+    if (!heightCm) setHeightCm(sex === "male" ? "178" : "165");
+    if (!weightKg) setWeightKg(sex === "male" ? "74" : "62");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  const age = nowYear - birthYear;
   const hNum = Number(heightCm);
   const wNum = Number(weightKg.replace(",", "."));
 
   const stepValid = (): boolean => {
     switch (step) {
-      case 0:
-        return sex !== null;
-      case 1:
-        return Number.isFinite(age) && age >= 10 && age <= 120;
-      case 2:
-        return hNum >= 100 && hNum <= 250 && wNum >= 30 && wNum <= 400;
-      case 3:
-        return activity !== null;
-      case 4:
-        return goal !== null;
-      default:
-        return true;
+      case 0: return sex !== null;
+      case 1: return age >= 10 && age <= 120;
+      case 2: return hNum >= 100 && hNum <= 250 && wNum >= 30 && wNum <= 400;
+      case 3: return activity !== null;
+      case 4: return goal !== null;
+      default: return true;
     }
   };
 
@@ -67,7 +69,7 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
     haptic("light");
     setErr("");
     if (step === 0) onCancel();
-    else setStep((s) => Math.min(s, STEPS) - 1 < 0 ? 0 : s - 1);
+    else setStep((s) => s - 1);
   };
 
   const next = async () => {
@@ -78,16 +80,10 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
       setStep(step + 1);
       return;
     }
-    // Шаг 4 (цель) → считаем норму на сервере и показываем итог.
     setBusy(true);
     try {
       const profile = await patchProfileNutrition({
-        sex: sex!,
-        birth_year: yearNum,
-        height_cm: hNum,
-        weight_kg: wNum,
-        activity_level: activity!,
-        goal: goal!,
+        sex: sex!, birth_year: birthYear, height_cm: hNum, weight_kg: wNum, activity_level: activity!, goal: goal!,
       });
       setComputed(profile);
       notify("success");
@@ -100,212 +96,201 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
     }
   };
 
+  const isResult = step === 5;
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      {/* Шапка: назад + прогресс-точки */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 20px 8px", flex: "none" }}>
-        <button type="button" onClick={back} aria-label="Назад" style={{ background: "none", border: "none", padding: 4, cursor: "pointer", display: "flex", color: "var(--text)" }}>
-          <i className="ti ti-arrow-left" aria-hidden="true" style={{ fontSize: 22 }} />
-        </button>
-        <div style={{ display: "flex", gap: 6 }}>
-          {Array.from({ length: STEPS + 1 }, (_, i) => (
-            <span key={i} style={{ width: i === step ? 18 : 6, height: 6, borderRadius: 99, background: i <= step ? "var(--cal-accent)" : "var(--border)", transition: "width .2s" }} />
-          ))}
-        </div>
+      {/* Шапка */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px 4px", flex: "none" }}>
+        {isResult ? (
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.06em", color: "var(--text3)" }}>ГОТОВО</span>
+        ) : (
+          <>
+            <button type="button" onClick={back} aria-label={step === 0 ? "Выйти без сохранения" : "Назад"} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "var(--bg-soft)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className={`ti ${step === 0 ? "ti-x" : "ti-chevron-left"}`} aria-hidden="true" style={{ fontSize: 17 }} />
+            </button>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.06em", color: "var(--text3)" }}>ШАГ {step + 1} ИЗ 5</span>
+          </>
+        )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 20px 20px", minHeight: 0 }}>
+      <div style={{ flex: 1, padding: "24px 22px 0", minHeight: 0, overflowY: "auto", display: isResult ? "flex" : "block", flexDirection: "column", justifyContent: isResult ? "center" : undefined }}>
         {step === 0 && (
-          <Step title="Ваш пол" subtitle="Нужно для формулы расчёта нормы">
-            <div style={{ display: "flex", gap: 10 }}>
-              <Card active={sex === "male"} onClick={() => setSex("male")} title="Мужской" icon="ti-gender-male" />
-              <Card active={sex === "female"} onClick={() => setSex("female")} title="Женский" icon="ti-gender-female" />
+          <Step title="Ваш пол?" subtitle="Нужно, чтобы точнее посчитать норму калорий.">
+            <div style={{ display: "flex", gap: 12, marginTop: 26 }}>
+              <TallCard active={sex === "male"} onClick={() => setSex("male")} icon="ti-gender-male" title="Мужской" />
+              <TallCard active={sex === "female"} onClick={() => setSex("female")} icon="ti-gender-female" title="Женский" />
             </div>
           </Step>
         )}
 
         {step === 1 && (
-          <Step title="Год рождения" subtitle="По нему считаем возраст">
-            <NumInput value={birthYear} onChange={setBirthYear} placeholder={String(nowYear - 30)} suffix="год" maxLen={4} />
-            {birthYear !== "" && Number.isFinite(age) && <Hint>{age >= 10 && age <= 120 ? `Возраст: ${age}` : "Проверьте год"}</Hint>}
+          <Step title="Год рождения?" subtitle="Возраст влияет на расход энергии.">
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginTop: 44, gap: 8 }}>
+              <RoundBtn icon="ti-chevron-up" onClick={() => setBirthYear((y) => Math.min(nowYear - 10, y + 1))} />
+              <input
+                className="cal-g"
+                type="number"
+                value={birthYear}
+                onChange={(e) => setBirthYear(Number(e.target.value) || 0)}
+                style={{ width: 150, textAlign: "center", border: "none", background: "none", fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 60, lineHeight: 1, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums", outline: "none" }}
+              />
+              <RoundBtn icon="ti-chevron-down" onClick={() => setBirthYear((y) => Math.max(nowYear - 120, y - 1))} />
+              <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, letterSpacing: "0.05em", color: "var(--text3)", marginTop: 6, textTransform: "uppercase" }}>{age} {yearsWord(age)} · листайте или введите</div>
+            </div>
           </Step>
         )}
 
         {step === 2 && (
-          <Step title="Рост и вес" subtitle="Текущие значения">
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <NumInput value={heightCm} onChange={setHeightCm} placeholder="175" suffix="см" maxLen={3} label="Рост" />
-              <NumInput value={weightKg} onChange={setWeightKg} placeholder="70" suffix="кг" maxLen={5} label="Вес" decimal />
+          <Step title="Рост и вес?" subtitle="Отсюда считаем базовый обмен веществ.">
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 26 }}>
+              <FieldRow label="Рост" value={heightCm} onChange={setHeightCm} unit="см" maxLen={3} />
+              <FieldRow label="Вес" value={weightKg} onChange={setWeightKg} unit="кг" maxLen={5} decimal />
             </div>
           </Step>
         )}
 
         {step === 3 && (
-          <Step title="Уровень активности" subtitle="Как часто двигаетесь за неделю">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Step title="Насколько вы активны?">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
               {ACTIVITY.map((a) => (
-                <RowCard key={a.key} active={activity === a.key} onClick={() => setActivity(a.key)} title={a.title} desc={a.desc} />
+                <RowCard key={a.key} active={activity === a.key} onClick={() => setActivity(a.key)} icon={a.icon} title={a.title} sub={a.sub} />
               ))}
             </div>
           </Step>
         )}
 
         {step === 4 && (
-          <Step title="Ваша цель" subtitle="От неё зависит калорийность">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Step title="Какая цель?" subtitle="От неё зависит, куда сдвинем норму.">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 22 }}>
               {GOALS.map((g) => (
-                <RowCard key={g.key} active={goal === g.key} onClick={() => setGoal(g.key)} title={g.title} desc={g.desc} />
+                <RowCard key={g.key} active={goal === g.key} onClick={() => setGoal(g.key)} icon={g.icon} title={g.title} sub={g.sub} />
               ))}
             </div>
           </Step>
         )}
 
-        {step === 5 && computed && <Result profile={computed} goal={goal} />}
+        {isResult && computed && <Result profile={computed} goal={goal} />}
 
-        {err && <Hint danger>{err}</Hint>}
+        {err && <div style={{ fontSize: 13, color: "var(--danger, #d64545)", marginTop: 12 }}>{err}</div>}
       </div>
 
-      {/* Футер: Далее / Рассчитать / Готово */}
-      <div style={{ flex: "none", padding: "8px 20px 4px" }}>
+      {/* Футер */}
+      <div style={{ flex: "none", padding: "16px 22px 40px" }}>
+        {!isResult && (
+          <div style={{ display: "flex", justifyContent: "center", gap: 7, marginBottom: 16 }}>
+            {Array.from({ length: STEPS }, (_, i) => (
+              <span key={i} style={{ width: i === step ? 22 : 6, height: 6, borderRadius: 99, background: i <= step ? "var(--cal)" : "var(--border)" }} />
+            ))}
+          </div>
+        )}
         <button
           type="button"
-          className="sj-cta"
           disabled={!stepValid() || busy}
-          onClick={step === 5 ? () => onDone(computed!) : next}
-          style={{
-            width: "100%",
-            height: 54,
-            background: stepValid() ? "var(--cal-accent)" : "var(--bg-soft)",
-            color: stepValid() ? "var(--cal-on-accent)" : "var(--text3)",
-            border: "none",
-            borderRadius: 14,
-            fontFamily: "'Golos Text', sans-serif",
-            fontSize: 16,
-            fontWeight: 500,
-            cursor: stepValid() && !busy ? "pointer" : "default",
-            opacity: busy ? 0.7 : 1,
-          }}
+          onClick={isResult ? () => onDone(computed!) : next}
+          style={{ width: "100%", height: 54, background: stepValid() ? "var(--cal)" : "var(--bg-soft)", color: stepValid() ? "var(--on-cal)" : "var(--text3)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 16, fontWeight: 600, cursor: stepValid() && !busy ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: busy ? 0.7 : 1 }}
         >
-          {step === 5 ? "Готово" : step === 4 ? (busy ? "Считаем…" : "Рассчитать норму") : "Далее"}
+          {isResult && <i className="ti ti-check" aria-hidden="true" style={{ fontSize: 20 }} />}
+          {isResult ? "Готово" : step === 4 ? (busy ? "Считаем…" : "Рассчитать норму") : "Далее"}
         </button>
+        {isResult && <div style={{ textAlign: "center", fontSize: 12, color: "var(--text3)", marginTop: 10 }}>Норму можно изменить в настройках</div>}
       </div>
     </div>
   );
 }
 
-function Step({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+function Step({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontSize: 23, fontWeight: 600, lineHeight: 1.25, letterSpacing: "-0.01em", color: "var(--text)" }}>{title}</div>
-      <div style={{ fontSize: 14, color: "var(--text2)", lineHeight: 1.5, marginTop: 8, marginBottom: 22 }}>{subtitle}</div>
+      <h2 lang="ru" style={{ fontFamily: "'Piazzolla',serif", fontWeight: 600, fontSize: 26, lineHeight: 1.2, color: "var(--text)", margin: 0 }}>{title}</h2>
+      {subtitle && <p style={{ fontSize: 14, color: "var(--text2)", margin: "8px 0 0", lineHeight: 1.5 }}>{subtitle}</p>}
       {children}
     </div>
   );
 }
 
-function Card({ active, onClick, title, icon }: { active: boolean; onClick: () => void; title: string; icon: string }) {
+function TallCard({ active, onClick, icon, title }: { active: boolean; onClick: () => void; icon: string; title: string }) {
   return (
-    <button type="button" onClick={onClick} style={{ ...cardBase, flex: 1, flexDirection: "column", gap: 10, padding: "22px 12px", ...(active ? cardActive : {}) }}>
-      <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 30, color: active ? "var(--cal-accent)" : "var(--text2)" }} />
-      <span style={{ fontSize: 15, fontWeight: 500, color: "var(--text)" }}>{title}</span>
+    <button type="button" onClick={onClick} style={{ flex: 1, height: 150, borderRadius: 16, border: "1px solid", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, cursor: "pointer", fontFamily: "'Golos Text',sans-serif", borderColor: active ? "var(--cal-border)" : "var(--border)", background: active ? "var(--cal-soft)" : "transparent", color: active ? "var(--cal-num)" : "var(--text2)" }}>
+      <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 38 }} />
+      <span style={{ fontSize: 15, fontWeight: 600, color: active ? "var(--cal-num)" : "var(--text)" }}>{title}</span>
     </button>
   );
 }
 
-function RowCard({ active, onClick, title, desc }: { active: boolean; onClick: () => void; title: string; desc: string }) {
+function RowCard({ active, onClick, icon, title, sub }: { active: boolean; onClick: () => void; icon: string; title: string; sub: string }) {
   return (
-    <button type="button" onClick={onClick} style={{ ...cardBase, alignItems: "flex-start", flexDirection: "column", gap: 3, padding: "14px 16px", textAlign: "left", ...(active ? cardActive : {}) }}>
-      <span style={{ fontSize: 15.5, fontWeight: 500, color: "var(--text)" }}>{title}</span>
-      <span style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.4 }}>{desc}</span>
+    <button type="button" onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 13, textAlign: "left", borderRadius: 14, padding: "14px 15px", cursor: "pointer", border: "1px solid", fontFamily: "'Golos Text',sans-serif", borderColor: active ? "var(--cal-border)" : "var(--border)", background: active ? "var(--cal-soft)" : "transparent", color: active ? "var(--cal-num)" : "var(--text2)" }}>
+      <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 24, flex: "none" }} />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 15, fontWeight: 600, color: active ? "var(--cal-num)" : "var(--text)" }}>{title}</span>
+        <span style={{ display: "block", fontSize: 12.5, opacity: 0.75, marginTop: 2 }}>{sub}</span>
+      </span>
     </button>
   );
 }
 
-function NumInput({
-  value,
-  onChange,
-  placeholder,
-  suffix,
-  maxLen,
-  label,
-  decimal,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  suffix: string;
-  maxLen: number;
-  label?: string;
-  decimal?: boolean;
-}) {
+function FieldRow({ label, value, onChange, unit, maxLen, decimal }: { label: string; value: string; onChange: (v: string) => void; unit: string; maxLen: number; decimal?: boolean }) {
   return (
-    <label style={{ display: "block" }}>
-      {label && <div style={{ fontSize: 13, color: "var(--text2)", marginBottom: 7 }}>{label}</div>}
-      <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 12, background: "var(--bg-soft)", padding: "0 14px", height: 52 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid var(--border)", borderRadius: 14, padding: "16px 18px" }}>
+      <span style={{ fontSize: 15, color: "var(--text)" }}>{label}</span>
+      <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <input
+          className="cal-g"
+          type="number"
           value={value}
-          onChange={(e) => {
-            const raw = e.target.value.replace(decimal ? /[^\d.,]/g : /[^\d]/g, "").slice(0, maxLen);
-            onChange(raw);
-          }}
+          onChange={(e) => onChange(e.target.value.replace(decimal ? /[^\d.,]/g : /[^\d]/g, "").slice(0, maxLen))}
           inputMode={decimal ? "decimal" : "numeric"}
-          placeholder={placeholder}
-          style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontFamily: "'PT Mono', monospace", fontSize: 20, color: "var(--text)", minWidth: 0 }}
+          style={{ width: 62, textAlign: "right", border: "none", background: "none", fontFamily: "'PT Mono',monospace", fontSize: 24, fontWeight: 500, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums", outline: "none" }}
         />
-        <span style={{ fontSize: 14, color: "var(--text3)", marginLeft: 8 }}>{suffix}</span>
-      </div>
-    </label>
+        <span style={{ fontSize: 14, color: "var(--text3)" }}>{unit}</span>
+      </span>
+    </div>
+  );
+}
+
+function RoundBtn({ icon, onClick }: { icon: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} style={{ width: 40, height: 40, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--bg-soft)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 18 }} />
+    </button>
   );
 }
 
 function Result({ profile, goal }: { profile: NutritionProfile; goal: Goal | null }) {
-  const macros = [
-    { label: "БЕЛКИ", v: profile.daily_protein_g },
-    { label: "ЖИРЫ", v: profile.daily_fat_g },
-    { label: "УГЛЕВОДЫ", v: profile.daily_carb_g },
-  ];
-  const goalWord = goal === "lose" ? "снижения веса" : goal === "gain" ? "набора массы" : "поддержания веса";
+  const target = profile.daily_kcal_target ?? 0;
+  const [t, setT] = useState(0);
+  useEffect(() => setT(target), [target]);
+  const rolled = useRolledNumber(t, 650);
+
+  const factor = goal === "lose" ? 0.85 : goal === "gain" ? 1.1 : 1;
+  const maint = Math.round(target / factor);
+  const deltaLine =
+    goal === "lose" ? `С учётом цели: −15% к поддержанию (${maint} ккал)` : goal === "gain" ? `С учётом цели: +10% к поддержанию (${maint} ккал)` : `Норма поддержания (${maint} ккал)`;
+
+  const total = { kcal: target, protein_g: profile.daily_protein_g ?? 0, fat_g: profile.daily_fat_g ?? 0, carb_g: profile.daily_carb_g ?? 0 };
+
   return (
     <div>
-      <div style={{ fontSize: 23, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>Ваша дневная норма</div>
-      <div style={{ fontSize: 14, color: "var(--text2)", marginBottom: 22 }}>Рассчитана для {goalWord}. Можно пересчитать в любой момент.</div>
-
-      <div style={{ background: "var(--cal-accent-soft)", borderRadius: 16, padding: "22px 16px 18px", textAlign: "center" }}>
-        <div style={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 500, fontSize: 40, lineHeight: 1, color: "var(--cal-accent)" }}>
-          {profile.daily_kcal_target}
-        </div>
-        <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text2)", marginTop: 8 }}>ККАЛ В ДЕНЬ</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 18 }}>
-          {macros.map((m) => (
-            <div key={m.label}>
-              <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 18, color: "var(--text)" }}>{m.v} г</div>
-              <div style={{ fontSize: 9.5, letterSpacing: "0.05em", color: "var(--text3)", marginTop: 4 }}>{m.label}</div>
-            </div>
-          ))}
-        </div>
+      <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.08em", color: "var(--cal-num)", textTransform: "uppercase" }}>Твоя норма</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 11, marginTop: 12 }}>
+        <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 72, lineHeight: 0.85, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{rolled}</span>
+        <span style={{ fontSize: 17, fontWeight: 500, color: "var(--cal-num)" }}>ккал</span>
       </div>
-      <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 14, lineHeight: 1.5, textAlign: "center" }}>
-        Ориентир, а не жёсткое предписание. Норма зависит от многих факторов.
+      <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, letterSpacing: "0.04em", color: "var(--text3)", marginTop: 8, textTransform: "uppercase" }}>{deltaLine}</div>
+      <div style={{ fontSize: 14, color: "var(--text2)", marginTop: 8, lineHeight: 1.5 }}>в день. Дневник будет считать против этой нормы.</div>
+      <div style={{ marginTop: 24, borderRadius: 16, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: 18 }}>
+        <div style={{ fontSize: 12.5, color: "var(--text2)", marginBottom: 12 }}>Цель по Б/Ж/У</div>
+        <MacroSegments total={total} height={9} trackBg="var(--bg)" labelSize={11} />
       </div>
     </div>
   );
 }
 
-function Hint({ children, danger }: { children: React.ReactNode; danger?: boolean }) {
-  return <div style={{ fontSize: 13, color: danger ? "var(--danger, #d64545)" : "var(--text3)", marginTop: 12 }}>{children}</div>;
+function yearsWord(n: number): string {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return "лет";
+  if (b === 1) return "год";
+  if (b >= 2 && b <= 4) return "года";
+  return "лет";
 }
-
-const cardBase: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  width: "100%",
-  background: "var(--bg-soft)",
-  border: "1px solid var(--border)",
-  borderRadius: 14,
-  cursor: "pointer",
-  fontFamily: "'Golos Text', sans-serif",
-};
-const cardActive: CSSProperties = {
-  borderColor: "var(--cal-accent)",
-  background: "var(--cal-accent-soft)",
-};
