@@ -10,6 +10,12 @@ interface Props {
   height?: number;
   fontSize?: number;
   variant?: "accent" | "outline"; // outline — вторичная кнопка (напр. «+ ещё фото»)
+  // Круглая форма (большая кнопка съёмки на Home). accentColor — заливка (var своего
+  // режима: зелёный сканер / янтарные калории); onColor — цвет иконки.
+  shape?: "bar" | "circle";
+  diameter?: number;
+  accentColor?: string;
+  onColor?: string;
   onFile: (file: File) => void;
   onReadError?: () => void; // не смогли прочитать байты выбранного файла
 }
@@ -37,46 +43,62 @@ export default function ScanButton({
   height = 56,
   fontSize = 16,
   variant = "accent",
+  shape = "bar",
+  diameter = 112,
+  accentColor = "var(--accent)",
+  onColor = "var(--on-accent)",
   onFile,
   onReadError,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const outline = variant === "outline";
-  const style: CSSProperties = {
-    width: "100%",
-    height,
-    background: outline ? "transparent" : "var(--accent)",
-    color: outline ? "var(--text)" : "var(--on-accent)",
-    border: outline ? "1px solid var(--border)" : "none",
-    borderRadius: 14,
-    fontFamily: "'Golos Text', sans-serif",
-    fontSize,
-    fontWeight: 500,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 9,
-    cursor: "pointer",
+  const circle = shape === "circle";
+  const style: CSSProperties = circle
+    ? {
+        width: diameter,
+        height: diameter,
+        borderRadius: "50%",
+        background: accentColor,
+        color: onColor,
+        border: "none",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        boxShadow: `0 16px 34px -12px color-mix(in srgb, ${accentColor} 60%, transparent)`,
+      }
+    : {
+        width: "100%",
+        height,
+        background: outline ? "transparent" : "var(--accent)",
+        color: outline ? "var(--text)" : "var(--on-accent)",
+        border: outline ? "1px solid var(--border)" : "none",
+        borderRadius: 14,
+        fontFamily: "'Golos Text', sans-serif",
+        fontSize,
+        fontWeight: 500,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 9,
+        cursor: "pointer",
+      };
+
+  const openPicker = () => {
+    haptic("light");
+    const el = inputRef.current;
+    if (el) {
+      el.value = ""; // сбрасываем ДО открытия — иначе повтор/то же фото не даст onChange
+      el.click();
+    }
   };
 
   return (
     <>
-      <button
-        type="button"
-        className="sj-cta"
-        style={style}
-        onClick={() => {
-          haptic("light");
-          const el = inputRef.current;
-          if (el) {
-            el.value = ""; // сбрасываем ДО открытия — иначе повтор/то же фото не даст onChange
-            el.click();
-          }
-        }}
-      >
-        <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 20 }} />
-        {label}
+      <button type="button" className="sj-cta" style={style} onClick={openPicker} aria-label={label}>
+        <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: circle ? 44 : 20 }} />
+        {!circle && label}
       </button>
       {/* НЕ display:none: скрытый (hidden) file input во webview Telegram флапает —
           onChange не всегда стреляет. Держим отрендеренным, но визуально спрятанным. */}

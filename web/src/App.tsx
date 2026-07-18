@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, ApiError } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -56,6 +56,13 @@ export default function App() {
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
   const [fromHistory, setFromHistory] = useState(false);
+  const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
+
+  // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
+  useEffect(() => {
+    if (phase !== "ready") return;
+    void getMeals().then((d) => setTodayHasMeals(d.items.length > 0)).catch(() => {});
+  }, [phase]);
 
   const boot = useCallback(async () => {
     setPhase("booting");
@@ -130,6 +137,7 @@ export default function App() {
       setMe((m) => (m ? { ...m, meals_left: data.meals_left } : m));
       if (data.status === "ok") {
         notify("success");
+        setTodayHasMeals(true); // приём сохранён — сегодня точно есть записи
         setMealResult(data);
         setView("meal_result");
       } else if (data.status === "label_detected") {
@@ -326,6 +334,7 @@ export default function App() {
           onSubscribe={() => setView("paywall")}
           onHistory={() => setView("history")}
           onDiary={() => setView("meal_diary")}
+          todayHasMeals={todayHasMeals}
         />
       )}
       {view === "history" && (
