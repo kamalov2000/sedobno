@@ -176,7 +176,18 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 			left = 0 // гонка увела за лимит между пре-чеком и списанием
 		}
 	}
-	_ = s.store.InsertEvent(ctx, &u.ID, "meal_ok", map[string]any{"kcal": res.Total.Kcal})
+	// meal_ok: калорийность всегда; на бете (MealDiagVerbose) — полный результат
+	// распознавания для калибровочного датасета (что модель увидела до правок юзера).
+	props := map[string]any{"kcal": res.Total.Kcal}
+	if s.cfg.MealDiagVerbose {
+		props["meal_id"] = id
+		props["provider"] = res.Provider
+		props["confidence"] = res.Confidence
+		props["note"] = res.Note
+		props["total"] = res.Total
+		props["dishes"] = res.Dishes
+	}
+	_ = s.store.InsertEvent(ctx, &u.ID, "meal_ok", props)
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, ID: id, Dishes: res.Dishes, Total: &res.Total,
 		Confidence: res.Confidence, Note: res.Note, MealsLeft: left,
@@ -226,12 +237,14 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 
 	itemsJSON := []byte(m.Items)
 	kcal, protein, fat, carb := m.Kcal, m.ProteinG, m.FatG, m.CarbG
+	var newDishes []llm.MealItem
 	if req.Dishes != nil {
 		dishes, total := meal.SanitizeDishes(*req.Dishes)
 		if len(dishes) == 0 {
 			writeError(w, http.StatusBadRequest, "bad_request", "нельзя оставить приём без блюд — удалите приём целиком")
 			return
 		}
+		newDishes = dishes
 		itemsJSON, _ = json.Marshal(dishes)
 		kcal, protein, fat, carb = &total.Kcal, &total.ProteinG, &total.FatG, &total.CarbG
 	}
@@ -242,7 +255,25 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить правку")
 		return
 	}
-	_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edited", nil)
+	// meal_edited: на бете (MealDiagVerbose) кладём правки пользователя (граммовки до/после)
+	// — это калибровочный сигнал «где модель ошиблась». В проде — пустое событие.
+	var evProps map[string]any
+	if s.cfg.MealDiagVerbose {
+		evProps = map[string]any{"meal_id": id}
+		if newDishes != nil {
+			var oldDishes []llm.MealItem
+			_ = json.Unmarshal(m.Items, &oldDishes)
+			evProps["before"] = dishGramsList(oldDishes)
+			evProps["after"] = dishGramsList(newDishes)
+		}
+		if req.MealType != nil {
+			evProps["meal_type"] = *req.MealType
+		}
+		if req.EatenAt != nil {
+			evProps["eaten_at_changed"] = true
+		}
+	}
+	_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edited", evProps)
 	writeJSON(w, http.StatusOK, toDiaryItem(updated))
 }
 
@@ -438,6 +469,16 @@ func mealDiagProps(res *meal.Result) map[string]any {
 		props["note"] = res.Note
 	}
 	return props
+}
+
+// dishGramsList — компактный список блюд для диагностических событий: имя + граммовка
+// + ккал (для сравнения «до/после» правки в калибровочном датасете).
+func dishGramsList(ds []llm.MealItem) []map[string]any {
+	out := make([]map[string]any, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, map[string]any{"name": d.Name, "grams": d.Grams, "kcal": d.Kcal})
+	}
+	return out
 }
 
 // remainingMeals — остаток бесплатных разборов без списания (подписчик → -1).

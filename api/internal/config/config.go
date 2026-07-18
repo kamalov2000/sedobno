@@ -88,6 +88,12 @@ type Config struct {
 	// чтобы открывать mini-app в обычном браузере. На проде игнорируется с warning. false по умолчанию.
 	DevAuthBypass bool
 
+	// MealDiagVerbose — расширенная диагностика разборов еды (для калибровочного датасета
+	// на бете): в события meal_ok кладём полный результат распознавания (блюда/КБЖУ/
+	// confidence), в meal_edited — правки пользователя (граммовки до/после). По умолчанию
+	// false (прод события не раздуваются); бета включает MEAL_DIAG_VERBOSE=true.
+	MealDiagVerbose bool
+
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
 	// Нужен для разбора распознавания: какое ИМЕННО изображение (после Normalize)
 	// видела модель. На проде держать выключенным (приватность/место).
@@ -191,6 +197,7 @@ func MustLoad() *Config {
 	// --- СБП/ЮKassa (§14.1). Канал опционален: при SBP_ENABLED=false ключи не требуются. ---
 	cfg.AppEnv = opt("APP_ENV", "prod") // безопасный дефолт: неизвестное окружение = прод
 	cfg.DevAuthBypass = optBool(opt("DEV_AUTH_BYPASS", "false"))
+	cfg.MealDiagVerbose = optBool(opt("MEAL_DIAG_VERBOSE", "false"))
 
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")
