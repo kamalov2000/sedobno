@@ -8,12 +8,27 @@ import { haptic } from "../telegram";
 
 const MAX_PHOTOS = 3; // тот же потолок, что на сервере (§8)
 
+// Хинт мультикадра для сканера состава (по умолчанию): доп. кадры — ПРОДОЛЖЕНИЕ того же
+// списка «Состав», а не другие панели.
+const SCAN_HINT = (
+  <>
+    Добавляйте кадр, только если список состава не влез в один снимок: второй и третий кадр
+    — это продолжение <b>того же</b> списка «Состав», а не другие части этикетки (не пищевая
+    ценность и не лицевая сторона).
+  </>
+);
+
 interface Props {
   onScan: (files: File[]) => void;
   startLabel: string; // подпись кнопки первого кадра
   startIcon?: string; // иконка первого кадра (Tabler без префикса ti)
   startHeight?: number;
   startFontSize?: number;
+  // Акцент кнопок (для режима «Калории» — янтарь; по умолчанию зелёный сканера).
+  accentColor?: string;
+  onColor?: string;
+  // Подсказка при стейджинге доп. кадров (по умолчанию — про «продолжение того же списка»).
+  hint?: React.ReactNode;
 }
 
 export default function PhotoStager({
@@ -22,6 +37,9 @@ export default function PhotoStager({
   startIcon = "ti-scan",
   startHeight = 56,
   startFontSize = 16,
+  accentColor = "var(--accent)",
+  onColor = "var(--on-accent)",
+  hint = SCAN_HINT,
 }: Props) {
   const [photos, setPhotos] = useState<File[]>([]);
   const [readError, setReadError] = useState(false);
@@ -55,6 +73,8 @@ export default function PhotoStager({
           icon={startIcon}
           height={startHeight}
           fontSize={startFontSize}
+          accentColor={accentColor}
+          onColor={onColor}
           onFile={addPhoto}
           onReadError={() => setReadError(true)}
         />
@@ -102,18 +122,17 @@ export default function PhotoStager({
 
       {photos.length < MAX_PHOTOS && (
         <>
-          {/* Онбординг мультифото: доп. кадры — это ПРОДОЛЖЕНИЕ того же списка «Состав»,
-              а не другие панели. Иначе модель путается и распознаёт не тот состав. */}
-          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.35, color: "var(--text2)" }}>
-            Добавляйте кадр, только если список состава не влез в один снимок: второй и
-            третий кадр — это продолжение <b>того же</b> списка «Состав», а не другие
-            части этикетки (не пищевая ценность и не лицевая сторона).
-          </p>
+          <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.35, color: "var(--text2)" }}>{hint}</p>
           <ScanButton label="Добавить ещё фото" icon="ti-plus" variant="outline" height={48} fontSize={15} onFile={addPhoto} onReadError={() => setReadError(true)} />
         </>
       )}
 
-      <button type="button" className="sj-cta" style={{ ...submitStyle, height: startHeight, fontSize: startFontSize }} onClick={submit}>
+      <button
+        type="button"
+        className="sj-cta"
+        style={{ ...submitStyle, height: startHeight, fontSize: startFontSize, background: accentColor, color: onColor }}
+        onClick={submit}
+      >
         <i className="ti ti-scan" aria-hidden="true" style={{ fontSize: 20 }} />
         Готово, проверить{photos.length > 1 ? ` (${photos.length})` : ""}
       </button>
@@ -123,8 +142,6 @@ export default function PhotoStager({
 
 const submitStyle: CSSProperties = {
   width: "100%",
-  background: "var(--accent)",
-  color: "var(--on-accent)",
   border: "none",
   borderRadius: 14,
   fontFamily: "'Golos Text', sans-serif",
