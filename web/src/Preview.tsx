@@ -5,7 +5,9 @@ import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
-import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, MEAL_NOT_FOOD_HINTS, MEAL_LABEL_HINTS } from "./screens/ErrorScreen";
+import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
+import MealStateScreen from "./screens/MealStateScreen";
+import MealLoader from "./components/MealLoader";
 import PaywallScreen from "./screens/PaywallScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import DiaryScreen from "./screens/DiaryScreen";
@@ -142,14 +144,9 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
-  {
-    title: "07 · КАЛОРИИ · не еда",
-    node: <ErrorScreen title="На фото не видно еды" subtitle="Сфотографируйте готовое блюдо на тарелке." hints={MEAL_NOT_FOOD_HINTS} onAgain={noop} />,
-  },
-  {
-    title: "07 · КАЛОРИИ · это упаковка",
-    node: <ErrorScreen title="Похоже, это упаковка" subtitle="Для продукта с составом точнее сработает сканер состава." hints={MEAL_LABEL_HINTS} primaryAction={{ label: "Открыть сканер состава", icon: "ti-scan", onClick: noop }} onAgain={noop} />,
-  },
+  { title: "07 · КАЛОРИИ · не еда", node: <MealStateScreen kind="not_food" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
+  { title: "07 · КАЛОРИИ · это упаковка", node: <MealStateScreen kind="label" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
+  { title: "07 · КАЛОРИИ · лоадер", node: <MealLoader /> },
   { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "09 · ВИЗАРД · профиль питания", node: <ProfileWizard onDone={noop} onCancel={noop} /> },

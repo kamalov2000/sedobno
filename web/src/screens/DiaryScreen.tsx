@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MealsByDay, MealDaily, MealDiaryItem, NutritionProfile } from "../types";
 import { getMeals, getMealDays, deleteMeal } from "../api";
-import { MEAL_TYPE_ICONS, emptyMealWord } from "../meal";
+import { MEAL_TYPE_ICONS, emptyMealWord, dayRingLine } from "../meal";
 import { haptic } from "../telegram";
 import MacroSegments from "../components/MacroSegments";
 
@@ -291,8 +291,7 @@ function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile:
   const pct = target > 0 ? Math.min(1, eaten / target) : 0;
   const ringC = 2 * Math.PI * 52;
   const off = ringC * (1 - pct);
-  const left = target - eaten;
-  const rightLine = left >= 0 ? `из${NBSP}${target}${NBSP}ккал · осталось${NBSP}${left}${NBSP}ккал` : `из${NBSP}${target}${NBSP}ккал · перебор${NBSP}${-left}${NBSP}ккал`;
+  const rightLine = dayRingLine(eaten, target);
   const macros = `Б${NBSP}${fmtInt(total.protein_g)}${NBSP}г · Ж${NBSP}${fmtInt(total.fat_g)}${NBSP}г · У${NBSP}${fmtInt(total.carb_g)}${NBSP}г`;
 
   return (

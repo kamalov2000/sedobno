@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1 } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord } from "./meal";
 import type { MealItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -90,5 +90,28 @@ describe("round1", () => {
   it("округляет до 0.1", () => {
     expect(round1(172.34)).toBe(172.3);
     expect(round1(2.55)).toBeCloseTo(2.6, 5);
+  });
+});
+
+describe("dayRingLine — правая строка кольца с неразрывными пробелами", () => {
+  it("остаток: числа и «ккал» держатся неразрывным пробелом, перенос только по « · »", () => {
+    const s = dayRingLine(1450, 2100);
+    expect(s).toBe("из 2100 ккал · осталось 650 ккал");
+    expect(s).toContain(" "); // неразрывные пробелы есть
+    expect(s).toContain(" · "); // точка разделения с обычными пробелами (точка переноса)
+  });
+  it("превышение нормы → «перебор» (не отрицательный остаток)", () => {
+    expect(dayRingLine(2400, 2100)).toBe("из 2100 ккал · перебор 300 ккал");
+  });
+});
+
+describe("emptyMealWord — динамика пустого дня по времени", () => {
+  it("до 11:00 — завтрак, до 16:00 — обед, после — ужин", () => {
+    expect(emptyMealWord(8)).toBe("завтрак");
+    expect(emptyMealWord(10)).toBe("завтрак");
+    expect(emptyMealWord(11)).toBe("обед");
+    expect(emptyMealWord(15)).toBe("обед");
+    expect(emptyMealWord(16)).toBe("ужин");
+    expect(emptyMealWord(21)).toBe("ужин");
   });
 });

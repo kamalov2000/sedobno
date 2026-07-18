@@ -101,6 +101,15 @@ export function emptyMealWord(hours: number): "завтрак" | "обед" | "�
   return hours < 11 ? "завтрак" : hours < 16 ? "обед" : "ужин";
 }
 
+/** Правая строка кольца дня: «из N ккал · осталось M ккал» (перебор — при превышении).
+ *  Неразрывные пробелы держат «число ккал» вместе; перенос допускается только по « · ». */
+export function dayRingLine(eaten: number, target: number): string {
+  const NB = " ";
+  const diff = target - eaten;
+  const right = diff >= 0 ? `осталось${NB}${diff}${NB}ккал` : `перебор${NB}${-diff}${NB}ккал`;
+  return `из${NB}${target}${NB}ккал · ${right}`;
+}
+
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
 export function pluralDishes(n: number): string {
   const a = Math.abs(n) % 100;

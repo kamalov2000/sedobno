@@ -204,13 +204,8 @@ export async function renderShareCard(data: ShareData, format: ShareFormat, them
 
   ctx.textBaseline = "middle";
   if (data.scope === "day") {
-    let list = data.meals ?? [];
-    let extra = 0;
     // >6 приёмов → 5 + строка «ещё K приёмов».
-    if (list.length > 6) {
-      extra = list.length - 5;
-      list = list.slice(0, 5);
-    }
+    const { shown: list, extra } = collapseShareMeals(data.meals ?? []);
     for (const m of list) {
       if (y + rowH > bottomLimit) break;
       const cy = y + rowH / 2;
@@ -296,7 +291,12 @@ export async function renderShareCard(data: ShareData, format: ShareFormat, them
   });
 }
 
-function pluralMeals(n: number): string {
+/** Сворачивание ленты приёмов для карточки: >6 → первые 5 + «ещё K». */
+export function collapseShareMeals<T>(list: T[]): { shown: T[]; extra: number } {
+  return list.length > 6 ? { shown: list.slice(0, 5), extra: list.length - 5 } : { shown: list, extra: 0 };
+}
+
+export function pluralMeals(n: number): string {
   const a = n % 100, b = a % 10;
   if (a > 10 && a < 20) return "приёмов";
   if (b === 1) return "приём";
