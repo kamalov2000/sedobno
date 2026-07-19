@@ -61,8 +61,16 @@ export default function PhotoStager({
     haptic("light");
     setPhotos((p) => p.filter((_, idx) => idx !== i));
   };
+  // sending защищает от второго тапа, пока запрос в полёте. Сейчас двойной тап и так
+  // невозможен — App синхронно переключает view на "loading" ДО первого await, и
+  // HomeScreen вместе с этой кнопкой размонтируется на том же тике. Но это неписаный
+  // инвариант: стоит однажды вставить await перед setView (например, ради прогресса
+  // аплоада), и окно двойного тапа откроется молча, без единого падающего теста.
+  // При p95 разбора 11с цена такой регрессии — два платных vision-вызова с одного тапа.
+  const [sending, setSending] = useState(false);
   const submit = () => {
-    if (photos.length === 0) return;
+    if (photos.length === 0 || sending) return;
+    setSending(true);
     haptic("medium");
     onScan(photos);
   };
@@ -140,8 +148,13 @@ export default function PhotoStager({
       <button
         type="button"
         className="sj-cta"
-        style={{ ...submitStyle, height: startHeight, fontSize: startFontSize, background: accentColor, color: onColor }}
+        style={{
+          ...submitStyle, height: startHeight, fontSize: startFontSize,
+          background: accentColor, color: onColor,
+          opacity: sending ? 0.6 : 1, cursor: sending ? "default" : "pointer",
+        }}
         onClick={submit}
+        disabled={sending}
       >
         <i className="ti ti-scan" aria-hidden="true" style={{ fontSize: 20 }} />
         Готово, проверить{photos.length > 1 ? ` (${photos.length})` : ""}
