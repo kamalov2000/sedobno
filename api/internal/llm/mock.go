@@ -140,10 +140,12 @@ func extractionFrom(images []Image) *Extraction {
 			}
 		}
 	}
-	if len(lines) == 0 {
-		return &Extraction{Ingredients: mockLabelIngredients, Confidence: 1, IsLabel: true}
-	}
-	return &Extraction{Ingredients: lines, Confidence: 1, IsLabel: true}
+	// Пустой результат при ПРИГОДНОМ тексте — это не «нечего показать», а штатная
+	// фикстура «состава в кадре нет»: на ней держится TestPipeline_LabelNotFound
+	// (подаёт "   " и ждёт label_not_found). Подставлять здесь встроенный состав
+	// нельзя — это ровно та регрессия, которую внёс первый вариант мока: непригодный
+	// вход уже отсечён выше в usableText, и эта ветка ловила только тест.
+	return &Extraction{Ingredients: lines, Confidence: 1, IsLabel: len(lines) > 0}
 }
 
 // MatchIngredients в mock-режиме ничего не доматчивает (несматченное остаётся нейтральным).

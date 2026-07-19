@@ -216,3 +216,21 @@ func TestUsableText(t *testing.T) {
 		})
 	}
 }
+
+// Регрессия из первой версии мока: пробельный текст — это фикстура «состава в кадре
+// нет» (её использует TestPipeline_LabelNotFound), а не повод подставить встроенный
+// состав. Первый вариант возвращал здесь полную этикетку, и пайплайн отдавал ok
+// вместо label_not_found.
+func TestMockWhitespaceTextIsNotALabel(t *testing.T) {
+	m := &mockProvider{}
+	for _, in := range []string{"   ", "\n\n", "\t "} {
+		ext, _, err := m.ExtractIngredients(context.Background(), []Image{{Data: []byte(in)}})
+		if err != nil {
+			t.Fatalf("неожиданная ошибка: %v", err)
+		}
+		if ext.IsLabel || len(ext.Ingredients) != 0 {
+			t.Fatalf("вход %q: ожидалось «этикетки нет», получено IsLabel=%v ingredients=%v",
+				in, ext.IsLabel, ext.Ingredients)
+		}
+	}
+}
