@@ -51,6 +51,9 @@ func main() {
 		photoKB   = flag.Int("photo-kb", 100, "целевой размер фикстурного фото, КБ")
 		racePar   = flag.Int("race-parallel", 20, "параллельных запросов в сценарии b")
 		racePre   = flag.Int("race-preset-used", 0, "стартовое free_meals_used в сценарии b")
+		photoDir  = flag.String("photo-dir", "", "папка с фото для сценария real")
+		endpoint  = flag.String("endpoint", "/api/meals", "эндпоинт для сценария real: /api/meals | /api/scan")
+		rubEst    = flag.Float64("rub-estimate", 30, "верхняя оценка расхода, ₽ (для предупреждения)")
 	)
 	flag.Parse()
 
@@ -81,6 +84,12 @@ func main() {
 		rt.scenarioLoad(ctx, seeded, *clients, *perClient, *duration, *scenario)
 	case "b":
 		rt.scenarioQuotaRace(ctx, seeded[0], *racePar, *racePre)
+	case "real":
+		if *photoDir == "" {
+			fatal("сценарий real требует -photo-dir")
+		}
+		confirmRealSpend(*clients**perClient, *rubEst)
+		rt.scenarioReal(ctx, seeded, *photoDir, *endpoint, *clients, *perClient)
 	default:
 		fatal("неизвестный сценарий %q (a|b|c)", *scenario)
 	}

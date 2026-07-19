@@ -226,9 +226,11 @@ func MustLoad() *Config {
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")
 	cfg.DebugStats = optBool(opt("DEBUG_STATS", "false"))
 
-	// Дефолт задержки — 5с: примерно столько занимает vision-вызов Sonnet. Значение
-	// уточняется по замерам живого API (этап смоука), чтобы мок не льстил себе.
-	cfg.MockLLMDelay = optDuration(opt("MOCK_LLM_DELAY", "5s"), 5*time.Second, &invalid, "MOCK_LLM_DELAY")
+	// Дефолт задержки — 8с по ЗАМЕРУ живого API (смоук 19.07, 20 разборов еды на
+	// Haiku): min 3.5с, p50 7.9с, p95 11.2с. Прежние 5с были взяты «на глаз» и
+	// льстили стенду: реальный p50 в 1.6 раза выше, p95 — в 2.2 раза. С 8с мок
+	// воспроизводит типичный вызов, а не лучший случай.
+	cfg.MockLLMDelay = optDuration(opt("MOCK_LLM_DELAY", "8s"), 8*time.Second, &invalid, "MOCK_LLM_DELAY")
 	cfg.MockLLMErrorRate = optRate(opt("MOCK_LLM_ERROR_RATE", "0"), &invalid, "MOCK_LLM_ERROR_RATE")
 	// 0 — не задано, действует константа в пакете server (боевое поведение).
 	cfg.ScanRateLimit = optIntOptional(opt("SCAN_RATE_LIMIT", "0"), &invalid, "SCAN_RATE_LIMIT")

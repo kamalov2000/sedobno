@@ -14,7 +14,10 @@ name: sostav-load
 x-common-env: &common-env
   APP_ENV: dev
   DATABASE_URL: postgres://load:load@postgres:5432/load?sslmode=disable
-  LLM_PROVIDER: mock
+  # mock по умолчанию (бесплатный стенд). Этап 4 переключает на anthropic и
+  # прокидывает боевой ключ из окружения — см. цель load-test-real.
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   JWT_SECRET: loadtest-secret-not-for-production
   TELEGRAM_BOT_TOKEN: "000000:loadtest"
   TELEGRAM_WEBHOOK_SECRET: loadtest
@@ -65,9 +68,9 @@ services:
       LOG_LEVEL: warn # на 50 клиентах info-лог сам становится нагрузкой
 
       # Мок вместо живого провайдера: без ключей, без сети, без трат.
-      MOCK_LLM_DELAY: ${MOCK_LLM_DELAY:-5s}
+      MOCK_LLM_DELAY: ${MOCK_LLM_DELAY:-8s}
       MOCK_LLM_ERROR_RATE: ${MOCK_LLM_ERROR_RATE:-0}
-      LLM_MAX_CONCURRENT: ${LLM_MAX_CONCURRENT:-20}
+      LLM_MAX_CONCURRENT: ${LLM_MAX_CONCURRENT:-40}
       LLM_TIMEOUT_SEC: "25"
       LLM_USD_RUB: "95"
 

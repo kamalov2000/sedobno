@@ -5,7 +5,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup beta-up beta-deploy beta-down beta-logs beta-web load-up load-down load-test load-stats
+.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup beta-up beta-deploy beta-down beta-logs beta-web load-up load-down load-test load-stats load-test-real
 
 # --- Бета-инстанс модуля калорий (feature/calories), отдельный проект sostav-beta. ---
 BETA_COMPOSE := docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta
@@ -90,6 +90,28 @@ load-test: ## полный прогон нагрузочных сценарие�
 	  -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"
 	@echo ""; echo "=== docker stats ПОСЛЕ сценария C ==="; $(MAKE) --no-print-directory load-stats
 	@echo ""; echo "прогон завершён. Остановить стенд: make load-down"
+
+load-test-real: ## ЖИВОЙ смоук Этапа 4 на реальном Anthropic API (ПЛАТНО, нужен REAL_API_ACK=1)
+	@test "$$REAL_API_ACK" = "1" || { echo "ПЛАТНЫЙ прогон. Запуск: REAL_API_ACK=1 make load-test-real"; exit 1; }
+	@set -a; . ./$(ENV_FILE); set +a; \
+	  test -n "$$ANTHROPIC_API_KEY" || { echo "нет ANTHROPIC_API_KEY в $(ENV_FILE)"; exit 1; }; \
+	  echo "→ поднимаем стенд на ЖИВОМ провайдере (LLM_PROVIDER=anthropic)"; \
+	  LLM_PROVIDER=anthropic ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" $(LOAD_COMPOSE) up -d --build api; \
+	  for i in $$(seq 1 30); do \
+	    CODE=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 "$(LOAD_API)/api/health" || true); \
+	    [ "$$CODE" = "200" ] && break; sleep 2; \
+	  done; \
+	  echo ""; echo "=== ЧАСТЬ 1: разбор еды (testdata/meals) ==="; \
+	  cd api && MSYS_NO_PATHCONV=1 REAL_API_ACK=1 go run ./cmd/loadtest -scenario real \
+	    -photo-dir ../testdata/meals -endpoint /api/meals \
+	    -clients 10 -requests 2 -rub-estimate 30 \
+	    -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"; \
+	  echo ""; echo "=== ЧАСТЬ 2: сканер составов, доля эскалаций (testdata/labels) ==="; \
+	  MSYS_NO_PATHCONV=1 REAL_API_ACK=1 go run ./cmd/loadtest -scenario real \
+	    -photo-dir ../testdata/labels -endpoint /api/scan \
+	    -clients 4 -requests 2 -rub-estimate 15 -users 100 \
+	    -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"
+	@echo ""; echo "прогон завершён. Вернуть стенд на мок: make load-up"
 
 tidy: ## go mod tidy
 	cd api && go mod tidy
