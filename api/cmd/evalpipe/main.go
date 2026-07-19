@@ -73,11 +73,16 @@ func main() {
 	fmt.Printf("evalpipe: провайдер=%s, кейсов=%d\n\n", provider.Name(), len(cases))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ФАЙЛ\tСТАТУС\tИЗВЛЕЧ.\tСМАТЧ.\tSCORE\tФЛАГИ\t₽/скан\tТОКЕНЫ\tЛАТЕНТ.")
+	fmt.Fprintln(tw, "ФАЙЛ\tСТАТУС\tМОДЕЛЬ\tИЗВЛЕЧ.\tСМАТЧ.\tSCORE\tФЛАГИ\t₽/скан\tТОКЕНЫ\tЛАТЕНТ.")
 
 	var totCost float64
 	var totLatency, totTokens int64
 	var okCount int
+	// escCount — сколько кейсов ушло на сильную модель. Эскалация выполнялась и
+	// раньше (SetExtractFallback подключён выше), но нигде не показывалась: её цена
+	// растворялась в общей средней, и понять, на каких фото она срабатывает, было
+	// нельзя. Доля эскалаций — прямой вход в юнит-экономику, поэтому считаем явно.
+	var escCount int
 
 	for i, grp := range cases {
 		if i > 0 && *delay > 0 {
@@ -93,14 +98,21 @@ func main() {
 		cancel()
 
 		if err != nil {
-			fmt.Fprintf(tw, "%s\tERROR: %s\t-\t-\t-\t-\t-\t-\t-\n", name, short(err.Error()))
+			fmt.Fprintf(tw, "%s\tERROR: %s\t-\t-\t-\t-\t-\t-\t-\t-\n", name, short(err.Error()))
 			continue
 		}
 
 		matched := countMatched(res.Matched)
 		flags := topFlagTitles(res.Flags)
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%.4f\t%d\t%dms\n",
-			name, res.Status, len(res.IngredientsRaw), matched, res.Score, flags,
+		// Провайдер отражает эскалацию: пайплайн подменяет его именем fallback-модели,
+		// когда фаза 1 ушла на сильную модель (мультикадр либо низкая уверенность).
+		model := res.Provider
+		if strings.Contains(model, "fallback") {
+			escCount++
+			model += " ⚡"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%.4f\t%d\t%dms\n",
+			name, res.Status, model, len(res.IngredientsRaw), matched, res.Score, flags,
 			res.CostRUB, res.Usage.InputTokens+res.Usage.OutputTokens, res.LatencyMs)
 
 		totCost += res.CostRUB
@@ -118,6 +130,8 @@ func main() {
 	n := int64(len(cases))
 	fmt.Printf("\nИТОГО: кейсов=%d, ok=%d\n", len(cases), okCount)
 	fmt.Printf("Стоимость: сумма=%.4f ₽, средняя=%.4f ₽/скан (цель < 1 ₽)\n", totCost, avgF(totCost, len(cases)))
+	fmt.Printf("Эскалации на сильную модель: %d из %d (%.0f%%)\n",
+		escCount, len(cases), 100*float64(escCount)/float64(max(1, len(cases))))
 	fmt.Printf("Латентность: средняя=%d ms\n", avgI(totLatency, n))
 	fmt.Printf("Токены: сумма=%d, средние=%d/скан\n", totTokens, avgI(totTokens, n))
 }
