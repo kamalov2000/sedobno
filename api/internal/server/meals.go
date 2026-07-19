@@ -384,7 +384,7 @@ func (s *Server) handleMealDelete(w http.ResponseWriter, r *http.Request) {
 // (те же лимиты и форматы), но изолированно — сканер не трогаем.
 func (s *Server) readMealImages(w http.ResponseWriter, r *http.Request) ([]llm.Image, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxScanBodyBytes)
-	if err := r.ParseMultipartForm(maxScanBodyBytes); err != nil {
+	if err := r.ParseMultipartForm(multipartMemBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "приложите фото в поле photo (до 3 кадров, макс 10 МБ каждый)")
 		return nil, false
 	}

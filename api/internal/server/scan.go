@@ -26,6 +26,14 @@ const (
 	maxUploadBytes   = 10 << 20 // 10 МБ на исходное фото
 	maxPhotos        = 3        // до 3 кадров одной этикетки на скан (§8)
 	maxScanBodyBytes = 32 << 20 // 32 МБ на всё тело запроса (3×10 МБ + оверхед multipart)
+
+	// multipartMemBytes — сколько тела ParseMultipartForm держит в RAM, прежде чем
+	// спиллить остаток во временный файл. Это НЕ потолок размера (потолок —
+	// maxScanBodyBytes выше), а порог «память против диска». Передавать сюда 32 МБ
+	// нельзя: тогда каждый параллельный аплоад легально занимает до 32 МБ кучи, и
+	// полсотни одновременных ужинов дают ~1.6 ГБ только на буферах. С 1 МБ фото
+	// уезжает в os.TempDir и подчищается штатным MultipartForm.RemoveAll().
+	multipartMemBytes = 1 << 20 // 1 МБ
 	maxImageDim      = 1500     // длинная сторона после ресайза (меньше vision-токенов)
 	jpegQuality      = 85
 
@@ -152,7 +160,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// vision-вызов, сохраняя порядок состава и не дублируя ингредиенты на стыке.
 	// Потолки: ≤10 МБ на кадр, ≤3 кадра, ≤32 МБ на всё тело.
 	r.Body = http.MaxBytesReader(w, r.Body, maxScanBodyBytes)
-	if err := r.ParseMultipartForm(maxScanBodyBytes); err != nil {
+	if err := r.ParseMultipartForm(multipartMemBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "приложите фото в поле photo (до 3 кадров, макс 10 МБ каждый)")
 		return
 	}
