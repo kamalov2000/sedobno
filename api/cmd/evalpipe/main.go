@@ -83,6 +83,10 @@ func main() {
 	// растворялась в общей средней, и понять, на каких фото она срабатывает, было
 	// нельзя. Доля эскалаций — прямой вход в юнит-экономику, поэтому считаем явно.
 	var escCount int
+	// Кэш промпта: запись префикса и чтение из него. Нули в обоих означают, что
+	// префикс не дотянул до минимума модели (у Haiku 4.5 — 4096 токенов) и кэш
+	// молча не включился — это ответ на вопрос «стоит ли вообще кэшировать».
+	var totCacheWrite, totCacheRead int64
 
 	for i, grp := range cases {
 		if i > 0 && *delay > 0 {
@@ -90,7 +94,7 @@ func main() {
 		}
 		imgs, name, rerr := readCase(grp)
 		if rerr != nil {
-			fmt.Fprintf(tw, "%s\tОШИБКА ЧТЕНИЯ\t-\t-\t-\t-\t-\t-\t-\n", name)
+			fmt.Fprintf(tw, "%s\tОШИБКА ЧТЕНИЯ\t-\t-\t-\t-\t-\t-\t-\t-\n", name)
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -118,6 +122,8 @@ func main() {
 		totCost += res.CostRUB
 		totLatency += res.LatencyMs
 		totTokens += int64(res.Usage.InputTokens + res.Usage.OutputTokens)
+		totCacheWrite += int64(res.Usage.CacheCreationInputTokens)
+		totCacheRead += int64(res.Usage.CacheReadInputTokens)
 		if res.Status == pipeline.StatusOK {
 			okCount++
 		}
@@ -134,6 +140,8 @@ func main() {
 		escCount, len(cases), 100*float64(escCount)/float64(max(1, len(cases))))
 	fmt.Printf("Латентность: средняя=%d ms\n", avgI(totLatency, n))
 	fmt.Printf("Токены: сумма=%d, средние=%d/скан\n", totTokens, avgI(totTokens, n))
+	fmt.Printf("Кэш промпта: запись=%d, чтение=%d (нули = префикс ниже порога модели)\n",
+		totCacheWrite, totCacheRead)
 }
 
 // buildCases собирает список кейсов. Позиционные аргументы — мультифото-кейсы:

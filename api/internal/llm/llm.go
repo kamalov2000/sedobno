@@ -126,11 +126,21 @@ type ExplainInput struct {
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	// Кэш промпта: запись префикса в кэш и чтение из него. Тарифицируются иначе,
+	// чем обычный вход (запись ×1.25, чтение ×0.1), поэтому считаются отдельно —
+	// смешивать их с InputTokens значит потерять весь смысл кэша в оценке цены.
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
 }
 
 // Add суммирует потребление токенов.
 func (u Usage) Add(o Usage) Usage {
-	return Usage{u.InputTokens + o.InputTokens, u.OutputTokens + o.OutputTokens}
+	return Usage{
+		InputTokens:              u.InputTokens + o.InputTokens,
+		OutputTokens:             u.OutputTokens + o.OutputTokens,
+		CacheCreationInputTokens: u.CacheCreationInputTokens + o.CacheCreationInputTokens,
+		CacheReadInputTokens:     u.CacheReadInputTokens + o.CacheReadInputTokens,
+	}
 }
 
 // LLMProvider — контракт провайдера vision/LLM.
