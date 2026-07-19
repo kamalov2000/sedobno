@@ -41,8 +41,8 @@ func New(cfg *config.Config, pool *pgxpool.Pool, pipe *pipeline.Pipeline, log *s
 		cfg: cfg, pool: pool, store: store.New(pool), pipe: pipe,
 		tg:          tg.New(cfg.TelegramAPIBase, cfg.TelegramBotToken),
 		yk:          yookassa.New(cfg.YooKassaAPIBase, cfg.YooKassaShopID, cfg.YooKassaSecretKey),
-		scanLimiter: newUserLimiter(scanRateLimit, time.Minute),
-		mealLimiter: newUserLimiter(mealRateLimit, time.Minute),
+		scanLimiter: newUserLimiter(rateLimitOr(cfg.ScanRateLimit, scanRateLimit), time.Minute),
+		mealLimiter: newUserLimiter(rateLimitOr(cfg.MealRateLimit, mealRateLimit), time.Minute),
 		support:     newSupportState(),
 		log:         log,
 	}
@@ -58,6 +58,18 @@ const scanRateLimit = 5
 
 // mealRateLimit — 5 разборов еды в минуту на пользователя (свой бюджет, независимо от сканов).
 const mealRateLimit = 5
+
+// rateLimitOr подставляет дефолт, если лимит не переопределён окружением.
+// Переопределение нужно нагрузочному стенду: сценарий «гонка квоты» шлёт 20
+// параллельных запросов ОДНИМ пользователем, и лимит 5/мин отсекал бы их раньше,
+// чем они дойдут до проверки квоты, — то есть маскировал бы проверяемое свойство.
+// В боевом окружении переменные не задаются и действуют константы выше.
+func rateLimitOr(fromEnv, def int) int {
+	if fromEnv > 0 {
+		return fromEnv
+	}
+	return def
+}
 
 // Router строит chi-роутер со всеми маршрутами.
 // На Этапе 0 определён только служебный /api/health; остальные маршруты

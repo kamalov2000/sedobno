@@ -53,9 +53,12 @@ func (s *Server) StartPoolSampler(ctx context.Context) {
 
 // poolStatsView — статистика пула для отчёта нагрузочного теста.
 //
-// Ключевые числа для разбора: empty_acquire_count > 0 означает, что запросы ЖДАЛИ
-// свободный коннект (пул мал), а acquired_max показывает, сколько на пике реально
-// понадобилось — по нему и подбирается MaxConns.
+// Как читать. acquired_max — сколько коннектов реально понадобилось на пике; по нему
+// и подбирается MaxConns. empty_acquire_count считает захваты, которым не досталось
+// СВОБОДНОГО коннекта, — но сюда попадает и прогрев (первые запросы, пока пул пуст и
+// коннекты только создаются), поэтому единицы на старте — норма, а не дефицит.
+// Настоящее насыщение выглядит иначе: acquired_max упёрся в max_conns И
+// empty_acquire_count растёт вместе с нагрузкой.
 type poolStatsView struct {
 	MaxConns             int32  `json:"max_conns"`
 	TotalConns           int32  `json:"total_conns"`
@@ -78,8 +81,10 @@ func poolStats(st *pgxpool.Stat, peak int32) poolStatsView {
 		EmptyAcquireCount: st.EmptyAcquireCount(), CanceledAcquireCount: st.CanceledAcquireCount(),
 		AcquireDurationMs: st.AcquireDuration().Milliseconds(), NewConnsCount: st.NewConnsCount(),
 	}
-	if st.EmptyAcquireCount() > 0 {
-		v.Note = "были ожидания свободного коннекта — пул мал под этой нагрузкой"
+	// Признак насыщения — именно пик, упёршийся в потолок: сам по себе
+	// empty_acquire_count включает прогрев и о дефиците не говорит.
+	if peak >= st.MaxConns() {
+		v.Note = "пик занятых упёрся в max_conns — пул был узким местом"
 	}
 	return v
 }

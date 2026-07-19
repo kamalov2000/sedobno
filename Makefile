@@ -5,7 +5,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml --env-file $(ENV_FILE)
 # HEALTH_URL — что дёргаем в конце деплоя, чтобы убедиться, что выкатилось живое.
 HEALTH_URL ?= https://sedobno-pay.ru/api/health
 
-.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup beta-up beta-deploy beta-down beta-logs beta-web
+.PHONY: help env build up down logs ps migrate seed test evalpipe meal-eval tidy web-build fmt deploy bot-setup beta-up beta-deploy beta-down beta-logs beta-web load-up load-down load-test load-stats
 
 # --- Бета-инстанс модуля калорий (feature/calories), отдельный проект sostav-beta. ---
 BETA_COMPOSE := docker compose -f deploy/docker-compose.beta.yml --env-file deploy/.env.beta
@@ -53,6 +53,43 @@ evalpipe: env ## тест-харнесс пайплайна: прогон testda
 meal-eval: env ## калибровка калорий: прогон testdata/meals через Haiku+Sonnet → results_report.md (нужен ANTHROPIC_API_KEY)
 	# Live-тег: платные vision-вызовы, вне CI. Кладите фото в testdata/meals + ground_truth.md.
 	set -a; . ./$(ENV_FILE); set +a; cd api && go test -tags live ./internal/meal/ -run TestMealEval -v -timeout 30m
+
+# --- Нагрузочный стенд (Этап 3): изолированный проект sostav-load, мок вместо API. ---
+LOAD_COMPOSE := docker compose -f deploy/docker-compose.load.yml
+LOAD_DB      := postgres://load:load@localhost:55433/load?sslmode=disable
+LOAD_SECRET  := loadtest-secret-not-for-production
+LOAD_API     := http://localhost:8081
+
+load-up: ## поднять нагрузочный стенд (postgres + api на LLM_PROVIDER=mock)
+	$(LOAD_COMPOSE) up -d --build
+	@echo "ждём готовности api…"
+	@for i in $$(seq 1 40); do \
+	  CODE=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 "$(LOAD_API)/api/health" || true); \
+	  [ "$$CODE" = "200" ] && { echo "api готов"; exit 0; }; sleep 2; \
+	done; echo "api не поднялся"; $(LOAD_COMPOSE) logs --tail 40 api; exit 1
+
+load-down: ## остановить нагрузочный стенд и удалить его данные
+	$(LOAD_COMPOSE) down -v
+
+load-stats: ## docker stats стенда одним снимком (память/CPU контейнера api)
+	@docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' \
+	  $$($(LOAD_COMPOSE) ps -q) 2>/dev/null || echo "стенд не поднят"
+
+load-test: ## полный прогон нагрузочных сценариев A/B/C (поднимает стенд сам)
+	@$(MAKE) load-up
+	@echo ""; echo "=== docker stats ДО нагрузки ==="; $(MAKE) --no-print-directory load-stats
+	@echo ""; cd api && go run ./cmd/loadtest -scenario a -clients 50 -requests 8 -duration 2m \
+	  -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"
+	@echo ""; echo "=== docker stats ПОСЛЕ сценария A ==="; $(MAKE) --no-print-directory load-stats
+	@echo ""; cd api && go run ./cmd/loadtest -scenario b -race-parallel 20 -race-preset-used 9 \
+	  -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"
+	@echo ""; echo "--- сценарий C: перезапуск api с MOCK_LLM_ERROR_RATE=0.3 ---"
+	@MOCK_LLM_ERROR_RATE=0.3 $(LOAD_COMPOSE) up -d --no-deps api
+	@sleep 5
+	@cd api && go run ./cmd/loadtest -scenario c -clients 50 -requests 8 -duration 2m \
+	  -db "$(LOAD_DB)" -secret "$(LOAD_SECRET)" -api "$(LOAD_API)"
+	@echo ""; echo "=== docker stats ПОСЛЕ сценария C ==="; $(MAKE) --no-print-directory load-stats
+	@echo ""; echo "прогон завершён. Остановить стенд: make load-down"
 
 tidy: ## go mod tidy
 	cd api && go mod tidy

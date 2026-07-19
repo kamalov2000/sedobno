@@ -112,6 +112,12 @@ type Config struct {
 	// ретрай-логику под нагрузкой). На реальных провайдерах не читаются.
 	MockLLMDelay     time.Duration
 	MockLLMErrorRate float64
+
+	// Переопределение рейт-лимитов (0 — действует константа в server). Нужно
+	// нагрузочному стенду: сценарий гонки квоты шлёт 20 параллельных запросов одним
+	// пользователем, и штатные 5/мин маскировали бы проверяемое свойство.
+	ScanRateLimit int
+	MealRateLimit int
 }
 
 // MustLoad читает окружение и паникует, если не хватает обязательных переменных
@@ -220,6 +226,9 @@ func MustLoad() *Config {
 	// уточняется по замерам живого API (этап смоука), чтобы мок не льстил себе.
 	cfg.MockLLMDelay = optDuration(opt("MOCK_LLM_DELAY", "5s"), 5*time.Second, &invalid, "MOCK_LLM_DELAY")
 	cfg.MockLLMErrorRate = optRate(opt("MOCK_LLM_ERROR_RATE", "0"), &invalid, "MOCK_LLM_ERROR_RATE")
+	// 0 — не задано, действует константа в пакете server (боевое поведение).
+	cfg.ScanRateLimit = optIntOptional(opt("SCAN_RATE_LIMIT", "0"), &invalid, "SCAN_RATE_LIMIT")
+	cfg.MealRateLimit = optIntOptional(opt("MEAL_RATE_LIMIT", "0"), &invalid, "MEAL_RATE_LIMIT")
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
@@ -307,6 +316,17 @@ func optFloat(raw string, def float64, invalid *[]string, name string) float64 {
 	if err != nil || v <= 0 {
 		*invalid = append(*invalid, name+" (ожидается положительное число)")
 		return def
+	}
+	return v
+}
+
+// optIntOptional разбирает неотрицательное целое, где 0 значит «не задано».
+// Отдельно от optInt: там ноль считается ошибкой конфигурации.
+func optIntOptional(raw string, invalid *[]string, name string) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		*invalid = append(*invalid, name+" (ожидается неотрицательное целое; 0 — по умолчанию)")
+		return 0
 	}
 	return v
 }
