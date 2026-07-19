@@ -144,23 +144,9 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 		return "", Usage{}, err
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
-		if attempt > 0 {
-			if err := waitBackoff(ctx, attempt); err != nil {
-				break // ctx отменён во время паузы — повтор бессмыслен
-			}
-		}
-		text, usage, err := c.doOnce(ctx, payload)
-		if err == nil {
-			return text, usage, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return "", Usage{}, fmt.Errorf("%s: %w", c.name, lastErr)
+	return doWithRetry(ctx, c.name, func() (string, Usage, error) {
+		return c.doOnce(ctx, payload)
+	})
 }
 
 func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, Usage, error) {
@@ -183,11 +169,14 @@ func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, U
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return "", Usage{}, fmt.Errorf("429 rate limit: %s", strings.TrimSpace(string(body)))
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", Usage{}, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// Типизированная ошибка: решение о повторе принимает retryDelay по статусу
+		// и Retry-After, а не вызывающий код.
+		return "", Usage{}, &httpError{
+			status:     resp.StatusCode,
+			retryAfter: parseRetryAfter(resp.Header),
+			body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	var ar anthropicResponse

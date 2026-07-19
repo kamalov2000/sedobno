@@ -21,18 +21,8 @@ func retryBackoff(attempt int) time.Duration {
 	return 300 * time.Millisecond << (attempt - 1)
 }
 
-// waitBackoff выжидает retryBackoff(attempt), прерываясь при отмене ctx (чтобы не
-// висеть на паузе, когда клиент уже ушёл / истёк общий дедлайн скана).
-func waitBackoff(ctx context.Context, attempt int) error {
-	t := time.NewTimer(retryBackoff(attempt))
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
-}
+// Пауза перед повтором и решение «повторять ли вообще» — в retry.go (waitFor,
+// retryDelay): политика повторов общая для обоих транспортов.
 
 // Image — одно изображение для фазы 1. Несколько изображений = ракурсы ОДНОЙ этикетки
 // (круглая/изогнутая упаковка): все уходят в ОДИН vision-вызов отдельными image-блоками,
