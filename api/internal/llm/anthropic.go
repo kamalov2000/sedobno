@@ -78,8 +78,8 @@ func anthropicPrice(model string) (inPer1M, outPer1M float64) {
 // --- типы протокола Messages API ---
 
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
 	// Temperature — указатель с omitempty: у Haiku шлём 0 (детерминизм извлечения),
 	// у Sonnet 5+ НЕ шлём вовсе (nil) — там параметр deprecated и даёт 400. Логика
 	// выбора — в temperatureFor().

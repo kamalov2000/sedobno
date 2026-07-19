@@ -30,6 +30,7 @@ type Server struct {
 	scanLimiter *userLimiter
 	mealLimiter *userLimiter
 	support     *supportState
+	poolPeak    poolPeak // пик занятых коннектов; наполняется только при DEBUG_STATS=1
 	log         *slog.Logger
 }
 

@@ -93,6 +93,10 @@ func main() {
 	// Фоновый свип истечения подписок (§9, §10: sub_expired) — до старта HTTP.
 	go srv.StartSubscriptionSweeper(ctx)
 
+	// Семплер пика занятых коннектов пула — только на нагрузочном стенде (DEBUG_STATS=1);
+	// внутри сам проверяет флаг и молча выходит, если он выключен.
+	go srv.StartPoolSampler(ctx)
+
 	go func() {
 		log.Info("api запущен", "addr", httpSrv.Addr, "llm_provider", cfg.LLMProvider)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

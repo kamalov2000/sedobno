@@ -10,6 +10,9 @@ import (
 type healthResponse struct {
 	Status string            `json:"status"`
 	Checks map[string]string `json:"checks"`
+	// Pool — статистика пула соединений. Отдаётся ТОЛЬКО при DEBUG_STATS=1
+	// (нагрузочный стенд): наружу внутреннее состояние сервиса не светим.
+	Pool *poolStatsView `json:"pool,omitempty"`
 }
 
 // handleHealth — служебный эндпоинт GET /api/health.
@@ -27,6 +30,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 	} else {
 		resp.Checks["db"] = "ok"
+	}
+
+	if s.cfg != nil && s.cfg.DebugStats && s.pool != nil {
+		st := poolStats(s.pool.Stat(), s.poolPeak.get())
+		resp.Pool = &st
 	}
 
 	writeJSON(w, code, resp)

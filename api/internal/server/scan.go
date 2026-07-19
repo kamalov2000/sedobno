@@ -34,8 +34,8 @@ const (
 	// полсотни одновременных ужинов дают ~1.6 ГБ только на буферах. С 1 МБ фото
 	// уезжает в os.TempDir и подчищается штатным MultipartForm.RemoveAll().
 	multipartMemBytes = 1 << 20 // 1 МБ
-	maxImageDim      = 1500     // длинная сторона после ресайза (меньше vision-токенов)
-	jpegQuality      = 85
+	maxImageDim       = 1500    // длинная сторона после ресайза (меньше vision-токенов)
+	jpegQuality       = 85
 
 	// scanBusyRetryAfter — хинт фронту (сек) для ретрая при перегрузке (§15).
 	scanBusyRetryAfter = "3"

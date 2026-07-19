@@ -106,20 +106,6 @@ func (c *openAIClient) AnalyzeMeal(ctx context.Context, images []Image) (*MealAn
 	return parseMealAnalysis(content, usage)
 }
 
-// AnalyzeMeal в mock-режиме трактует байты первого «изображения» как JSON MealAnalysis —
-// позволяет прогнать пайплайн калорий на фикстурах без ключей и сети. Непарсибельные
-// данные → «не еда» (штатный не-ok исход, а не паника).
-func (mockProvider) AnalyzeMeal(_ context.Context, images []Image) (*MealAnalysis, Usage, error) {
-	if len(images) == 0 {
-		return &MealAnalysis{}, Usage{}, nil
-	}
-	var ma MealAnalysis
-	if err := json.Unmarshal([]byte(extractJSON(string(images[0].Data))), &ma); err != nil {
-		return &MealAnalysis{IsFood: false}, Usage{}, nil
-	}
-	return &ma, Usage{}, nil
-}
-
 // parseMealAnalysis вырезает JSON из ответа модели и разбирает его в MealAnalysis.
 func parseMealAnalysis(text string, usage Usage) (*MealAnalysis, Usage, error) {
 	var ma MealAnalysis
@@ -174,7 +160,7 @@ func NewMealAnalyzer(cfg *config.Config) (MealAnalyzer, error) {
 			name: "anthropic-meal", usdRUB: cfg.LLMUSDRUB, timeout: timeout, maxTokens: 2048,
 		}, nil
 	case "mock":
-		return &mockProvider{}, nil
+		return newMockProvider(cfg), nil
 	default:
 		return nil, fmt.Errorf("неизвестный LLM_PROVIDER: %s", cfg.LLMProvider)
 	}

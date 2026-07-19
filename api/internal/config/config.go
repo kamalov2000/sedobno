@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config — вся конфигурация приложения. Секреты только из env, в git не попадают.
@@ -99,6 +100,18 @@ type Config struct {
 	// видела модель. На проде держать выключенным (приватность/место).
 	DebugSaveScans bool   // DEBUG_SAVE_SCANS=1 — писать кадры в DebugScanDir
 	DebugScanDir   string // куда писать (default /debug; локально монтируется на хост)
+
+	// DebugStats=1 — расширенный вывод /api/health (статистика пула pgxpool).
+	// Наружу такие числа не светим: они говорят о внутреннем состоянии сервиса,
+	// поэтому по умолчанию выключено и включается только на нагрузочном стенде.
+	DebugStats bool
+
+	// --- Мок-провайдер (LLM_PROVIDER=mock): нагрузочный стенд без трат на API ---
+	// MockLLMDelay имитирует латентность vision-вызова, MockLLMErrorRate — долю
+	// сбоев (0.1 = каждый десятый вызов отдаёт 429 c Retry-After, чтобы прогнать
+	// ретрай-логику под нагрузкой). На реальных провайдерах не читаются.
+	MockLLMDelay     time.Duration
+	MockLLMErrorRate float64
 }
 
 // MustLoad читает окружение и паникует, если не хватает обязательных переменных
@@ -201,6 +214,12 @@ func MustLoad() *Config {
 
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")
+	cfg.DebugStats = optBool(opt("DEBUG_STATS", "false"))
+
+	// Дефолт задержки — 5с: примерно столько занимает vision-вызов Sonnet. Значение
+	// уточняется по замерам живого API (этап смоука), чтобы мок не льстил себе.
+	cfg.MockLLMDelay = optDuration(opt("MOCK_LLM_DELAY", "5s"), 5*time.Second, &invalid, "MOCK_LLM_DELAY")
+	cfg.MockLLMErrorRate = optRate(opt("MOCK_LLM_ERROR_RATE", "0"), &invalid, "MOCK_LLM_ERROR_RATE")
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
@@ -287,6 +306,27 @@ func optFloat(raw string, def float64, invalid *[]string, name string) float64 {
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil || v <= 0 {
 		*invalid = append(*invalid, name+" (ожидается положительное число)")
+		return def
+	}
+	return v
+}
+
+// optRate разбирает долю 0..1 включительно. Отдельно от optFloat: там ноль считается
+// ошибкой, а для доли сбоев мока ноль — штатный дефолт («не ломай ничего»).
+func optRate(raw string, invalid *[]string, name string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v < 0 || v > 1 {
+		*invalid = append(*invalid, name+" (ожидается доля от 0 до 1)")
+		return 0
+	}
+	return v
+}
+
+// optDuration разбирает длительность в формате time.ParseDuration («5s», «1500ms»).
+func optDuration(raw string, def time.Duration, invalid *[]string, name string) time.Duration {
+	v, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		*invalid = append(*invalid, name+" (ожидается длительность, например 5s или 1500ms)")
 		return def
 	}
 	return v

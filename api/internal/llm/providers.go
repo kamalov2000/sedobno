@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -79,10 +78,16 @@ func New(cfg *config.Config) (LLMProvider, error) {
 			name: "anthropic", usdRUB: cfg.LLMUSDRUB, timeout: timeout, maxTokens: 2048,
 		}, nil
 	case "mock":
-		return &mockProvider{}, nil
+		return newMockProvider(cfg), nil
 	default:
 		return nil, fmt.Errorf("неизвестный LLM_PROVIDER: %s", cfg.LLMProvider)
 	}
+}
+
+// newMockProvider собирает мок с параметрами нагрузочного стенда (задержка и доля
+// сбоев). При нулевых значениях ведёт себя как прежний мок: мгновенно и без ошибок.
+func newMockProvider(cfg *config.Config) *mockProvider {
+	return &mockProvider{delay: cfg.MockLLMDelay, errorRate: cfg.MockLLMErrorRate}
 }
 
 // NewExtractFallback возвращает провайдер для повторного извлечения (фаза 1) на
@@ -124,51 +129,4 @@ func buildExplainUser(in ExplainInput) string {
 		fmt.Fprintf(&b, "\nВсего распознано ингредиентов: %d.\n", len(in.Ingredients))
 	}
 	return b.String()
-}
-
-// --- mock-провайдер: для локальной прогонки пайплайна без ключей и стоимости ---
-
-type mockProvider struct{}
-
-func (mockProvider) Name() string               { return "mock" }
-func (mockProvider) CostRUB(_, _ Usage) float64 { return 0 }
-
-// ExtractIngredients трактует «изображение» как UTF-8 текст: строки/через запятую —
-// это ингредиенты. Несколько изображений склеиваются через перевод строки (эмулирует
-// единый список из нескольких ракурсов). Позволяет прогнать фазы 2–4 на текстовых фикстурах.
-func (mockProvider) ExtractIngredients(_ context.Context, images []Image) (*Extraction, Usage, error) {
-	var buf []byte
-	for i, img := range images {
-		if i > 0 {
-			buf = append(buf, '\n')
-		}
-		buf = append(buf, img.Data...)
-	}
-	// Фикстура — один ингредиент на строку (как их отдаёт vision). Резать ещё и по
-	// запятым нельзя: это рвёт вложенный подсостав «шоколад (сахар, масло какао)»
-	// на куски и делает evalpipe непригодным для проверки составных этикеток.
-	var out []string
-	for _, line := range strings.Split(string(buf), "\n") {
-		if s := strings.TrimSpace(line); s != "" {
-			out = append(out, s)
-		}
-	}
-	return &Extraction{Ingredients: out, Confidence: 1, IsLabel: len(out) > 0}, Usage{}, nil
-}
-
-// MatchIngredients в mock-режиме ничего не доматчивает (несматченное остаётся нейтральным).
-func (mockProvider) MatchIngredients(_ context.Context, _ []string, _ []Candidate) (map[string]string, Usage, error) {
-	return map[string]string{}, Usage{}, nil
-}
-
-// Explain в mock-режиме собирает детерминированный разбор из вердиктов, без вызова сети.
-func (mockProvider) Explain(_ context.Context, in ExplainInput) (string, Usage, error) {
-	if len(in.Flags) == 0 {
-		return "Состав без явных проблемных добавок. Оценка высокая.", Usage{}, nil
-	}
-	parts := make([]string, 0, len(in.Flags))
-	for _, f := range in.Flags {
-		parts = append(parts, f.VerdictFull)
-	}
-	return strings.Join(parts, " "), Usage{}, nil
 }
