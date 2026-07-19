@@ -48,6 +48,19 @@ type MealRow struct {
 	LatencyMs  int64
 	CostRUB    float64
 	EatenAt    *time.Time
+	// LocalDate — календарный день пользователя (YYYY-MM-DD), присланный клиентом.
+	// Пусто — день выводится из eaten_at по Europe/Moscow, как до спринта 2: старые
+	// клиенты продолжают работать без изменений.
+	LocalDate string
+}
+
+// nilIfEmpty превращает пустую строку в NULL — чтобы COALESCE в INSERT отработал
+// падение на прежнее поведение, а не записал пустую строку датой.
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // Meal — приём пищи, прочитанный из БД (дневник, правка). Items — сырой JSON блюд,
@@ -98,12 +111,14 @@ func scanMeal(row pgx.Row) (Meal, error) {
 func (s *Store) InsertMeal(ctx context.Context, m MealRow) (int64, error) {
 	const q = `
 INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fat_g, carb_g,
-                   confidence, meal_type, provider, latency_ms, cost_estimate)
-VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14)
+                   confidence, meal_type, provider, latency_ms, cost_estimate, local_date)
+VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14,
+        COALESCE($15::date, (COALESCE($2, now()) AT TIME ZONE 'Europe/Moscow')::date))
 RETURNING id`
 	var id int64
 	err := s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
-		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB).Scan(&id)
+		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB,
+		nilIfEmpty(m.LocalDate)).Scan(&id)
 	return id, err
 }
 
@@ -139,7 +154,8 @@ func (s *Store) DeleteMeal(ctx context.Context, id, userID int64) (bool, error) 
 func (s *Store) ListMealsByDay(ctx context.Context, userID int64, day string) ([]Meal, error) {
 	const q = `SELECT ` + mealCols + `
 FROM meals
-WHERE user_id = $1 AND (eaten_at AT TIME ZONE 'Europe/Moscow')::date = $2::date
+WHERE user_id = $1
+  AND COALESCE(local_date, (eaten_at AT TIME ZONE 'Europe/Moscow')::date) = $2::date
 ORDER BY eaten_at ASC`
 	rows, err := s.pool.Query(ctx, q, userID, day)
 	if err != nil {

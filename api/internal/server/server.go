@@ -112,6 +112,13 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/profile/nutrition", s.handleProfileNutrition)
 
 			r.Get("/me", s.handleMe)
+
+			// Вес, вода (спринт 2). Бесплатные: ни квот, ни рейт-лимита LLM — это
+			// данные пользователя о себе, а не вызовы модели.
+			r.Post("/weight", s.handleWeightCreate)
+			r.Get("/weight", s.handleWeightList)
+			r.Delete("/weight/{date}", s.handleWeightDelete)
+			r.Post("/water", s.handleWaterAdd)
 			r.Post("/pay/create", s.handlePayCreate)
 			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa
 		})

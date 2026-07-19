@@ -170,7 +170,8 @@ func migrateUp(dsn string) error {
 func resetDB(t *testing.T) {
 	t.Helper()
 	_, err := testPool.Exec(context.Background(),
-		`TRUNCATE users, subscriptions, sbp_payments, scans, meals, events, feedback RESTART IDENTITY CASCADE`)
+		`TRUNCATE users, subscriptions, sbp_payments, scans, meals, events, feedback,
+		          weigh_ins, water_intake RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("resetDB: %v", err)
 	}

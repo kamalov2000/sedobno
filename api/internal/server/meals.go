@@ -57,11 +57,17 @@ var validMealTypes = map[string]struct{}{
 	"breakfast": {}, "lunch": {}, "dinner": {}, "snack": {},
 }
 
-// mealsByDayResponse — дневник за конкретный день: агрегат дня + список приёмов.
+// mealsByDayResponse — дневник за конкретный день: агрегат дня + список приёмов +
+// вода и стрик. Вода и серия живут здесь, а не в отдельных эндпоинтах: экран дневника
+// показывает их вместе, и три запроса вместо одного дали бы три разных состояния
+// загрузки на одном экране.
 type mealsByDayResponse struct {
-	Day   string          `json:"day"`
-	Total store.MealDaily `json:"total"`
-	Items []mealDiaryItem `json:"items"`
+	Day         string          `json:"day"`
+	Total       store.MealDaily `json:"total"`
+	Items       []mealDiaryItem `json:"items"`
+	WaterML     int             `json:"water_ml"`
+	WaterGoalML int             `json:"water_goal_ml"`
+	Streak      store.Streak    `json:"streak"`
 }
 
 // mealDaysResponse — дневные агрегаты за период (недельный экран).
@@ -144,12 +150,14 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		})
 
 	default: // ok — сохраняем приём и списываем одну попытку
-		s.finishMealOK(ctx, w, u, res)
+		// Локальный день клиента (опционально): без него день выводится из eaten_at по
+		// Europe/Moscow, как до спринта 2 — старые клиенты не ломаются.
+		s.finishMealOK(ctx, w, u, res, localDateFromForm(r))
 	}
 }
 
 // finishMealOK сохраняет успешный разбор в meals и атомарно списывает попытку.
-func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result) {
+func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, localDate string) {
 	itemsJSON, _ := json.Marshal(res.Dishes)
 	total := res.Total
 	conf := res.Confidence
@@ -157,6 +165,7 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		UserID: u.ID, Status: res.Status, Source: "photo", Items: itemsJSON,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
+		LocalDate: localDate,
 	})
 	if err != nil {
 		s.log.Error("meal: сохранение приёма", "err", err, "user", u.ID)
@@ -308,11 +317,25 @@ func (s *Server) handleMealsByDay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Вода и серия — best-effort: если их чтение упало, дневник всё равно должен
+	// открыться. Пустая вода и нулевой стрик хуже, чем ошибка на весь экран.
+	waterML, werr := s.store.WaterForDay(ctx, claims.UserID, day)
+	if werr != nil {
+		s.log.Warn("meal: чтение воды", "err", werr, "user", claims.UserID)
+	}
+	streak, serr := s.store.StreakFor(ctx, claims.UserID, day)
+	if serr != nil {
+		s.log.Warn("meal: подсчёт серии", "err", serr, "user", claims.UserID)
+	}
+
 	items := make([]mealDiaryItem, 0, len(meals))
 	for _, m := range meals {
 		items = append(items, toDiaryItem(m))
 	}
-	writeJSON(w, http.StatusOK, mealsByDayResponse{Day: day, Total: agg, Items: items})
+	writeJSON(w, http.StatusOK, mealsByDayResponse{
+		Day: day, Total: agg, Items: items,
+		WaterML: waterML, WaterGoalML: store.WaterGoalML, Streak: streak,
+	})
 }
 
 // handleMealDays — GET /api/meals/days?from=YYYY-MM-DD&to=YYYY-MM-DD. Дневные агрегаты
@@ -514,4 +537,20 @@ func validDay(s string) bool {
 // время с 2014). Не тянем tzdata на сервер — граница дня фиксированная.
 func mskToday() string {
 	return time.Now().UTC().Add(3 * time.Hour).Format(dayLayout)
+}
+
+// localDateFromForm достаёт необязательное поле date из multipart-запроса разбора.
+// Невалидная или выходящая за окно дата ТИХО игнорируется (день посчитается от
+// eaten_at), а не роняет разбор: фото уже обработано и оплачено — терять его из-за
+// кривой даты нельзя.
+func localDateFromForm(r *http.Request) string {
+	v := r.FormValue("date")
+	if v == "" {
+		return ""
+	}
+	day, errMsg := clientDay(v)
+	if errMsg != "" {
+		return ""
+	}
+	return day
 }
