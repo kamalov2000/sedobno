@@ -18,10 +18,33 @@ var (
 	promptExplain = prompts.Get(prompts.Explain)
 )
 
+// sharedTransport — ОДИН транспорт на все LLM-клиенты процесса (сканер, Sonnet-fallback,
+// модуль калорий). Раньше каждый конструктор создавал свой http.Client с дефолтным
+// транспортом, у которого MaxIdleConnsPerHost = 2: при 20 параллельных вызовах к
+// одному хосту переиспользовались два соединения, а остальные открывались заново —
+// лишний TLS-хендшейк на каждый анализ и рост сокетов в TIME_WAIT.
+//
+// Пул соединений принадлежит транспорту, а не клиенту, поэтому общий транспорт при
+// разных таймаутах клиентов — штатная схема: у каждого клиента остаётся свой Timeout.
+var sharedTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 50 // ≥ LLM_MAX_CONCURRENT: хост у всех клиентов один
+	t.IdleConnTimeout = 90 * time.Second
+	return t
+}()
+
+// newHTTPClient — клиент поверх общего транспорта с собственным таймаутом.
+// Таймаут даётся с запасом к per-call дедлайну (context в doOnce), чтобы срабатывал
+// именно context — его ошибку мы отличаем от сетевой при классификации ретраев.
+func newHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout + 2*time.Second, Transport: sharedTransport}
+}
+
 // New выбирает и конфигурирует провайдера по cfg.LLMProvider.
 func New(cfg *config.Config) (LLMProvider, error) {
 	timeout := time.Duration(cfg.LLMTimeoutSec) * time.Second
-	httpClient := &http.Client{Timeout: timeout + 2*time.Second}
+	httpClient := newHTTPClient(timeout)
 
 	switch cfg.LLMProvider {
 	case "groq":
@@ -77,7 +100,7 @@ func NewExtractFallback(cfg *config.Config) LLMProvider {
 	}
 	timeout := time.Duration(cfg.LLMTimeoutSec) * time.Second
 	return &anthropicClient{
-		http:    &http.Client{Timeout: timeout + 2*time.Second},
+		http:    newHTTPClient(timeout),
 		baseURL: strings.TrimRight(cfg.AnthropicBaseURL, "/"),
 		apiKey:  cfg.AnthropicAPIKey, version: cfg.AnthropicVersion,
 		visionModel: model, textModel: model,

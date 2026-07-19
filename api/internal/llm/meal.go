@@ -11,7 +11,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -136,7 +135,7 @@ func parseMealAnalysis(text string, usage Usage) (*MealAnalysis, Usage, error) {
 // же клиенты, не трогая сборку сканера. У модуля нет text-фазы, поэтому textModel=vision.
 func NewMealAnalyzer(cfg *config.Config) (MealAnalyzer, error) {
 	timeout := time.Duration(cfg.LLMTimeoutSec) * time.Second
-	httpClient := &http.Client{Timeout: timeout + 2*time.Second}
+	httpClient := newHTTPClient(timeout) // общий транспорт со сканером (см. sharedTransport)
 	pick := func(override, def string) string {
 		if strings.TrimSpace(override) != "" {
 			return override
