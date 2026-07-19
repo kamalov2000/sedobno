@@ -181,7 +181,11 @@ func MustLoad() *Config {
 		MealVisionModel: opt("MEAL_VISION_MODEL", ""),
 	}
 
-	cfg.LLMMaxConcurrent = optInt(opt("LLM_MAX_CONCURRENT", "20"), 20, &invalid, "LLM_MAX_CONCURRENT")
+	// 40 — по замерам нагрузочного стенда: на потолке 20 отшивалось ~29% запросов при
+	// 50 клиентах, на 40 отсев исчезает, а память остаётся с двойным запасом. Выше не
+	// поднимаем из-за памяти: каждый разбор в полёте держит ~7 МБ (декодированный
+	// битмап + JPEG + base64), то есть 60 одновременных — уже ~420 МБ на боевых фото.
+	cfg.LLMMaxConcurrent = optInt(opt("LLM_MAX_CONCURRENT", "40"), 40, &invalid, "LLM_MAX_CONCURRENT")
 	cfg.LLMTimeoutSec = optInt(opt("LLM_TIMEOUT_SEC", "25"), 25, &invalid, "LLM_TIMEOUT_SEC")
 	cfg.LLMUSDRUB = optFloat(opt("LLM_USD_RUB", "95"), 95, &invalid, "LLM_USD_RUB")
 	cfg.ExtractConfidenceMin = optFloat(opt("EXTRACT_CONFIDENCE_MIN", "0.5"), 0.5, &invalid, "EXTRACT_CONFIDENCE_MIN")
