@@ -218,9 +218,11 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var req struct {
-		Dishes   *[]llm.MealItem `json:"dishes"`
-		EatenAt  *time.Time      `json:"eaten_at"`
-		MealType *string         `json:"meal_type"`
+		// dishes — ПОЛНАЯ замена массива блюд, а не дельта. Отсюда «добавление блюда»
+		// работает без нового эндпоинта: клиент шлёт тот же массив плюс новый элемент.
+		Dishes   *[]dishInput `json:"dishes"`
+		EatenAt  *time.Time   `json:"eaten_at"`
+		MealType *string      `json:"meal_type"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
@@ -248,7 +250,14 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 	kcal, protein, fat, carb := m.Kcal, m.ProteinG, m.FatG, m.CarbG
 	var newDishes []llm.MealItem
 	if req.Dishes != nil {
-		dishes, total := meal.SanitizeDishes(*req.Dishes)
+		parsed, errMsg := parseDishes(*req.Dishes)
+		if errMsg != "" {
+			writeError(w, http.StatusBadRequest, "bad_request", errMsg)
+			return
+		}
+		// Ручные блюда проходят ту же санитизацию, что и распознанные: согласование
+		// ккал с БЖУ и серверный пересчёт тотала — одна логика на оба источника.
+		dishes, total := meal.SanitizeDishes(parsed)
 		if len(dishes) == 0 {
 			writeError(w, http.StatusBadRequest, "bad_request", "нельзя оставить приём без блюд — удалите приём целиком")
 			return

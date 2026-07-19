@@ -22,10 +22,14 @@ type nutritionProfileView struct {
 	WeightKg        *float64 `json:"weight_kg,omitempty"`
 	ActivityLevel   *string  `json:"activity_level,omitempty"`
 	Goal            *string  `json:"goal,omitempty"`
+	GoalWeightKg    *float64 `json:"goal_weight_kg,omitempty"`
 	DailyKcalTarget *int     `json:"daily_kcal_target,omitempty"`
 	DailyProteinG   *int     `json:"daily_protein_g,omitempty"`
 	DailyFatG       *int     `json:"daily_fat_g,omitempty"`
 	DailyCarbG      *int     `json:"daily_carb_g,omitempty"`
+	// Warning — необязательный код предупреждения (goal_conflict). Не ошибка:
+	// профиль сохранён, а фронт решает, показывать ли подсказку.
+	Warning string `json:"warning,omitempty"`
 }
 
 // profileView собирает снимок из строки профиля. Filled — все четыре таргета есть.
@@ -33,7 +37,7 @@ func profileView(p store.NutritionProfile) nutritionProfileView {
 	return nutritionProfileView{
 		Filled: p.KcalTarget != nil && p.ProteinG != nil && p.FatG != nil && p.CarbG != nil,
 		Sex:    p.Sex, BirthYear: p.BirthYear, HeightCm: p.HeightCm, WeightKg: p.WeightKg,
-		ActivityLevel: p.Activity, Goal: p.Goal,
+		ActivityLevel: p.Activity, Goal: p.Goal, GoalWeightKg: p.GoalWeightKg,
 		DailyKcalTarget: p.KcalTarget, DailyProteinG: p.ProteinG, DailyFatG: p.FatG, DailyCarbG: p.CarbG,
 	}
 }
@@ -56,6 +60,9 @@ func (s *Server) handleProfileNutrition(w http.ResponseWriter, r *http.Request) 
 		WeightKg      *float64 `json:"weight_kg"`
 		ActivityLevel *string  `json:"activity_level"`
 		Goal          *string  `json:"goal"`
+		// GoalWeightKg — цель по весу числом. Опционально и при goal=maintain тоже:
+		// «держать текущий» числа не требует.
+		GoalWeightKg *float64 `json:"goal_weight_kg"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
@@ -81,6 +88,11 @@ func (s *Server) handleProfileNutrition(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.WeightKg != nil && (*req.WeightKg < nutrition.MinWeight || *req.WeightKg > nutrition.MaxWeight) {
 		writeError(w, http.StatusBadRequest, "bad_request", "weight_kg вне разумного диапазона")
+		return
+	}
+	// Границы цели те же, что у CHECK в схеме и у записей веса: 20–400 кг.
+	if req.GoalWeightKg != nil && (*req.GoalWeightKg < minWeightKg || *req.GoalWeightKg > maxWeightKg) {
+		writeError(w, http.StatusBadRequest, "bad_request", "goal_weight_kg должен быть от 20 до 400 кг")
 		return
 	}
 	nowYear := time.Now().Year()
@@ -117,6 +129,9 @@ func (s *Server) handleProfileNutrition(w http.ResponseWriter, r *http.Request) 
 	if req.Goal != nil {
 		p.Goal = req.Goal
 	}
+	if req.GoalWeightKg != nil {
+		p.GoalWeightKg = req.GoalWeightKg
+	}
 
 	// Пересчёт таргетов: только когда профиль полный. Иначе таргеты сбрасываем — норма
 	// без полного профиля посчитана быть не может (частичный ввод в процессе визарда).
@@ -140,5 +155,33 @@ func (s *Server) handleProfileNutrition(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_ = s.store.InsertEvent(ctx, &claims.UserID, "profile_nutrition_saved", map[string]any{"filled": p.KcalTarget != nil})
-	writeJSON(w, http.StatusOK, profileView(p))
+
+	// Санити-чек согласованности: цель не блокируем, но помечаем противоречие —
+	// «худею» с целью ВЫШЕ текущего веса почти всегда опечатка в одном из двух полей.
+	// Решение, показывать ли это пользователю, остаётся за фронтом.
+	out := profileView(p)
+	if warn := goalConflict(p); warn != "" {
+		out.Warning = warn
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// goalConflict возвращает код предупреждения, если направление цели противоречит
+// числовой цели относительно текущего веса. Пустая строка — противоречия нет либо
+// данных для проверки недостаточно.
+func goalConflict(p store.NutritionProfile) string {
+	if p.Goal == nil || p.GoalWeightKg == nil || p.WeightKg == nil {
+		return ""
+	}
+	switch *p.Goal {
+	case "lose":
+		if *p.GoalWeightKg > *p.WeightKg {
+			return "goal_conflict"
+		}
+	case "gain":
+		if *p.GoalWeightKg < *p.WeightKg {
+			return "goal_conflict"
+		}
+	}
+	return ""
 }

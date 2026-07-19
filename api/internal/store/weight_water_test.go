@@ -330,3 +330,55 @@ func TestStreakFor_FallsBackWhenNoLocalDate(t *testing.T) {
 		t.Fatalf("серия=%d today=%v, ожидалось 1/true", st.Days, st.TodayLogged)
 	}
 }
+
+// Числовая цель попадает в сводку и меняет trending: худеющий, ушедший НИЖЕ цели,
+// движется к ней уже набором.
+func TestWeightSummary_WithNumericGoal(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 9011)
+	if _, err := testPool.Exec(ctx,
+		`UPDATE users SET goal='lose', goal_weight_kg=70 WHERE id=$1`, uid); err != nil {
+		t.Fatalf("установка цели: %v", err)
+	}
+
+	today := time.Now().UTC()
+	day := func(daysAgo int) string { return today.AddDate(0, 0, -daysAgo).Format("2006-01-02") }
+
+	// Ушёл ниже цели (66) и продолжает снижаться — это движение ОТ цели.
+	if _, err := s.UpsertWeighIn(ctx, uid, 67.0, day(9)); err != nil {
+		t.Fatalf("старая запись: %v", err)
+	}
+	if _, err := s.UpsertWeighIn(ctx, uid, 66.0, day(0)); err != nil {
+		t.Fatalf("текущая запись: %v", err)
+	}
+
+	sum, err := s.WeightSummaryFor(ctx, uid)
+	if err != nil {
+		t.Fatalf("сводка: %v", err)
+	}
+	if sum.GoalKg == nil || *sum.GoalKg != 70 {
+		t.Fatalf("goal_kg = %+v, ожидалось 70", sum.GoalKg)
+	}
+	if sum.TrendingToGoal == nil || *sum.TrendingToGoal {
+		t.Fatalf("ниже цели и продолжает худеть — это движение ОТ цели, ожидалось false, получено %+v",
+			sum.TrendingToGoal)
+	}
+}
+
+// CHECK на цель по весу защищает от опечатки (700 вместо 70).
+func TestGoalWeightCheckBounds(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 9012)
+	for _, v := range []float64{19.99, 400.01} {
+		if _, err := testPool.Exec(ctx,
+			`UPDATE users SET goal_weight_kg=$2 WHERE id=$1`, uid, v); err == nil {
+			t.Fatalf("цель %v принята, ожидался отказ по CHECK", v)
+		}
+	}
+	for _, v := range []float64{20, 400} {
+		if _, err := testPool.Exec(ctx,
+			`UPDATE users SET goal_weight_kg=$2 WHERE id=$1`, uid, v); err != nil {
+			t.Fatalf("цель %v на границе отвергнута: %v", v, err)
+		}
+	}
+}

@@ -94,13 +94,18 @@ func (s *Store) DeleteWeighIn(ctx context.Context, userID int64, day string) (fo
 func (s *Store) WeightSummaryFor(ctx context.Context, userID int64) (WeightSummary, error) {
 	var sum WeightSummary
 
-	// Цель-направление из профиля питания (может отсутствовать — профиль опционален).
+	// Цель из профиля питания: направление (lose|maintain|gain) и — с миграции 0013 —
+	// число. Оба могут отсутствовать: профиль опционален, а числовая цель не нужна
+	// при «держать текущий».
 	var goal *string
-	err := s.pool.QueryRow(ctx, `SELECT goal FROM users WHERE id = $1`, userID).Scan(&goal)
+	var goalKg *float64
+	err := s.pool.QueryRow(ctx,
+		`SELECT goal, goal_weight_kg::float8 FROM users WHERE id = $1`, userID).Scan(&goal, &goalKg)
 	if err != nil && err != pgx.ErrNoRows {
 		return sum, err
 	}
 	sum.Goal = goal
+	sum.GoalKg = goalKg
 
 	// Последняя запись и опорная «неделю назад» одним запросом.
 	const q = `
@@ -127,11 +132,36 @@ SELECT l.w,
 	if weekAgo != nil {
 		d := round1(current - *weekAgo)
 		sum.DeltaWeek = &d
-		if t, ok := trendingToGoal(d, goal); ok {
+		if t, ok := trendingTo(d, current, goal, goalKg); ok {
 			sum.TrendingToGoal = &t
 		}
 	}
 	return sum, nil
+}
+
+// trendingTo решает, движется ли вес к цели.
+//
+// Числовая цель точнее направления: она знает, с какой стороны от цели пользователь
+// сейчас находится. Человек с целью «lose» может оказаться НИЖЕ цели (перестарался),
+// и тогда дальнейшее снижение — уже не движение к цели, а от неё. Направление
+// (users.goal) такого различить не может, поэтому при заполненной цели считаем по ней,
+// а на прежнюю логику падаем, только если числа нет.
+//
+// Ровно на цели (в пределах коридора удержания) любое малое колебание считаем успехом:
+// цель достигнута, задача — держаться.
+func trendingTo(deltaWeek, current float64, goal *string, goalKg *float64) (bool, bool) {
+	if goalKg == nil {
+		return trendingToGoal(deltaWeek, goal)
+	}
+	gap := current - *goalKg
+	switch {
+	case gap > maintainBandKg: // выше цели — к ней ведёт снижение
+		return deltaWeek < 0, true
+	case gap < -maintainBandKg: // ниже цели — к ней ведёт набор
+		return deltaWeek > 0, true
+	default: // на цели — удерживаемся
+		return deltaWeek <= maintainBandKg && deltaWeek >= -maintainBandKg, true
+	}
 }
 
 // maintainBandKg — насколько вес может гулять за неделю, чтобы «удержание» считалось

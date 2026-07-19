@@ -136,3 +136,42 @@ func TestRound1(t *testing.T) {
 		}
 	}
 }
+
+// Направление к ЧИСЛОВОЙ цели. Отличается от направления-цели тем, что знает, с какой
+// стороны от цели пользователь: перестаравшийся худеющий, ушедший ниже цели, движется
+// к ней уже НАБОРОМ, а не дальнейшим снижением.
+func TestTrendingTo_NumericGoal(t *testing.T) {
+	goal := func(v string) *string { return &v }
+	kg := func(v float64) *float64 { return &v }
+
+	cases := []struct {
+		name      string
+		delta     float64
+		current   float64
+		goal      *string
+		goalKg    *float64
+		want      bool
+		wantKnown bool
+	}{
+		{"выше цели, снижается", -0.8, 78, goal("lose"), kg(70), true, true},
+		{"выше цели, растёт", 0.6, 78, goal("lose"), kg(70), false, true},
+		{"ниже цели, растёт — к цели", 0.7, 66, goal("lose"), kg(70), true, true},
+		{"ниже цели, снижается — от цели", -0.7, 66, goal("lose"), kg(70), false, true},
+		{"набирающий ниже цели, растёт", 0.8, 62, goal("gain"), kg(70), true, true},
+		{"на цели, малое колебание", 0.2, 70.1, goal("lose"), kg(70), true, true},
+		{"на цели, большой скачок", 1.4, 70.2, goal("lose"), kg(70), false, true},
+		{"числа нет — падаем на направление", -0.9, 78, goal("lose"), nil, true, true},
+		{"ни числа, ни направления", -0.9, 78, nil, nil, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, known := trendingTo(c.delta, c.current, c.goal, c.goalKg)
+			if known != c.wantKnown {
+				t.Fatalf("известность = %v, ожидалось %v", known, c.wantKnown)
+			}
+			if known && got != c.want {
+				t.Fatalf("trending = %v, ожидалось %v", got, c.want)
+			}
+		})
+	}
+}
