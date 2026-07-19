@@ -72,10 +72,22 @@ func main() {
 	}
 	srv.SetMealPipeline(mealPipe)
 
+	// Таймауты сервера. MaxBytesReader на аплоаде ограничивает ОБЪЁМ тела, но не
+	// время его передачи: без ReadTimeout клиент может лить 32 МБ по байту в секунду
+	// и держать горутину бесконечно (медленный клиент — не обязательно злонамеренный,
+	// но эффект тот же). Middleware Timeout(60s) тут не помогает — он отменяет context
+	// хендлера, а не рвёт чтение сокета.
+	//   ReadTimeout  60s — аплоад 3 кадров по мобильному интернету бывает долгим.
+	//   WriteTimeout 90s — внутри ответа живёт vision-вызов (до 25с) плюс ретрай, а у
+	//                      скана таких вызовов может быть несколько подряд (§4).
+	//   IdleTimeout 120s — keep-alive от Telegram-вебвью между сканами.
 	httpSrv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      90 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Фоновый свип истечения подписок (§9, §10: sub_expired) — до старта HTTP.
