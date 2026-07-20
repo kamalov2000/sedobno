@@ -17,6 +17,10 @@ interface Props {
   onBack: () => void;
   onOpen: (item: MealDiaryItem) => void;
   onScan: (files: File[]) => void; // пустое состояние → тот же вход съёмки, что на Home
+  /** Вписать руками из пустой истории. Входов в приём везде два (главный, пустой день
+   *  в дневнике) — пустая история не исключение: один путь там, где всюду два,
+   *  прочитался бы как «сюда попадают только фото». */
+  onAddManual: () => void;
   // Загрузчик страницы. По умолчанию — реальный API; инъекция нужна тестам и витрине.
   load?: (cursor?: string) => Promise<MealHistoryPage>;
 }
@@ -26,7 +30,7 @@ interface Props {
 const fmtWhen = (iso: string) =>
   new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 
-export default function MealHistoryScreen({ onBack, onOpen, onScan, load = mealsHistory }: Props) {
+export default function MealHistoryScreen({ onBack, onOpen, onScan, onAddManual, load = mealsHistory }: Props) {
   const [items, setItems] = useState<MealDiaryItem[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
@@ -112,6 +116,19 @@ export default function MealHistoryScreen({ onBack, onOpen, onScan, load = meals
                 fontSize={15}
                 onFile={(f) => onScan([f])}
               />
+              {/* Второй вход — тот же, что на главном и в пустом дне дневника. Фото
+                  остаётся основным путём, поэтому руками — вторичной кнопкой. */}
+              <button
+                type="button"
+                onClick={() => {
+                  haptic("light");
+                  onAddManual();
+                }}
+                style={{ width: "100%", height: 40, marginTop: 4, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+              >
+                <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 17 }} />
+                Вписать руками
+              </button>
             </div>
           </div>
         )}

@@ -363,6 +363,10 @@ export default function App() {
         <MealHistoryScreen
           onBack={() => setView("home")}
           onScan={onScan}
+          onAddManual={() => {
+            setReturnTo("meal_history");
+            setView("meal_manual");
+          }}
           onOpen={(item) => {
             // Приём уже сохранён — экран открывается в режиме правки. Данные берём из
             // самой карточки: история отдаёт те же поля, что и дневник, и повторный

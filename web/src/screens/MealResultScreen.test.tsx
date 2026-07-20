@@ -29,6 +29,9 @@ const noop = () => {};
 // Добавленное вручную блюдо всегда последнее в списке, поэтому тесты ручного ввода
 // целятся в последнее поле, а не в единственное.
 const lastNameInput = () => screen.getAllByLabelText("Название блюда").at(-1) as HTMLInputElement;
+// Граммовка тоже подписана у каждого блюда (доступность распознанных выровняли
+// с ручными), поэтому и здесь целимся в последнее поле.
+const lastGramsInput = () => screen.getAllByLabelText("Граммовка").at(-1) as HTMLInputElement;
 
 function renderScreen(lowConfidence = false) {
   return render(
@@ -101,7 +104,7 @@ describe("MealResultScreen — добавление блюда вручную", 
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "200" } });
     expect(screen.getByText("200 ккал")).toBeTruthy();
     // 100 г → 50 г должно дать половину калорий.
-    fireEvent.change(screen.getByLabelText("Граммовка"), { target: { value: "50" } });
+    fireEvent.change(lastGramsInput(), { target: { value: "50" } });
     expect(screen.getByText("100 ккал")).toBeTruthy();
   });
 });

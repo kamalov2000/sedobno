@@ -12,8 +12,19 @@ afterEach(cleanup);
 
 const noop = () => {};
 
-function renderScreen(load: (cursor?: string) => Promise<MealHistoryPage>, onOpen = noop as (i: never) => void) {
-  return render(<MealHistoryScreen onBack={noop} onOpen={onOpen as never} onScan={noop} load={load} />);
+function renderScreen(
+  load: (cursor?: string) => Promise<MealHistoryPage>,
+  opts: { onOpen?: (i: never) => void; onAddManual?: () => void } = {},
+) {
+  return render(
+    <MealHistoryScreen
+      onBack={noop}
+      onOpen={(opts.onOpen ?? noop) as never}
+      onScan={noop}
+      onAddManual={opts.onAddManual ?? noop}
+      load={load}
+    />,
+  );
 }
 
 describe("MealHistoryScreen — список", () => {
@@ -33,7 +44,7 @@ describe("MealHistoryScreen — список", () => {
 
   it("тап по карточке открывает именно этот приём", async () => {
     const onOpen = vi.fn();
-    renderScreen(async () => makeMealHistory(), onOpen);
+    renderScreen(async () => makeMealHistory(), { onOpen });
     fireEvent.click(await screen.findByText("Творог 5%"));
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen.mock.calls[0][0]).toMatchObject({ id: 12, source: "manual" });
@@ -80,5 +91,29 @@ describe("MealHistoryScreen — пустое состояние", () => {
       throw new Error("сеть");
     });
     expect(await screen.findByText(/Не удалось загрузить историю/)).toBeTruthy();
+  });
+});
+
+describe("MealHistoryScreen — пустое состояние: два входа, как везде", () => {
+  it("предлагает и снять фото, и вписать руками", async () => {
+    renderScreen(async () => ({ items: [] }));
+    await screen.findByText("Здесь появятся твои разборы еды");
+    expect(screen.getByText("Сфотографировать еду")).toBeTruthy();
+    // Один путь там, где на главном и в пустом дне их два, читался бы как
+    // «в историю попадают только фото».
+    expect(screen.getByText("Вписать руками")).toBeTruthy();
+  });
+
+  it("тап по «Вписать руками» зовёт обработчик", async () => {
+    const onAddManual = vi.fn();
+    renderScreen(async () => ({ items: [] }), { onAddManual });
+    fireEvent.click(await screen.findByText("Вписать руками"));
+    expect(onAddManual).toHaveBeenCalledTimes(1);
+  });
+
+  it("в непустой истории второго входа нет — он только для пустого экрана", async () => {
+    renderScreen(async () => makeMealHistory());
+    await screen.findByText("Творог 5%");
+    expect(screen.queryByText("Вписать руками")).toBeNull();
   });
 });
