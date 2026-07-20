@@ -18,6 +18,9 @@ interface Props {
   onSubscribe: () => void;
   onHistory: () => void;
   onDiary: () => void;
+  /** Вписать приём руками, без фото. Только в режиме «Калории»: у сканера состава
+   *  ручного аналога нет — состав придумать нельзя, его читают с упаковки. */
+  onAddManual?: () => void;
   todayHasMeals?: boolean;
 }
 
@@ -25,7 +28,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 
 const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, todayHasMeals }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -148,6 +151,34 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
         ) : (
           <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
         )}
+
+        {/* Вход в ручной приём — на главном, а не только в дневнике. Раньше его можно
+            было найти, лишь догадавшись зайти в дневник: экран съёмки обещал, что
+            единственный способ добавить еду — сфотографировать её.
+            Кнопка вторичная: фото остаётся основным путём, руками — запасной.
+            Показываем и при исчерпанной квоте: ручной приём её не списывает, и в этот
+            момент он ценнее всего — иначе пейволл читается как «дневник закрыт». */}
+        {meal && onAddManual && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, marginTop: -4 }}>
+            <button
+              type="button"
+              onClick={() => {
+                haptic("light");
+                onAddManual();
+              }}
+              style={{ height: 40, padding: "0 14px", background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+            >
+              <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 17 }} />
+              Вписать еду руками
+            </button>
+            {outOfActive && (
+              <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45 }}>
+                Без подписки и без списания разборов
+              </span>
+            )}
+          </div>
+        )}
+
         <LegalLinks items={["about", "oferta", "privacy"]} />
       </div>
     </div>

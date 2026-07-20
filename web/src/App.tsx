@@ -62,9 +62,10 @@ export default function App() {
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
-  // Из какого списка открыт экран-исход: списков теперь два (история составов и
-  // история приёмов), и «назад» обязан вернуть ровно в тот, откуда пришли.
-  const [fromList, setFromList] = useState<View | null>(null);
+  // Куда возвращает «назад». Экран-исход открывается из двух историй (составов и
+  // приёмов), ручной приём — из дневника и с главного; во всех случаях вопрос один и
+  // тот же — откуда пришли, туда и вернуть. Поэтому одно состояние, а не флаг на путь.
+  const [returnTo, setReturnTo] = useState<View | null>(null);
   const [savedMeal, setSavedMeal] = useState<MealDiaryItem | null>(null); // приём из истории — режим правки
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
 
@@ -111,13 +112,13 @@ export default function App() {
       return;
     }
     const onBack = () => {
-      if (isOutcome && fromList) {
-        const back = fromList;
-        setFromList(null);
+      if (isOutcome && returnTo) {
+        const back = returnTo;
+        setReturnTo(null);
         setSavedMeal(null);
         setView(back);
       } else if (view === "meal_manual") {
-        setView("meal_diary");
+        setView(returnTo ?? "meal_diary");
       } else if (view === "weight") {
         // Вес открывается из дневника — системная «назад» возвращает туда же,
         // куда и кнопка на экране, иначе два пути расходятся.
@@ -132,7 +133,7 @@ export default function App() {
       bb.offClick(onBack);
       bb.hide();
     };
-  }, [view, fromList]);
+  }, [view, returnTo]);
 
   // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/ошибка/пейволл.
   const runMeal = useCallback(async (files: File[]) => {
@@ -182,7 +183,7 @@ export default function App() {
       void runMeal(files);
       return;
     }
-    setFromList(null);
+    setReturnTo(null);
     setResult(null);
     setView("loading");
     try {
@@ -340,6 +341,10 @@ export default function App() {
           // того, чем ты сейчас занят», и вторая рядом заставляла бы выбирать
           // между двумя одинаковыми часами.
           onHistory={() => setView(mode === "meal" ? "meal_history" : "history")}
+          onAddManual={() => {
+            setReturnTo("home");
+            setView("meal_manual");
+          }}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
         />
@@ -349,7 +354,7 @@ export default function App() {
           onBack={() => setView("home")}
           onOpen={(item) => {
             setResult(item);
-            setFromList("history");
+            setReturnTo("history");
             setView(item.status === "not_scored" ? "not_scored" : "result");
           }}
         />
@@ -364,7 +369,7 @@ export default function App() {
             // GET за уже полученным приёмом добавил бы только состояние загрузки.
             setSavedMeal(item);
             setMealResult(diaryItemToResult(item, me?.meals_left ?? -1));
-            setFromList("meal_history");
+            setReturnTo("meal_history");
             setView("meal_result");
           }}
         />
@@ -375,7 +380,10 @@ export default function App() {
           profile={me?.nutrition_profile}
           onOpenWizard={() => setView("profile_wizard")}
           onOpenWeight={() => setView("weight")}
-          onAddManual={() => setView("meal_manual")}
+          onAddManual={() => {
+            setReturnTo("meal_diary");
+            setView("meal_manual");
+          }}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
@@ -441,13 +449,13 @@ export default function App() {
             // на другой экран значит терять место, до которого он долистал.
             const back = savedMeal ? "meal_history" : "meal_diary";
             setSavedMeal(null);
-            setFromList(null);
+            setReturnTo(null);
             setView(back);
           }}
           onRetake={() => {
             const back = savedMeal ? "meal_history" : "home";
             setSavedMeal(null);
-            setFromList(null);
+            setReturnTo(null);
             setView(back);
           }}
         />
@@ -460,8 +468,18 @@ export default function App() {
           result={{ status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
           manual
-          onDone={() => setView("meal_diary")}
-          onRetake={() => setView("meal_diary")}
+          // Сохранил — показываем дневник, куда приём и лёг: это подтверждение
+          // результата, а не «возврат». Отменил — возвращаем ровно туда, откуда
+          // пришёл, иначе отмена работала бы как переход.
+          onDone={() => {
+            setReturnTo(null);
+            setView("meal_diary");
+          }}
+          onRetake={() => {
+            const back = returnTo ?? "meal_diary";
+            setReturnTo(null);
+            setView(back);
+          }}
         />
       )}
       {view === "error" && (
