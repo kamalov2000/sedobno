@@ -41,7 +41,9 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           <i className="ti ti-notebook" aria-hidden="true" style={{ fontSize: 22 }} />
           {todayHasMeals && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: "var(--cal)", border: "1.5px solid var(--bg)" }} />}
         </button>
-        <button type="button" onClick={onHistory} aria-label="История проверок" style={{ background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}>
+        {/* Часы ведут в историю ТЕКУЩЕГО режима — проводку делает App. Подпись обязана
+            следовать за ней: «История проверок» в режиме калорий обещала бы составы. */}
+        <button type="button" onClick={onHistory} aria-label={mode === "meal" ? "История приёмов" : "История проверок"} style={{ background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}>
           <i className="ti ti-history" aria-hidden="true" style={{ fontSize: 22 }} />
         </button>
       </div>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord } from "./meal";
-import type { MealItem } from "./types";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult } from "./meal";
+import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
   name: "борщ",
@@ -113,5 +113,44 @@ describe("emptyMealWord — динамика пустого дня по врем
     expect(emptyMealWord(15)).toBe("обед");
     expect(emptyMealWord(16)).toBe("ужин");
     expect(emptyMealWord(21)).toBe("ужин");
+  });
+});
+
+describe("dishesBrief — краткий состав для карточки истории", () => {
+  const d = (name: string): MealItem => ({ name, grams: 100, kcal: 100, protein_g: 1, fat_g: 1, carb_g: 1, confidence: 1 });
+
+  it("перечисляет имена блюд, а не их количество", () => {
+    expect(dishesBrief([d("Гречка"), d("Котлета")])).toBe("Гречка, Котлета");
+  });
+
+  it("длинный список обрезает многоточием", () => {
+    expect(dishesBrief([d("а"), d("б"), d("в"), d("г")])).toBe("а, б, в…");
+  });
+
+  it("приём без блюд не даёт пустую строку в карточке", () => {
+    expect(dishesBrief([])).toBe("Без блюд");
+    expect(dishesBrief([d("   ")])).toBe("Без блюд");
+  });
+});
+
+describe("diaryItemToResult — сохранённый приём в форму редактора", () => {
+  it("переносит id, блюда и итог без изменений", () => {
+    const item: MealDiaryItem = {
+      id: 7,
+      eaten_at: "2026-07-20T13:10:00Z",
+      created_at: "2026-07-20T13:10:00Z",
+      status: "ok",
+      source: "manual",
+      meal_type: "lunch",
+      dishes: [{ name: "Плов", grams: 300, kcal: 420, protein_g: 12, fat_g: 14, carb_g: 55, confidence: 1 }],
+      total: { kcal: 420, protein_g: 12, fat_g: 14, carb_g: 55 },
+      edited: true,
+    };
+    const res = diaryItemToResult(item, 5);
+    expect(res.status).toBe("ok");
+    expect(res.id).toBe(7);
+    expect(res.dishes).toEqual(item.dishes);
+    expect(res.total).toEqual(item.total);
+    expect(res.meals_left).toBe(5);
   });
 });

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult, MealResult, MealsByDay, MealDays } from "./types";
+import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult, MealResult, MealsByDay, MealDays, MealDiaryItem, MealHistoryPage } from "./types";
 import HomeScreen from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
@@ -10,6 +10,7 @@ import MealStateScreen from "./screens/MealStateScreen";
 import MealLoader from "./components/MealLoader";
 import PaywallScreen from "./screens/PaywallScreen";
 import MealResultScreen from "./screens/MealResultScreen";
+import MealHistoryScreen from "./screens/MealHistoryScreen";
 import DiaryScreen from "./screens/DiaryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 
@@ -122,6 +123,26 @@ const diaryWeek = async (): Promise<MealDays> => ({
   ],
 });
 
+// История приёмов: фото и вписанный руками рядом — карточки различаются только иконкой.
+const savedMeal: MealDiaryItem = {
+  id: 42, eaten_at: "2026-07-19T13:10:00Z", created_at: "2026-07-19T13:10:00Z",
+  status: "ok", source: "photo", meal_type: "lunch", edited: false, confidence: 0.8,
+  dishes: [
+    { name: "Гречка с котлетой", grams: 250, kcal: 420, protein_g: 24, fat_g: 18, carb_g: 40, confidence: 0.6 },
+    { name: "Салат из огурцов", grams: 90, kcal: 52, protein_g: 1.1, fat_g: 3.5, carb_g: 4, confidence: 0.8 },
+  ],
+  total: { kcal: 472, protein_g: 25.1, fat_g: 21.5, carb_g: 44 },
+};
+const mealHistoryLoad = async (): Promise<MealHistoryPage> => ({
+  items: [
+    { ...savedMeal, id: 43, eaten_at: "2026-07-19T19:30:00Z", source: "manual", meal_type: "dinner",
+      dishes: [{ name: "Творог 5%", grams: 200, kcal: 242, protein_g: 34, fat_g: 10, carb_g: 3, confidence: 1 }],
+      total: { kcal: 242, protein_g: 34, fat_g: 10, carb_g: 3 } },
+    savedMeal,
+  ],
+});
+const mealHistoryEmpty = async (): Promise<MealHistoryPage> => ({ items: [] });
+
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
@@ -150,6 +171,9 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "07 · КАЛОРИИ · не еда", node: <MealStateScreen kind="not_food" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · это упаковка", node: <MealStateScreen kind="label" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · лоадер", node: <MealLoader /> },
+  { title: "07 · КАЛОРИИ · история приёмов", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} load={mealHistoryLoad} /> },
+  { title: "07 · КАЛОРИИ · история пустая", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} load={mealHistoryEmpty} /> },
+  { title: "07 · КАЛОРИИ · приём из истории", node: <MealResultScreen result={{ status: "ok", id: savedMeal.id, dishes: savedMeal.dishes, total: savedMeal.total, confidence: savedMeal.confidence, meals_left: -1 }} saved={savedMeal} isSubscribed onDone={noop} onRetake={noop} /> },
   { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "09 · ВИЗАРД · профиль питания", node: <ProfileWizard onDone={noop} onCancel={noop} /> },

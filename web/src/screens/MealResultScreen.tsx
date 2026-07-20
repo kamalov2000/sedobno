@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MealResult, MealItem, MealType } from "../types";
+import type { MealResult, MealItem, MealType, MealDiaryItem } from "../types";
 import { scaleDish, totalOf, per100, pluralDishes, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import { patchMeal, deleteMeal, createManualMeal } from "../api";
 import type { DishPatch } from "../api";
@@ -22,6 +22,15 @@ interface Props {
    *  (она за ручной приём не списывается). Сохранение уходит POST'ом, а не PATCH'ем:
    *  сохранять нечего — приёма ещё нет. */
   manual?: boolean;
+  /** Приём, уже лежащий в дневнике (открыт из истории). Экран тот же — редактор блюд
+   *  здесь ровно тот, что и у свежего разбора, — но меняется смысл кнопок: приём уже
+   *  сохранён, «В дневник» второй раз его не добавляет, а «Переснять» не должно
+   *  молча удалять запись, за которой пользователь пришёл.
+   *
+   *  Приём целиком, а не набор флагов: отсюда же берутся уже проставленный тип
+   *  (чипы открываются в актуальном состоянии) и источник — у вписанного руками приёма
+   *  строка «AI распознал» была бы прямой неправдой. */
+  saved?: MealDiaryItem;
 }
 
 const GRAM_STEP = 10;
@@ -60,9 +69,15 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved }: Props) {
+  const isSaved = saved != null;
+  const initialMealType = saved?.meal_type ?? null;
+  // Строка распознавания и плашка уверенности — про РАЗБОР ФОТО. Ни у ручного приёма,
+  // ни у сохранённого ручного разбора его не было, и говорить об уверенности не о чем.
+  const fromPhoto = !manual && (saved?.source ?? "photo") === "photo";
+
   const [dishes, setDishes] = useState<Draft[]>(() => (manual ? [blankManual()] : (result.dishes ?? [])));
-  const [mealType, setMealType] = useState<MealType | null>(null);
+  const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   const [busy, setBusy] = useState(false);
 
   const total = useMemo(() => totalOf(dishes), [dishes]);
@@ -70,7 +85,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   const id = result.id;
   // Плашка «на глаз» — про уверенность РАСПОЗНАВАНИЯ. У ручного приёма распознавания
   // не было, поэтому и говорить об уверенности не о чем.
-  const lowConfidence = !manual && (result.confidence ?? 1) < LOW_CONFIDENCE;
+  const lowConfidence = fromPhoto && (result.confidence ?? 1) < LOW_CONFIDENCE;
   const emptied = dishes.length === 0;
 
   const setGrams = (i: number, grams: number) => {
@@ -87,6 +102,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     haptic("light");
     // Ручное блюдо не догадка модели: единица в confidence здесь тот же смысл, что и на бэке.
     setDishes((ds) => [...ds, blankManual()]);
+  };
+
+  // Переименование РАСПОЗНАННОГО блюда — правка ярлыка, и только его. Модель назвала
+  // «каша», человек зовёт это пловом — калорийность от этого не меняется, меняется
+  // подпись. Числа правятся степперами, отдельно и осознанно; молча пересчитать их
+  // вслед за именем значило бы придумать данные, которых пользователь не давал.
+  const setName = (i: number, name: string) => {
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name } : d)));
   };
 
   // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
@@ -106,8 +129,13 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   // Незаполненное ручное блюдо блокирует сохранение: лучше неактивная кнопка, чем
   // 400 с бэка — до ошибки пользователя доводить незачем.
   const manualPending = dishes.some((d) => !manualReady(d));
+  // То же правило и для переименованных распознанных: сервер завернёт пустое имя
+  // (parseDishes), поэтому до запроса дело доводить не за чем.
+  const nameMissing = dishes.some((d) => d.name.trim() === "");
+  const blocked = emptied || manualPending || nameMissing;
 
-  const dirty = JSON.stringify(dishes) !== JSON.stringify(result.dishes ?? []) || mealType !== null;
+  const dirty =
+    JSON.stringify(dishes) !== JSON.stringify(result.dishes ?? []) || mealType !== initialMealType;
 
   // Ручные блюда уходят на 100 г — сервер пересчитает на порцию сам и прогонит через ту
   // же санитизацию, что и распознанные. Распознанные отправляем как есть.
@@ -115,11 +143,11 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     ds.map((d) =>
       d.manual
         ? { name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0 }
-        : { name: d.name, grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence },
+        : { name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence },
     );
 
   const onSave = async () => {
-    if (busy || emptied || manualPending) return;
+    if (busy || blocked) return;
     if (!manual && id == null) return;
     setBusy(true);
     try {
@@ -138,6 +166,13 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
 
   const onRetakeClick = async () => {
     if (busy) return;
+    // У сохранённого приёма вторая кнопка — «Закрыть», а не «Переснять»: удалять
+    // запись, ради которой человек пришёл из истории, здесь нельзя. Удаление живёт
+    // в дневнике, где оно и ожидаемо, и обратимо (снекбар отмены).
+    if (saved) {
+      onRetake();
+      return;
+    }
     setBusy(true);
     if (id != null) {
       try {
@@ -158,10 +193,10 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px", minHeight: 0 }}>
         {/* Шапка: раздел + чип квоты */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)" }}>{manual ? "НОВЫЙ ПРИЁМ" : "РАЗБОР ПОРЦИИ"}</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)" }}>{manual ? "НОВЫЙ ПРИЁМ" : isSaved ? "ПРИЁМ В ДНЕВНИКЕ" : "РАЗБОР ПОРЦИИ"}</span>
           {/* Чип квоты у ручного приёма молчит: она не списывается, а показать остаток
               рядом с сохранением значило бы намекнуть, что списывается. */}
-          {!manual && (
+          {!manual && !isSaved && (
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text2)", background: "var(--chip-bg)", borderRadius: 99, padding: "4px 10px" }}>{chip}</span>
           )}
         </div>
@@ -188,7 +223,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
                 type="button"
                 onClick={() => {
                   haptic("light");
-                  setMealType((prev) => (prev === t ? null : t));
+                  // Снять тип у СОХРАНЁННОГО приёма нельзя: PATCH обнуления не умеет
+                  // (meal_type идёт через COALESCE, и «не передали» там значит «не
+                  // меняй»). Поэтому у сохранённого чипы только переключаются между
+                  // собой — иначе тап по активному делал бы вид, что тип снят, а после
+                  // сохранения тот возвращался бы. Сменить тип можно, убрать — нет.
+                  setMealType((prev) => (prev === t ? (isSaved ? prev : null) : t));
                 }}
                 style={{
                   flex: 1,
@@ -216,7 +256,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         </div>
 
         {/* Строка распознавания */}
-        {!manual && (
+        {fromPhoto && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 16, fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", textTransform: "uppercase" }}>
           <i className="ti ti-sparkles" aria-hidden="true" style={{ fontSize: 13, color: "var(--cal-num)" }} />
           AI распознал: {n} {pluralDishes(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
@@ -237,7 +277,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
                 onRemove={() => removeDish(i)}
               />
             ) : (
-              <DishCard key={i} dish={d} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
+              <DishCard key={i} dish={d} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
             ),
           )}
           {/* Добавить блюдо можно всегда, пока приём не опустошён: докинуть хлеб к
@@ -254,7 +294,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
           )}
           {/* Подпись под кнопкой объясняет, зачем она: без неё «Добавить блюдо» читается
               как «начать сначала». У ручного приёма объяснять нечего — там фото не было. */}
-          {!emptied && !manual && (
+          {!emptied && fromPhoto && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11.5, color: "var(--text3)", marginTop: -2 }}>
               AI не заметил что-то на фото? Добавьте вручную
             </div>
@@ -285,23 +325,56 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
         <button
           type="button"
-          disabled={busy || emptied || manualPending}
+          disabled={busy || blocked}
           onClick={onSave}
-          style={{ width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: busy || emptied || manualPending ? "default" : "pointer", opacity: emptied || manualPending ? 0.5 : busy ? 0.7 : 1 }}
+          style={{ width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: busy || blocked ? "default" : "pointer", opacity: blocked ? 0.5 : busy ? 0.7 : 1 }}
         >
-          <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 19 }} />
-          В дневник
+          {/* У сохранённого приёма плюс был бы обещанием добавить его в дневник ещё
+              раз — он там уже лежит, и правка именно правит, а не дублирует. */}
+          <i className={`ti ${isSaved ? "ti-check" : "ti-plus"}`} aria-hidden="true" style={{ fontSize: 19 }} />
+          {isSaved ? "Сохранить изменения" : "В дневник"}
         </button>
         <button type="button" disabled={busy} onClick={onRetakeClick} style={{ width: "100%", height: 40, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, color: "var(--text2)", cursor: busy ? "default" : "pointer", marginTop: 4 }}>
-          {manual ? "Отмена" : "Переснять"}
+          {manual ? "Отмена" : isSaved ? "Закрыть" : "Переснять"}
         </button>
       </div>
     </div>
   );
 }
 
-// Карточка блюда: название + ккал + удаление; степпер граммовки с удержанием + ккал/100 г.
-function DishCard({ dish, onStep, onSet, onRemove }: { dish: MealItem; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void }) {
+/** Поле названия блюда — одно на распознанные и на ручные.
+ *
+ *  Имя правится ВЕЗДЕ, а не только у ручных: «каша» вместо плова — самая частая
+ *  претензия к разбору, и раньше её нельзя было исправить, не удалив блюдо и не вписав
+ *  его заново руками (потеряв при этом распознанные БЖУ). Поле выглядит как текст,
+ *  пока в него не ткнули: карточка не должна читаться как форма. */
+function DishNameInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label="Название блюда"
+      style={{
+        flex: 1,
+        minWidth: 0,
+        border: "none",
+        background: "none",
+        fontFamily: "'Golos Text',sans-serif",
+        fontSize: 14.5,
+        fontWeight: 500,
+        color: "var(--text)",
+        padding: 0,
+        outline: "none",
+        textOverflow: "ellipsis",
+      }}
+    />
+  );
+}
+
+// Карточка блюда: название (правится) + ккал + удаление; степпер граммовки с
+// удержанием + ккал/100 г. Переименование числа НЕ трогает — они правятся степпером.
+function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void }) {
   const timer = useRef<number | null>(null);
   const iv = useRef<number | null>(null);
   const stop = () => {
@@ -323,7 +396,7 @@ function DishCard({ dish, onStep, onSet, onRemove }: { dish: MealItem; onStep: (
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ flex: 1, fontSize: 14.5, fontWeight: 500, color: "var(--text)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dish.name}</span>
+        <DishNameInput value={dish.name} onChange={onName} />
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(dish.kcal)} ккал</span>
         <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />
@@ -374,13 +447,7 @@ function ManualDishCard({
   return (
     <div style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <input
-          value={dish.name}
-          onChange={(e) => onName(e.target.value)}
-          placeholder="Название блюда"
-          aria-label="Название блюда"
-          style={{ flex: 1, minWidth: 0, border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, fontWeight: 500, color: "var(--text)", padding: 0, outline: "none" }}
-        />
+        <DishNameInput value={dish.name} onChange={onName} placeholder="Название блюда" />
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(dish.kcal)} ккал</span>
         <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />

@@ -173,6 +173,16 @@ export interface MealDiaryItem {
   confidence?: number;
 }
 
+/** GET /api/meals/history — страница плоской истории приёмов.
+ *
+ *  Элементы — те же MealDiaryItem, что и в дневнике: приём из истории открывается тем
+ *  же экраном, что и свежий разбор, и второй тип завёл бы второй маппинг.
+ *  next_cursor непрозрачен — уходит обратно в ?before= как есть; нет — история кончилась. */
+export interface MealHistoryPage {
+  items: MealDiaryItem[];
+  next_cursor?: string;
+}
+
 /** Дневной агрегат (view meal_daily, граница дня Europe/Moscow). */
 export interface MealDaily {
   day: string; // YYYY-MM-DD

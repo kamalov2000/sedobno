@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
-import type { Me, ScanResult, MealResult } from "./types";
+import type { Me, ScanResult, MealResult, MealDiaryItem } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
+import MealHistoryScreen from "./screens/MealHistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import MealLoader from "./components/MealLoader";
 import ResultScreen from "./screens/ResultScreen";
@@ -14,13 +15,14 @@ import WeightScreen from "./screens/WeightScreen";
 import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 import { dayCardData, downloadShareCard } from "./shareCard";
+import { diaryItemToResult } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -60,7 +62,10 @@ export default function App() {
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
-  const [fromHistory, setFromHistory] = useState(false);
+  // Из какого списка открыт экран-исход: списков теперь два (история составов и
+  // история приёмов), и «назад» обязан вернуть ровно в тот, откуда пришли.
+  const [fromList, setFromList] = useState<View | null>(null);
+  const [savedMeal, setSavedMeal] = useState<MealDiaryItem | null>(null); // приём из истории — режим правки
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
@@ -100,15 +105,17 @@ export default function App() {
     const bb = tg()?.BackButton;
     if (!bb) return;
     const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
-    const isList = view === "history" || view === "meal_diary" || view === "weight" || view === "meal_manual";
+    const isList = view === "history" || view === "meal_history" || view === "meal_diary" || view === "weight" || view === "meal_manual";
     if (!(isList || isOutcome)) {
       bb.hide();
       return;
     }
     const onBack = () => {
-      if (isOutcome && fromHistory) {
-        setFromHistory(false);
-        setView("history");
+      if (isOutcome && fromList) {
+        const back = fromList;
+        setFromList(null);
+        setSavedMeal(null);
+        setView(back);
       } else if (view === "meal_manual") {
         setView("meal_diary");
       } else if (view === "weight") {
@@ -125,10 +132,11 @@ export default function App() {
       bb.offClick(onBack);
       bb.hide();
     };
-  }, [view, fromHistory]);
+  }, [view, fromList]);
 
   // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/ошибка/пейволл.
   const runMeal = useCallback(async (files: File[]) => {
+    setSavedMeal(null);
     setMealResult(null);
     setView("loading");
     try {
@@ -174,7 +182,7 @@ export default function App() {
       void runMeal(files);
       return;
     }
-    setFromHistory(false);
+    setFromList(null);
     setResult(null);
     setView("loading");
     try {
@@ -327,7 +335,11 @@ export default function App() {
           onModeChange={setMode}
           onScan={onScan}
           onSubscribe={() => setView("paywall")}
-          onHistory={() => setView("history")}
+          // Часы контекстны режиму: в «Составе» ведут в историю сканов, в
+          // «Калориях» — в историю приёмов. Иконка одна: она означает «прошлое
+          // того, чем ты сейчас занят», и вторая рядом заставляла бы выбирать
+          // между двумя одинаковыми часами.
+          onHistory={() => setView(mode === "meal" ? "meal_history" : "history")}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
         />
@@ -337,8 +349,23 @@ export default function App() {
           onBack={() => setView("home")}
           onOpen={(item) => {
             setResult(item);
-            setFromHistory(true);
+            setFromList("history");
             setView(item.status === "not_scored" ? "not_scored" : "result");
+          }}
+        />
+      )}
+      {view === "meal_history" && (
+        <MealHistoryScreen
+          onBack={() => setView("home")}
+          onScan={onScan}
+          onOpen={(item) => {
+            // Приём уже сохранён — экран открывается в режиме правки. Данные берём из
+            // самой карточки: история отдаёт те же поля, что и дневник, и повторный
+            // GET за уже полученным приёмом добавил бы только состояние загрузки.
+            setSavedMeal(item);
+            setMealResult(diaryItemToResult(item, me?.meals_left ?? -1));
+            setFromList("meal_history");
+            setView("meal_result");
           }}
         />
       )}
@@ -407,8 +434,22 @@ export default function App() {
           result={mealResult}
           isSubscribed={me?.is_subscribed ?? false}
           mealsLeft={me?.meals_left}
-          onDone={() => setView("meal_diary")}
-          onRetake={() => setView("home")}
+          saved={savedMeal ?? undefined}
+          onDone={() => {
+            // Правка приёма из истории возвращает в историю, а не в дневник: человек
+            // листал список и правил конкретную запись — выбрасывать его после этого
+            // на другой экран значит терять место, до которого он долистал.
+            const back = savedMeal ? "meal_history" : "meal_diary";
+            setSavedMeal(null);
+            setFromList(null);
+            setView(back);
+          }}
+          onRetake={() => {
+            const back = savedMeal ? "meal_history" : "home";
+            setSavedMeal(null);
+            setFromList(null);
+            setView(back);
+          }}
         />
       )}
       {/* Ручной приём — тот же экран разбора, стартующий пустым. Отдельного экрана нет

@@ -11,6 +11,7 @@
 import type {
   Goal,
   MealDiaryItem,
+  MealHistoryPage,
   MealItem,
   MealResult,
   MealsByDay,
@@ -178,6 +179,14 @@ function diaryItem(
     edited: false,
     confidence: 0.8,
   };
+}
+
+/** Страница истории приёмов: фото и вписанный руками рядом — карточки должны
+ *  различаться только иконкой источника. cursor задаёт «есть следующая страница». */
+export function makeMealHistory(nextCursor?: string): MealHistoryPage {
+  const photo = diaryItem(11, "13:10", "lunch", [["Гречка с котлетой", 420], ["Салат", 120]]);
+  const manual = diaryItem(12, "19:30", "dinner", [["Творог 5%", 240]]);
+  return { items: [{ ...manual, source: "manual" }, photo], next_cursor: nextCursor };
 }
 
 /**

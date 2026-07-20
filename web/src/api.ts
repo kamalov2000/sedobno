@@ -11,7 +11,7 @@ import type {
   ScanHistoryPage,
   MealResult,
   MealDiaryItem,
-
+  MealHistoryPage,
   MealType,
   MealsByDay,
   MealDays,
@@ -194,6 +194,17 @@ export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
 export async function getMeals(day?: string): Promise<MealsByDay> {
   const q = day ? `?day=${day}` : "";
   const res = await apiFetch(`/api/meals${q}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** GET /api/meals/history — плоская история приёмов, keyset-пагинация.
+ *
+ *  cursor — next_cursor предыдущей страницы (непрозрачная строка «время_id»), не номер
+ *  страницы: сервер листает по ключу, а не по OFFSET. Без cursor — первая страница. */
+export async function mealsHistory(cursor?: string): Promise<MealHistoryPage> {
+  const q = cursor ? `?before=${encodeURIComponent(cursor)}` : "";
+  const res = await apiFetch(`/api/meals/history${q}`);
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
 }

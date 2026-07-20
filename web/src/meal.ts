@@ -1,7 +1,7 @@
 // Чистые помощники модуля калорий (feature/calories): клиентский пересчёт КБЖУ при
 // правке граммовки и маппинг статуса разбора на экран. Без React — тестируется юнит-тестом.
 
-import type { MealItem, MealMacros, MealStatus, MealType } from "./types";
+import type { MealDiaryItem, MealItem, MealMacros, MealResult, MealStatus, MealType } from "./types";
 
 export function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -108,6 +108,32 @@ export function dayRingLine(eaten: number, target: number): string {
   const diff = target - eaten;
   const right = diff >= 0 ? `осталось${NB}${diff}${NB}ккал` : `перебор${NB}${-diff}${NB}ккал`;
   return `из${NB}${target}${NB}ккал · ${right}`;
+}
+
+/** Краткий состав приёма для карточки истории: имена блюд через запятую, хвост —
+ *  многоточием. Показываем именно имена, а не «3 блюда»: список нужен, чтобы узнать
+ *  СВОЙ приём в ленте, а количество для этого бесполезно. */
+export function dishesBrief(dishes: MealItem[], max = 3): string {
+  const names = dishes.map((d) => d.name.trim()).filter(Boolean);
+  if (names.length === 0) return "Без блюд";
+  return names.slice(0, max).join(", ") + (names.length > max ? "…" : "");
+}
+
+/** Сохранённый приём → форма результата разбора, которую понимает MealResultScreen.
+ *
+ *  Экран один на оба случая (свежий разбор и приём из истории), а различаются они
+ *  только флагом saved. Отдельный экран просмотра разъехался бы с редактором на первой
+ *  же правке — а редактор здесь ровно тот же. */
+export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealResult {
+  return {
+    status: "ok",
+    id: item.id,
+    eaten_at: item.eaten_at,
+    dishes: item.dishes,
+    total: item.total,
+    confidence: item.confidence,
+    meals_left: mealsLeft,
+  };
 }
 
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
