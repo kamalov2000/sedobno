@@ -10,6 +10,8 @@ import ResultScreen from "./screens/ResultScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import MealStateScreen from "./screens/MealStateScreen";
 import DiaryScreen from "./screens/DiaryScreen";
+import WeightScreen from "./screens/WeightScreen";
+import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 import { dayCardData, downloadShareCard } from "./shareCard";
 import NotScoredScreen from "./screens/NotScoredScreen";
@@ -18,7 +20,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -98,7 +100,7 @@ export default function App() {
     const bb = tg()?.BackButton;
     if (!bb) return;
     const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
-    const isList = view === "history" || view === "meal_diary";
+    const isList = view === "history" || view === "meal_diary" || view === "weight";
     if (!(isList || isOutcome)) {
       bb.hide();
       return;
@@ -107,6 +109,10 @@ export default function App() {
       if (isOutcome && fromHistory) {
         setFromHistory(false);
         setView("history");
+      } else if (view === "weight") {
+        // Вес открывается из дневника — системная «назад» возвращает туда же,
+        // куда и кнопка на экране, иначе два пути расходятся.
+        setView("meal_diary");
       } else {
         setView("home");
       }
@@ -339,12 +345,34 @@ export default function App() {
           onBack={() => setView("home")}
           profile={me?.nutrition_profile}
           onOpenWizard={() => setView("profile_wizard")}
+          onOpenWeight={() => setView("weight")}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
             const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
             void downloadShareCard(dayCardData(data, profile), "post", theme);
           }}
+        />
+      )}
+      {view === "weight" && (
+        <WeightScreen
+          onBack={() => setView("meal_diary")}
+          onRecord={() => setView("weight_entry")}
+        />
+      )}
+      {view === "weight_entry" && (
+        <WeightEntryScreen
+          // Сводку на экран ввода берём из профиля: цель и текущий вес там уже есть,
+          // и лишний запрос ради двух чисел не нужен. Точные точки графика ему ни к чему.
+          summary={{
+            current_kg: me?.nutrition_profile.weight_kg ?? null,
+            goal_kg: me?.nutrition_profile.goal_weight_kg ?? null,
+            delta_week: null,
+            trending_to_goal: null,
+            goal: me?.nutrition_profile.goal ?? null,
+          }}
+          onClose={() => setView("weight")}
+          onSaved={() => setView("weight")}
         />
       )}
       {view === "profile_wizard" && (
