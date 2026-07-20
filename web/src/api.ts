@@ -241,6 +241,21 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
   return res.json();
 }
 
+/** POST /api/meals с JSON вместо фото — приём, вписанный руками.
+ *
+ *  Тот же эндпоинт, что и у фото: сущность одна, различается только Content-Type.
+ *  Квота НЕ списывается — vision не вызывается, платить не за что.
+ *  date — локальный день клиента: без него вечерний приём уехал бы во вчера. */
+export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType }): Promise<MealResult> {
+  const res = await apiFetch("/api/meals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, date: localDay() }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
 /** DELETE /api/meals/{id} — удаление приёма. */
 export async function deleteMeal(id: number): Promise<void> {
   const res = await apiFetch(`/api/meals/${id}`, { method: "DELETE" });

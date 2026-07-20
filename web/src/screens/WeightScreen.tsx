@@ -206,6 +206,19 @@ function Chart({ points, summary }: { points: WeighIn[]; summary: WeightSummary 
           )}
           {series.length > 1 && <path d={linePath} fill="none" stroke="var(--good)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />}
           <circle cx={last.x.toFixed(1)} cy={last.y.toFixed(1)} r="5" fill="var(--good)" stroke="var(--bg-soft)" strokeWidth="3" />
+          {/* Значение прямо у последней точки: иначе текущий вес приходится искать
+              глазами в шапке и сопоставлять с концом линии. Подпись уводим влево от
+              точки (text-anchor=end), чтобы не срезалась правым краем, и не даём ей
+              вылезти за верх — на пиковом значении y ушёл бы в отрицательные. */}
+          <text
+            x={(last.x - 9).toFixed(1)}
+            y={Math.max(last.y - 12, 14).toFixed(1)}
+            textAnchor="end"
+            fill="var(--good)"
+            style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, fontWeight: 600 }}
+          >
+            {fmt(series[series.length - 1])}
+          </text>
         </svg>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 6px 0", fontFamily: "'PT Mono',monospace", fontSize: 9.5, color: "var(--text3)" }}>
           <span>{monthDay(points[0].date)}</span>

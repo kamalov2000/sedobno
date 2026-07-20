@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType } from "../types";
 import { scaleDish, totalOf, per100, pluralDishes, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
-import { patchMeal, deleteMeal } from "../api";
+import { patchMeal, deleteMeal, createManualMeal } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
 import { useRolledNumber } from "../useRoll";
@@ -17,6 +17,11 @@ interface Props {
   mealsLeft?: number; // остаток разборов из актуального /me (единый источник правды)
   onDone: () => void;
   onRetake: () => void;
+  /** Приём, вписанный руками: фото не было, разбирать нечего. Экран тот же — меняется
+   *  то, что в нём врало бы: строка «AI распознал», плашка уверенности и чип квоты
+   *  (она за ручной приём не списывается). Сохранение уходит POST'ом, а не PATCH'ем:
+   *  сохранять нечего — приёма ещё нет. */
+  manual?: boolean;
 }
 
 const GRAM_STEP = 10;
@@ -45,15 +50,27 @@ function manualReady(d: Draft): boolean {
   return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100;
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake }: Props) {
-  const [dishes, setDishes] = useState<Draft[]>(result.dishes ?? []);
+/** Пустое ручное блюдо. Ручной приём стартует с одного такого: пустой экран с одной
+ *  кнопкой «Добавить блюдо» — лишний тап на пути, который и так запасной. */
+function blankManual(): Draft {
+  return {
+    name: "", grams: MANUAL_START_GRAMS,
+    kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0,
+    confidence: 1, manual: true, per100Raw: "",
+  };
+}
+
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false }: Props) {
+  const [dishes, setDishes] = useState<Draft[]>(() => (manual ? [blankManual()] : (result.dishes ?? [])));
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
 
   const total = useMemo(() => totalOf(dishes), [dishes]);
   const rolledKcal = useRolledNumber(Math.round(total.kcal), 220);
   const id = result.id;
-  const lowConfidence = (result.confidence ?? 1) < LOW_CONFIDENCE;
+  // Плашка «на глаз» — про уверенность РАСПОЗНАВАНИЯ. У ручного приёма распознавания
+  // не было, поэтому и говорить об уверенности не о чем.
+  const lowConfidence = !manual && (result.confidence ?? 1) < LOW_CONFIDENCE;
   const emptied = dishes.length === 0;
 
   const setGrams = (i: number, grams: number) => {
@@ -68,16 +85,8 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
 
   const addManual = () => {
     haptic("light");
-    setDishes((ds) => [
-      ...ds,
-      {
-        name: "", grams: MANUAL_START_GRAMS,
-        kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0,
-        // Ручное блюдо не догадка модели: единица здесь тот же смысл, что и на бэке.
-        confidence: 1,
-        manual: true, per100Raw: "",
-      },
-    ]);
+    // Ручное блюдо не догадка модели: единица в confidence здесь тот же смысл, что и на бэке.
+    setDishes((ds) => [...ds, blankManual()]);
   };
 
   // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
@@ -110,10 +119,15 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     );
 
   const onSave = async () => {
-    if (id == null || busy || emptied || manualPending) return;
+    if (busy || emptied || manualPending) return;
+    if (!manual && id == null) return;
     setBusy(true);
     try {
-      if (dirty) await patchMeal(id, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
+      if (manual) {
+        await createManualMeal({ dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
+      } else if (dirty) {
+        await patchMeal(id!, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
+      }
       notify("success");
       onDone();
     } catch {
@@ -144,8 +158,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       <div style={{ flex: 1, overflowY: "auto", padding: "0 20px", minHeight: 0 }}>
         {/* Шапка: раздел + чип квоты */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)" }}>РАЗБОР ПОРЦИИ</span>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text2)", background: "var(--chip-bg)", borderRadius: 99, padding: "4px 10px" }}>{chip}</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)" }}>{manual ? "НОВЫЙ ПРИЁМ" : "РАЗБОР ПОРЦИИ"}</span>
+          {/* Чип квоты у ручного приёма молчит: она не списывается, а показать остаток
+              рядом с сохранением значило бы намекнуть, что списывается. */}
+          {!manual && (
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text2)", background: "var(--chip-bg)", borderRadius: 99, padding: "4px 10px" }}>{chip}</span>
+          )}
         </div>
 
         {/* Карточка-герой */}
@@ -156,7 +174,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>в этом приёме</div>
           <div style={{ marginTop: 16 }}>
-            <MacroSegments total={total} height={8} trackBg="var(--bg)" />
+            <MacroSegments total={total} height={8} trackBg="var(--bg)" collapsible />
           </div>
         </div>
 
@@ -198,10 +216,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         </div>
 
         {/* Строка распознавания */}
+        {!manual && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 16, fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", textTransform: "uppercase" }}>
           <i className="ti ti-sparkles" aria-hidden="true" style={{ fontSize: 13, color: "var(--cal-num)" }} />
           AI распознал: {n} {pluralDishes(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
         </div>
+        )}
 
         {/* Карточки блюд */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
@@ -228,13 +248,20 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
               onClick={addManual}
               style={{ width: "100%", height: 44, background: "none", border: "1px dashed var(--border)", color: "var(--text2)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
             >
-              <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
+              <i className="ti ti-camera-plus" aria-hidden="true" style={{ fontSize: 16 }} />
               Добавить блюдо
             </button>
           )}
+          {/* Подпись под кнопкой объясняет, зачем она: без неё «Добавить блюдо» читается
+              как «начать сначала». У ручного приёма объяснять нечего — там фото не было. */}
+          {!emptied && !manual && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11.5, color: "var(--text3)", marginTop: -2 }}>
+              AI не заметил что-то на фото? Добавьте вручную
+            </div>
+          )}
           {emptied && (
             <div style={{ fontSize: 13.5, color: "var(--text2)", textAlign: "center", padding: "18px 0", lineHeight: 1.5 }}>
-              Все блюда убраны. Сохранять нечего — переснимите.
+              {manual ? "Все блюда убраны. Добавьте хотя бы одно." : "Все блюда убраны. Сохранять нечего — переснимите."}
             </div>
           )}
         </div>
@@ -266,7 +293,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
           В дневник
         </button>
         <button type="button" disabled={busy} onClick={onRetakeClick} style={{ width: "100%", height: 40, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, color: "var(--text2)", cursor: busy ? "default" : "pointer", marginTop: 4 }}>
-          Переснять
+          {manual ? "Отмена" : "Переснять"}
         </button>
       </div>
     </div>

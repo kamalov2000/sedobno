@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import DiaryScreen from "./DiaryScreen";
 import type { MealsByDay, MealDays, NutritionProfile } from "../types";
 
@@ -133,6 +133,50 @@ describe("DiaryScreen — карточка веса", () => {
         loadWeek={weekData} loadWeight={async () => makeWeight("lose")} saveWater={noWater} />,
     );
     expect(await screen.findByText("72,4")).toBeTruthy();
-    expect(screen.getByText(/за неделю/)).toBeTruthy();
+    expect(screen.getByText(/кг · нед/)).toBeTruthy();
+  });
+});
+
+// --- Ручной приём: фото было единственным входом в дневник, и забытый снимок ломал
+// и дневную норму, и серию. Тесты закрепляют, что оба входа на месте.
+
+describe("DiaryScreen — вход в ручной приём", () => {
+  const props = {
+    onBack: noop, onOpenWizard: noop, profile: makeProfile(),
+    loadWeek: weekData, loadWeight: noWeight, saveWater: noWater,
+  };
+
+  it("под списком приёмов есть вход, и он ведёт в ручной разбор", async () => {
+    const onAddManual = vi.fn();
+    render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} onAddManual={onAddManual} />);
+    fireEvent.click(await screen.findByText(/Забыли сфотографировать/));
+    expect(onAddManual).toHaveBeenCalled();
+  });
+
+  it("пустой день тоже даёт вписать руками — иначе вечерний ужин без фото не спасти", async () => {
+    const onAddManual = vi.fn();
+    render(<DiaryScreen {...props} loadDay={async () => makeEmptyDiary()} onAddManual={onAddManual} />);
+    // Пустое состояние зовёт сфоткать — и рядом даёт запасной путь.
+    expect(await screen.findByText(/Сфоткай/)).toBeTruthy();
+    fireEvent.click(screen.getByText(/Забыли сфотографировать/));
+    expect(onAddManual).toHaveBeenCalled();
+  });
+
+  it("без обработчика вход не рисуется вовсе", async () => {
+    render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} />);
+    await screen.findByText("ПРИЁМЫ ПИЩИ");
+    expect(screen.queryByText(/Забыли сфотографировать/)).toBeNull();
+  });
+});
+
+describe("DiaryScreen — ряд «Серия / Вес»", () => {
+  it("нулевая серия не рисуется, а карточка веса остаётся", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()} onOpenWeight={noop}
+        loadDay={async () => makeDiary("under", { streakDays: 0 })}
+        loadWeek={weekData} loadWeight={async () => makeWeight("lose")} saveWater={noWater} />,
+    );
+    expect(await screen.findByText("72,4")).toBeTruthy();
+    expect(screen.queryByTitle(/Серия/)).toBeNull();
   });
 });

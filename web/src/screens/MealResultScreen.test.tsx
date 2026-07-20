@@ -6,15 +6,18 @@ import { makeMealResult } from "../fixtures";
 
 // Мокаем сетевой слой: экран проверяется целиком, но без реальных запросов.
 const patchMeal = vi.fn(async (_id: number, _body: unknown) => ({}) as never);
+const createManualMeal = vi.fn(async (_body: unknown) => ({}) as never);
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   patchMeal: (id: number, body: unknown) => patchMeal(id, body),
+  createManualMeal: (body: unknown) => createManualMeal(body),
   deleteMeal: vi.fn(async () => {}),
 }));
 
 afterEach(() => {
   cleanup();
   patchMeal.mockClear();
+  createManualMeal.mockClear();
 });
 
 const noop = () => {};
@@ -109,5 +112,73 @@ describe("MealResultScreen — плашка «на глаз»", () => {
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "333" } });
     // Плашка так и не появилась — у неё нет своего условия по блюдам.
     expect(screen.queryByText("Оценка на глаз")).toBeNull();
+  });
+});
+
+// --- Ручной приём: тот же экран, стартующий пустым. Проверяется ровно то, что у него
+// обязано отличаться, — иначе экран врал бы про распознавание, которого не было.
+
+describe("MealResultScreen — приём, вписанный руками", () => {
+  const renderManual = () =>
+    render(
+      <MealResultScreen
+        result={{ status: "ok", dishes: [], meals_left: 7 }}
+        isSubscribed={false}
+        manual
+        onDone={noop}
+        onRetake={noop}
+      />,
+    );
+
+  it("стартует с одного пустого блюда — лишнего тапа на запасном пути нет", () => {
+    renderManual();
+    expect(screen.getByLabelText("Название блюда")).toBeTruthy();
+    expect(screen.getByText("НОВЫЙ ПРИЁМ")).toBeTruthy();
+  });
+
+  it("не говорит про распознавание: ни строки «AI распознал», ни плашки уверенности", () => {
+    renderManual();
+    expect(screen.queryByText(/AI распознал/)).toBeNull();
+    expect(screen.queryByText("Оценка на глаз")).toBeNull();
+    // И подсказки «AI не заметил что-то на фото» — фото не было.
+    expect(screen.queryByText(/AI не заметил/)).toBeNull();
+  });
+
+  it("чип квоты не показывается: за ручной приём она не списывается", () => {
+    renderManual();
+    expect(screen.queryByText(/КАЛОРИИ \d/)).toBeNull();
+    expect(screen.queryByText("БЕЗЛИМИТ")).toBeNull();
+  });
+
+  it("сохраняет POST'ом, а не PATCH'ем: приёма ещё нет", async () => {
+    renderManual();
+    fireEvent.change(screen.getByLabelText("Название блюда"), { target: { value: "Гречка" } });
+    fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "110" } });
+
+    const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+
+    await waitFor(() => expect(createManualMeal).toHaveBeenCalled());
+    expect(patchMeal).not.toHaveBeenCalled();
+    const body = createManualMeal.mock.calls[0]![0] as { dishes: Record<string, unknown>[] };
+    expect(body.dishes[0]).toMatchObject({ name: "Гречка", grams: 100, kcal_per_100: 110 });
+  });
+
+  it("пустое блюдо не даёт сохранить — до 400 с бэка не доходит", () => {
+    renderManual();
+    const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+  });
+});
+
+describe("MealResultScreen — граммы Б/Ж/У под тапом", () => {
+  it("по умолчанию свёрнуты, тап раскрывает", () => {
+    renderScreen();
+    expect(screen.getByText(/показать граммы/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Показать граммы Б, Ж, У"));
+    // Полоска была видна всегда — под тапом прячутся только точные граммы.
+    expect(screen.getByText(/^Б \d+ г$/)).toBeTruthy();
+    expect(screen.queryByText(/показать граммы/)).toBeNull();
   });
 });

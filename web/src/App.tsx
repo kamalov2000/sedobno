@@ -20,7 +20,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -100,7 +100,7 @@ export default function App() {
     const bb = tg()?.BackButton;
     if (!bb) return;
     const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
-    const isList = view === "history" || view === "meal_diary" || view === "weight";
+    const isList = view === "history" || view === "meal_diary" || view === "weight" || view === "meal_manual";
     if (!(isList || isOutcome)) {
       bb.hide();
       return;
@@ -109,6 +109,8 @@ export default function App() {
       if (isOutcome && fromHistory) {
         setFromHistory(false);
         setView("history");
+      } else if (view === "meal_manual") {
+        setView("meal_diary");
       } else if (view === "weight") {
         // Вес открывается из дневника — системная «назад» возвращает туда же,
         // куда и кнопка на экране, иначе два пути расходятся.
@@ -346,6 +348,7 @@ export default function App() {
           profile={me?.nutrition_profile}
           onOpenWizard={() => setView("profile_wizard")}
           onOpenWeight={() => setView("weight")}
+          onAddManual={() => setView("meal_manual")}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
@@ -406,6 +409,18 @@ export default function App() {
           mealsLeft={me?.meals_left}
           onDone={() => setView("meal_diary")}
           onRetake={() => setView("home")}
+        />
+      )}
+      {/* Ручной приём — тот же экран разбора, стартующий пустым. Отдельного экрана нет
+          намеренно: правка блюд, чипы приёма и пересчёт итога у обоих путей одни и те же,
+          и второй их экземпляр разъехался бы с первым на первой же правке. */}
+      {view === "meal_manual" && (
+        <MealResultScreen
+          result={{ status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
+          isSubscribed={me?.is_subscribed ?? false}
+          manual
+          onDone={() => setView("meal_diary")}
+          onRetake={() => setView("meal_diary")}
         />
       )}
       {view === "error" && (

@@ -6,7 +6,7 @@ import { haptic } from "../telegram";
 import MacroSegments from "../components/MacroSegments";
 import WaterCard from "../components/WaterCard";
 import WeightCard from "../components/WeightCard";
-import StreakFlame from "../components/StreakFlame";
+import StreakCard from "../components/StreakCard";
 
 // Блок 2 · Дневник (финальный дизайн). День — кольцо/суммы прогресса, приёмы с иконками
 // типа, undo-снекбар при удалении; заголовок «Сегодня, 17 июля» / голая дата. Неделя —
@@ -27,6 +27,8 @@ interface Props {
   loadWeight?: () => Promise<WeightResponse>;
   /** Инкремент воды в мл. Инъекция по той же причине. */
   saveWater?: (deltaMl: number, date: string) => Promise<WaterResponse>;
+  /** Открыть пустой разбор для приёма, вписанного руками. Не задан — входы скрыты. */
+  onAddManual?: () => void;
 }
 
 function addDays(day: string, n: number): string {
@@ -54,7 +56,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -243,6 +245,7 @@ export default function DiaryScreen({
             onWater={onWater}
             weightSummary={weight?.summary}
             onOpenWeight={onOpenWeight}
+            onAddManual={onAddManual}
           />
         )}
         {mode === "week" && phase !== "error" && <WeekView week={week} target={hasNorm ? profile?.daily_kcal_target : undefined} loading={phase === "loading"} onPick={(d) => { setMode("day"); void fetchDay(d); }} />}
@@ -280,6 +283,7 @@ function DayView({
   onWater,
   weightSummary,
   onOpenWeight,
+  onAddManual,
 }: {
   day: string | null;
   today: string;
@@ -292,6 +296,7 @@ function DayView({
   onWater: (deltaMl: number) => void | Promise<void>;
   weightSummary?: WeightSummary;
   onOpenWeight?: () => void;
+  onAddManual?: () => void;
   onPrev: () => void;
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
@@ -300,6 +305,8 @@ function DayView({
   const atToday = day != null && today !== "" && day >= today;
   const isToday = day === today;
   const empty = items.length === 0;
+  const streakShown = streak != null && streak.days > 0;
+  const weightShown = weightSummary != null && onOpenWeight != null;
 
   return (
     <>
@@ -307,7 +314,6 @@ function DayView({
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 }}>
         <NavBtn icon="ti-chevron-left" onClick={onPrev} />
         <span style={{ flex: 1, textAlign: "center", fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{day ? dayTitle(day, today) : "…"}</span>
-        {streak && <StreakFlame streak={streak} />}
         <NavBtn icon="ti-chevron-right" onClick={onNext} disabled={atToday} />
       </div>
 
@@ -316,7 +322,16 @@ function DayView({
       {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
           поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
       {water && <WaterCard waterMl={water.ml} goalMl={water.goalMl} onChange={onWater} />}
-      {weightSummary && onOpenWeight && <WeightCard summary={weightSummary} onOpen={onOpenWeight} />}
+
+      {/* Серия и вес — ряд из двух равных карточек. Обе умеют исчезать поодиночке
+          (нулевая серия, отсутствующий вход на вес), и оставшаяся занимает ширину
+          сама: flex:1 на каждой, без ветвлений по числу карточек. */}
+      {(streakShown || weightShown) && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+          {streakShown && <StreakCard streak={streak!} />}
+          {weightShown && <WeightCard summary={weightSummary!} onOpen={onOpenWeight!} />}
+        </div>
+      )}
 
       {loading && empty && <Muted>Загружаем…</Muted>}
 
@@ -330,6 +345,11 @@ function DayView({
             <div style={{ fontSize: 14.5, color: "var(--text2)", lineHeight: 1.5, marginTop: 8, textWrap: "pretty" }}>
               Сфоткай {emptyMealWord(new Date().getHours())} — и он появится здесь. Дневник считает калории за день сам.
             </div>
+            {onAddManual && (
+              <div style={{ width: "100%", marginTop: 18 }}>
+                <ManualEntry onClick={onAddManual} />
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ marginTop: 44, textAlign: "center", fontSize: 14.5, color: "var(--text2)" }}>В этот день записей нет</div>
@@ -345,11 +365,39 @@ function DayView({
               <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} />
             ))}
           </div>
+          {onAddManual && <ManualEntry onClick={onAddManual} />}
           {/* Резерв, чтобы undo-снекбар не перекрывал последний приём. */}
           <div style={{ height: 104 }} />
         </>
       )}
     </>
+  );
+}
+
+// Вход в ручной приём. Стоит в двух местах, и оба нужны: под списком — для «забыл
+// сфоткать обед», в пустом дне — потому что там иначе вообще нет способа завести
+// приём, кроме камеры, и вечерний ужин без фото не спасти.
+//
+// Пунктирная рамка, а не сплошная кнопка: ручной ввод — запасной путь, а не равный
+// камере. Фото остаётся главным сценарием.
+function ManualEntry({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        haptic("light");
+        onClick();
+      }}
+      style={{
+        width: "100%", height: 44, marginTop: 12, background: "none",
+        border: "1px dashed var(--border)", borderRadius: 12, color: "var(--text2)",
+        fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer",
+      }}
+    >
+      <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 16 }} />
+      Забыли сфотографировать? Добавить вручную
+    </button>
   );
 }
 

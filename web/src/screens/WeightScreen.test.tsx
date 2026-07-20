@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import WeightScreen from "./WeightScreen";
 import WeightEntryScreen from "./WeightEntryScreen";
 import { makeWeight, makeEmptyWeight, makeSingleWeight, makeWeightSummary } from "../fixtures";
@@ -9,6 +9,9 @@ import type { WeightResponse } from "../types";
 afterEach(cleanup);
 
 const noop = () => {};
+// История для экрана ввода грузится фоном; по умолчанию отдаём пустую, чтобы тест
+// проверял ровно то, что заявлено, и не ходил в сеть.
+const noHistory = async (): Promise<WeightResponse> => makeEmptyWeight("lose");
 
 describe("WeightScreen — состояния истории", () => {
   it("история есть: показывает текущий вес, дельту и цель", async () => {
@@ -68,7 +71,7 @@ describe("WeightScreen — состояния истории", () => {
 describe("WeightEntryScreen — ввод одной цифры", () => {
   it("стартует от текущего веса и сохраняет введённое", async () => {
     const save = vi.fn(async () => makeWeight("lose"));
-    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={save} />);
+    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={save} load={noHistory} />);
 
     const input = screen.getByLabelText("Вес в килограммах") as HTMLInputElement;
     expect(input.value).toBe("72,4");
@@ -79,7 +82,7 @@ describe("WeightEntryScreen — ввод одной цифры", () => {
   });
 
   it("степперы меняют вес на 0,1 и принимают запятую", () => {
-    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={async () => makeWeight()} />);
+    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={async () => makeWeight()} load={noHistory} />);
     const input = screen.getByLabelText("Вес в килограммах") as HTMLInputElement;
     fireEvent.click(screen.getByLabelText("Больше"));
     expect(input.value).toBe("72,5");
@@ -89,13 +92,13 @@ describe("WeightEntryScreen — ввод одной цифры", () => {
   });
 
   it("цель показывается из goal_kg", () => {
-    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={async () => makeWeight()} />);
+    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={async () => makeWeight()} load={noHistory} />);
     expect(screen.getByText("ЦЕЛЬ 70 КГ")).toBeTruthy();
     expect(screen.getByText("ДО ЦЕЛИ 2,4 КГ")).toBeTruthy();
   });
 
   it("цели нет — строка скрыта целиком, без прочерков", () => {
-    render(<WeightEntryScreen summary={makeWeightSummary("maintain")} onClose={noop} onSaved={noop} save={async () => makeWeight()} />);
+    render(<WeightEntryScreen summary={makeWeightSummary("maintain")} onClose={noop} onSaved={noop} save={async () => makeWeight()} load={noHistory} />);
     expect(screen.queryByText(/ЦЕЛЬ/)).toBeNull();
     expect(screen.queryByText(/ДО ЦЕЛИ/)).toBeNull();
     expect(screen.queryByText("—")).toBeNull();
@@ -103,7 +106,7 @@ describe("WeightEntryScreen — ввод одной цифры", () => {
 
   it("вес вне границ не даёт сохранить — до бэка ошибка не доходит", () => {
     const save = vi.fn(async () => makeWeight());
-    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={save} />);
+    render(<WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop} save={save} load={noHistory} />);
     const input = screen.getByLabelText("Вес в килограммах");
     fireEvent.change(input, { target: { value: "5" } });
     fireEvent.click(screen.getByText("Сохранить"));
@@ -118,8 +121,32 @@ describe("WeightEntryScreen — ввод одной цифры", () => {
     render(
       <WeightEntryScreen
         summary={{ current_kg: null, goal_kg: null, delta_week: null, trending_to_goal: null, goal: null }}
-        onClose={noop} onSaved={noop} save={async () => makeWeight()} />,
+        onClose={noop} onSaved={noop} save={async () => makeWeight()} load={noHistory} />,
     );
     expect((screen.getByLabelText("Вес в килограммах") as HTMLInputElement).value).toBe("70");
+  });
+});
+
+describe("WeightEntryScreen — последние записи", () => {
+  it("список показывает три последние записи с разницей между ними", async () => {
+    render(
+      <WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop}
+        save={async () => makeWeight()} load={async () => makeWeight("lose")} />,
+    );
+    expect(await screen.findByText("ПОСЛЕДНИЕ ЗАПИСИ")).toBeTruthy();
+    // Список — не дубль графика: он ловит опечатку до сохранения, поэтому в нём
+    // именно вбитые значения, а не сглаженный тренд.
+    const rows = within(screen.getByRole("list", { name: "Последние записи веса" })).getAllByRole("listitem");
+    expect(rows.length).toBeLessThanOrEqual(3);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it("истории нет — списка нет, а не пустой заголовок", async () => {
+    render(
+      <WeightEntryScreen summary={makeWeightSummary("lose")} onClose={noop} onSaved={noop}
+        save={async () => makeWeight()} load={noHistory} />,
+    );
+    await screen.findByLabelText("Вес в килограммах");
+    expect(screen.queryByText("ПОСЛЕДНИЕ ЗАПИСИ")).toBeNull();
   });
 });
