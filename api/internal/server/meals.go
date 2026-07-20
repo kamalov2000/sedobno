@@ -2,7 +2,8 @@ package server
 
 // HTTP-хендлеры модуля калорий по фото (feature/calories). Отдельный пайплайн от
 // сканера составов: POST /meals (разбор фото), GET /meals (дневник за день),
-// GET /meals/days (агрегаты за период), PATCH /meals/{id} (правка), DELETE /meals/{id}.
+// GET /meals/days (агрегаты за период), GET /meals/history (плоская история приёмов),
+// PATCH /meals/{id} (правка), DELETE /meals/{id}.
 
 import (
 	"context"
@@ -75,6 +76,18 @@ type mealsByDayResponse struct {
 type mealDaysResponse struct {
 	Days []store.MealDaily `json:"days"`
 }
+
+// mealHistoryResponse — страница истории приёмов (GET /meals/history). next_cursor
+// пуст — история кончилась; непустой передаётся обратно в ?before=.
+type mealHistoryResponse struct {
+	Items      []mealDiaryItem `json:"items"`
+	NextCursor string          `json:"next_cursor,omitempty"`
+}
+
+const (
+	mealHistoryDefaultLimit = 20
+	mealHistoryMaxLimit     = 50
+)
 
 const (
 	// Сообщения не-ok исходов разбора (дублируют тексты фронта — для клиентов без
@@ -353,6 +366,98 @@ func (s *Server) handleMealsByDay(w http.ResponseWriter, r *http.Request) {
 		Day: day, Total: agg, Items: items,
 		WaterML: waterML, WaterGoalML: store.WaterGoalML, Streak: streak,
 	})
+}
+
+// handleMealsHistory — GET /api/meals/history?limit=20&before=<курсор>.
+//
+// Плоский список приёмов по убыванию времени — это НЕ дневник: дневник отвечает
+// «сколько я съел 15-го», история — «покажи тот разбор, который я хочу поправить».
+// Поэтому здесь нет ни агрегатов, ни воды, ни стрика, а группировка по дням оставлена
+// клиенту (заголовок «Вчера» — вопрос вёрстки, а не выборки).
+//
+// Отдаём те же mealDiaryItem, что и GET /meals: приём открывается тем же экраном, что
+// и свежий разбор, и вторая форма ответа завела бы на клиенте второй маппинг, который
+// разъехался бы с первым на ближайшей правке.
+//
+// Только status='ok' — в отличие от истории составов, где «состав не распознан»
+// показывается намеренно (пользователю важно, что попытка была). У еды не-ok разбор
+// показывать нечего: ни блюд, ни калорий в нём нет, а квота за него не списывается,
+// так что и «следа» он оставлять не должен.
+func (s *Server) handleMealsHistory(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+		return
+	}
+	ctx := r.Context()
+
+	limit := mealHistoryDefaultLimit
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > mealHistoryMaxLimit {
+		limit = mealHistoryMaxLimit
+	}
+
+	var beforeAt *time.Time
+	var beforeID int64
+	if cur := r.URL.Query().Get("before"); cur != "" {
+		at, id, ok := decodeMealCursor(cur)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "некорректный курсор before")
+			return
+		}
+		beforeAt, beforeID = &at, id
+	}
+
+	// Берём на строку больше запрошенного: лишняя строка означает «есть следующая
+	// страница», и курсор строится по последней ПОКАЗАННОЙ — тот же приём, что в
+	// истории сканов, только ключ составной.
+	rows, err := s.store.ListMealsHistory(ctx, claims.UserID, beforeAt, beforeID, limit+1)
+	if err != nil {
+		s.log.Error("meal: история приёмов", "err", err, "user", claims.UserID)
+		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
+		return
+	}
+
+	next := ""
+	if len(rows) > limit {
+		rows = rows[:limit]
+		next = encodeMealCursor(rows[limit-1])
+	}
+	items := make([]mealDiaryItem, 0, len(rows))
+	for _, m := range rows {
+		items = append(items, toDiaryItem(m))
+	}
+	writeJSON(w, http.StatusOK, mealHistoryResponse{Items: items, NextCursor: next})
+}
+
+// Курсор keyset-пагинации — «<микросекунды unix>_<id>» последнего отданного приёма.
+// Для клиента непрозрачен (он его только возвращает как есть), но намеренно текстовый
+// и без base64: кодирование ничего здесь не защищает — id своих приёмов пользователь
+// и так видит, — а отладка по логам и curl'у становится заметно хуже.
+//
+// Микросекунды, а не RFC3339: у timestamptz в Postgres разрешение ровно микросекунда,
+// так что round-trip точный, и в строке нет ни двоеточий, ни плюсов — курсор
+// проходит через query-параметр без экранирования.
+func encodeMealCursor(m store.Meal) string {
+	return strconv.FormatInt(m.EatenAt.UnixMicro(), 10) + "_" + strconv.FormatInt(m.ID, 10)
+}
+
+func decodeMealCursor(cur string) (time.Time, int64, bool) {
+	atStr, idStr, found := strings.Cut(cur, "_")
+	if !found {
+		return time.Time{}, 0, false
+	}
+	micro, err := strconv.ParseInt(atStr, 10, 64)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id < 0 {
+		return time.Time{}, 0, false
+	}
+	return time.UnixMicro(micro).UTC(), id, true
 }
 
 // handleMealDays — GET /api/meals/days?from=YYYY-MM-DD&to=YYYY-MM-DD. Дневные агрегаты

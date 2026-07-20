@@ -173,6 +173,46 @@ ORDER BY eaten_at ASC`
 	return out, rows.Err()
 }
 
+// ListMealsHistory возвращает страницу истории приёмов — плоский список по убыванию
+// времени приёма, без группировки по дням (этим занят дневник).
+//
+// Пагинация keyset'ом по паре (eaten_at, id), а не OFFSET: у OFFSET стоимость страницы
+// растёт линейно с её номером — Postgres всё равно читает и выбрасывает все
+// предшествующие строки, и пролистывание длинной истории дорожает с каждым шагом.
+// Keyset читает ровно limit строк по индексу idx_meals_user_eaten на любой глубине.
+//
+// Пара, а не один eaten_at: одинаковое время приёма — обычное дело (ручной приём без
+// eaten_at берёт now(), два приёма подряд ложатся в ту же микросекунду редко, но
+// импорт или правка «съел в 13:00» дают точное совпадение легко). На таком стыке
+// курсор по одному eaten_at либо пропустил бы строки, либо показал их дважды.
+// id — вторичный ключ порядка, тотальный по построению (BIGSERIAL PRIMARY KEY).
+//
+// beforeAt == nil — первая страница. Только status='ok': ранние выходы разбора в
+// meals не пишутся вовсе, фильтр держит инвариант явным на случай, если начнут.
+func (s *Store) ListMealsHistory(ctx context.Context, userID int64, beforeAt *time.Time, beforeID int64, limit int) ([]Meal, error) {
+	const q = `SELECT ` + mealCols + `
+FROM meals
+WHERE user_id = $1
+  AND status = 'ok'
+  AND ($2::timestamptz IS NULL OR (eaten_at, id) < ($2::timestamptz, $3::bigint))
+ORDER BY eaten_at DESC, id DESC
+LIMIT $4`
+	rows, err := s.pool.Query(ctx, q, userID, beforeAt, beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Meal
+	for rows.Next() {
+		m, err := scanMeal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // MealDay возвращает дневной агрегат за day (пустой день → нули, не ошибка).
 func (s *Store) MealDay(ctx context.Context, userID int64, day string) (MealDaily, error) {
 	const q = `

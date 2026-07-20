@@ -294,3 +294,134 @@ func TestListMealsByDay_И_Агрегат(t *testing.T) {
 		t.Fatalf("дней в диапазоне: %d, ждали 2", len(days))
 	}
 }
+
+// История приёмов: keyset-пагинация проходит весь список ровно один раз — ни пропусков,
+// ни дублей. Ключевой случай — ТРИ приёма с одинаковым eaten_at: курсор по одному
+// времени на таком стыке либо перепрыгнул бы через соседей, либо показал их дважды,
+// и заметно это становится только когда совпадение попадает на границу страницы.
+func TestListMealsHistory_КурсорНеТеряетИНеДублирует(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2010)
+
+	same := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+	later := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	earlier := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+
+	var want []int64 // ожидаемый порядок: eaten_at DESC, id DESC
+	ids := map[time.Time][]int64{}
+	for _, at := range []time.Time{earlier, same, same, same, later} {
+		id, err := s.InsertMeal(ctx, okMealRow(uid, at, 100))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[at] = append(ids[at], id)
+	}
+	want = append(want, ids[later]...)
+	for i := len(ids[same]) - 1; i >= 0; i-- { // одинаковое время → по убыванию id
+		want = append(want, ids[same][i])
+	}
+	want = append(want, ids[earlier]...)
+
+	// Ходим страницами по 2 — граница страницы обязательно попадёт внутрь тройки
+	// с одинаковым временем.
+	const pageSize = 2
+	var got []int64
+	var beforeAt *time.Time
+	var beforeID int64
+	for page := 0; page < 10; page++ {
+		rows, err := s.ListMealsHistory(ctx, uid, beforeAt, beforeID, pageSize)
+		if err != nil {
+			t.Fatalf("страница %d: %v", page, err)
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for _, m := range rows {
+			got = append(got, m.ID)
+		}
+		last := rows[len(rows)-1]
+		at := last.EatenAt
+		beforeAt, beforeID = &at, last.ID
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("собрано %d приёмов, ждали %d (%v vs %v)", len(got), len(want), got, want)
+	}
+	seen := map[int64]bool{}
+	for _, id := range got {
+		if seen[id] {
+			t.Fatalf("приём %d отдан дважды: %v", id, got)
+		}
+		seen[id] = true
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("порядок истории: %v, ждали %v", got, want)
+		}
+	}
+}
+
+// В историю еды попадают только состоявшиеся разборы. Не-ok строку кладём в обход
+// хендлера (штатный путь её не пишет) — фильтр должен держаться на самой выборке.
+func TestListMealsHistory_ТолькоOK(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2011)
+	at := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	okID, err := s.InsertMeal(ctx, okMealRow(uid, at, 200))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := okMealRow(uid, at.Add(time.Hour), 0)
+	bad.Status = "not_food"
+	if _, err := s.InsertMeal(ctx, bad); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.ListMealsHistory(ctx, uid, nil, 0, 20)
+	if err != nil {
+		t.Fatalf("ListMealsHistory: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != okID {
+		t.Fatalf("в истории %d строк (%+v), ждали только ok-приём %d", len(rows), rows, okID)
+	}
+}
+
+// История чужие приёмы не показывает и флаг правки не теряет.
+func TestListMealsHistory_ВладениеИФлагПравки(t *testing.T) {
+	s, ctx := newStore(t)
+	owner := mkUser(t, s, ctx, 2012)
+	other := mkUser(t, s, ctx, 2013)
+	at := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	id, err := s.InsertMeal(ctx, okMealRow(owner, at, 200))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertMeal(ctx, okMealRow(other, at, 500)); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := s.ListMealsHistory(ctx, owner, nil, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != id {
+		t.Fatalf("в истории владельца %d строк, ждали только свой приём %d", len(rows), id)
+	}
+	if rows[0].Edited {
+		t.Error("свежий приём помечен edited=true")
+	}
+
+	items, _ := json.Marshal([]map[string]any{{"name": "плов", "grams": 300, "kcal": 200}})
+	if _, err := s.UpdateMeal(ctx, id, owner, items, fptr(200), fptr(5), fptr(8), fptr(20), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.ListMealsHistory(ctx, owner, nil, 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rows[0].Edited {
+		t.Error("после правки история отдаёт edited=false")
+	}
+}

@@ -105,6 +105,7 @@ func (s *Server) Router() http.Handler {
 			r.With(s.rateLimitMeals).Post("/meals", s.handleMealCreate)
 			r.Get("/meals", s.handleMealsByDay)
 			r.Get("/meals/days", s.handleMealDays)
+			r.Get("/meals/history", s.handleMealsHistory)
 			r.Patch("/meals/{id}", s.handleMealUpdate)
 			r.Delete("/meals/{id}", s.handleMealDelete)
 
