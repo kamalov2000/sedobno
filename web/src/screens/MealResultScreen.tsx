@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType } from "../types";
 import { scaleDish, totalOf, per100, pluralDishes, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import { patchMeal, deleteMeal } from "../api";
+import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
 import { useRolledNumber } from "../useRoll";
 import MacroSegments from "../components/MacroSegments";
@@ -21,8 +22,31 @@ interface Props {
 const GRAM_STEP = 10;
 const fmtInt = (v: number) => String(Math.round(v));
 
+// Границы ручного ввода совпадают с валидацией бэка: экран не должен давать дойти до
+// ошибки, которую сервер всё равно завернёт.
+const MIN_PER100 = 1;
+const MAX_PER100 = 900;
+const MANUAL_START_GRAMS = 100;
+
+/** Блюдо в редакторе. Ручное отличается флагом: у него нет распознанных значений, и
+ *  пользователь вводит имя и ккал/100 г сам — достепперить их от нуля никто не станет.
+ *  per100Raw держит СЫРОЙ ввод, чтобы промежуточные «12,» не схлопывались при наборе. */
+type Draft = MealItem & { manual?: boolean; per100Raw?: string };
+
+function parseNum(raw: string): number | null {
+  const n = parseFloat(raw.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Ручное блюдо готово к отправке, когда есть имя и осмысленная калорийность. */
+function manualReady(d: Draft): boolean {
+  if (!d.manual) return true;
+  const per = parseNum(d.per100Raw ?? "");
+  return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100;
+}
+
 export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake }: Props) {
-  const [dishes, setDishes] = useState<MealItem[]>(result.dishes ?? []);
+  const [dishes, setDishes] = useState<Draft[]>(result.dishes ?? []);
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -42,13 +66,54 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     setDishes((ds) => ds.filter((_, idx) => idx !== i));
   };
 
+  const addManual = () => {
+    haptic("light");
+    setDishes((ds) => [
+      ...ds,
+      {
+        name: "", grams: MANUAL_START_GRAMS,
+        kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0,
+        // Ручное блюдо не догадка модели: единица здесь тот же смысл, что и на бэке.
+        confidence: 1,
+        manual: true, per100Raw: "",
+      },
+    ]);
+  };
+
+  // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
+  // пересчитывался на лету, как у степперов граммовки.
+  const setManual = (i: number, patch: { name?: string; per100Raw?: string }) => {
+    setDishes((ds) =>
+      ds.map((d, idx) => {
+        if (idx !== i) return d;
+        const next = { ...d, ...patch };
+        const per = parseNum(next.per100Raw ?? "");
+        next.kcal = per != null ? Math.round((per * next.grams) / 100) : 0;
+        return next;
+      }),
+    );
+  };
+
+  // Незаполненное ручное блюдо блокирует сохранение: лучше неактивная кнопка, чем
+  // 400 с бэка — до ошибки пользователя доводить незачем.
+  const manualPending = dishes.some((d) => !manualReady(d));
+
   const dirty = JSON.stringify(dishes) !== JSON.stringify(result.dishes ?? []) || mealType !== null;
 
+  // Ручные блюда уходят на 100 г — сервер пересчитает на порцию сам и прогонит через ту
+  // же санитизацию, что и распознанные. Распознанные отправляем как есть.
+  const toPatch = (ds: Draft[]): DishPatch[] =>
+    ds.map((d) =>
+      d.manual
+        ? { name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0 }
+        : { name: d.name, grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence },
+    );
+
   const onSave = async () => {
-    if (id == null || busy || emptied) return;
+    if (id == null || busy || emptied || manualPending) return;
     setBusy(true);
     try {
-      if (dirty) await patchMeal(id, { dishes, ...(mealType ? { meal_type: mealType } : {}) });
+      if (dirty) await patchMeal(id, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
       notify("success");
       onDone();
     } catch {
@@ -140,9 +205,33 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
 
         {/* Карточки блюд */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-          {dishes.map((d, i) => (
-            <DishCard key={i} dish={d} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
-          ))}
+          {dishes.map((d, i) =>
+            d.manual ? (
+              <ManualDishCard
+                key={i}
+                dish={d}
+                onName={(v) => setManual(i, { name: v })}
+                onPer100={(v) => setManual(i, { per100Raw: v })}
+                onStep={(delta) => stepGrams(i, delta)}
+                onSet={(g) => setGrams(i, g)}
+                onRemove={() => removeDish(i)}
+              />
+            ) : (
+              <DishCard key={i} dish={d} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
+            ),
+          )}
+          {/* Добавить блюдо можно всегда, пока приём не опустошён: докинуть хлеб к
+              распознанной тарелке — самый частый сценарий правки. */}
+          {!emptied && (
+            <button
+              type="button"
+              onClick={addManual}
+              style={{ width: "100%", height: 44, background: "none", border: "1px dashed var(--border)", color: "var(--text2)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+            >
+              <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
+              Добавить блюдо
+            </button>
+          )}
           {emptied && (
             <div style={{ fontSize: 13.5, color: "var(--text2)", textAlign: "center", padding: "18px 0", lineHeight: 1.5 }}>
               Все блюда убраны. Сохранять нечего — переснимите.
@@ -169,9 +258,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
         <button
           type="button"
-          disabled={busy || emptied}
+          disabled={busy || emptied || manualPending}
           onClick={onSave}
-          style={{ width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: busy || emptied ? "default" : "pointer", opacity: emptied ? 0.5 : busy ? 0.7 : 1 }}
+          style={{ width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: busy || emptied || manualPending ? "default" : "pointer", opacity: emptied || manualPending ? 0.5 : busy ? 0.7 : 1 }}
         >
           <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 19 }} />
           В дневник
@@ -234,6 +323,84 @@ function DishCard({ dish, onStep, onSet, onRemove }: { dish: MealItem; onStep: (
         </div>
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 г</span>
       </div>
+    </div>
+  );
+}
+
+// Карточка ручного блюда: два поля ввода вместо распознанных чисел. У ручного блюда
+// нет ккал/100 г, от которых можно оттолкнуться степпером, — поэтому и имя, и
+// калорийность вводятся руками, на той же decimal-клавиатуре, что и вес.
+function ManualDishCard({
+  dish, onName, onPer100, onStep, onSet, onRemove,
+}: {
+  dish: Draft;
+  onName: (v: string) => void;
+  onPer100: (v: string) => void;
+  onStep: (delta: number) => void;
+  onSet: (grams: number) => void;
+  onRemove: () => void;
+}) {
+  const per = parseNum(dish.per100Raw ?? "");
+  const perBad = dish.per100Raw !== "" && (per == null || per < MIN_PER100 || per > MAX_PER100);
+  const nameBad = dish.name.trim() === "";
+
+  return (
+    <div style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <input
+          value={dish.name}
+          onChange={(e) => onName(e.target.value)}
+          placeholder="Название блюда"
+          aria-label="Название блюда"
+          style={{ flex: 1, minWidth: 0, border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, fontWeight: 500, color: "var(--text)", padding: 0, outline: "none" }}
+        />
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(dish.kcal)} ккал</span>
+        <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />
+        </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44, background: "var(--bg)" }}>
+          <button type="button" onClick={() => onStep(-GRAM_STEP)} aria-label="Меньше грамм" style={{ width: 42, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 16 }} />
+          </button>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 2, padding: "0 6px", minWidth: 58, justifyContent: "center" }}>
+            <input
+              className="cal-g"
+              type="number"
+              value={Math.round(dish.grams)}
+              onChange={(e) => onSet(parseInt(e.target.value, 10))}
+              aria-label="Граммовка"
+              style={{ width: 40, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+            />
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>г</span>
+          </div>
+          <button type="button" onClick={() => onStep(GRAM_STEP)} aria-label="Больше грамм" style={{ width: 42, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
+          </button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid", borderColor: perBad ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 11, height: 44, padding: "0 10px", background: "var(--bg)" }}>
+          <input
+            className="cal-g"
+            type="text"
+            inputMode="decimal"
+            value={dish.per100Raw ?? ""}
+            onChange={(e) => onPer100(e.target.value)}
+            placeholder="0"
+            aria-label="Калорийность на 100 грамм"
+            style={{ width: 46, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+          />
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)", whiteSpace: "nowrap" }}>ккал/100 г</span>
+        </div>
+      </div>
+
+      {(nameBad || perBad) && (
+        <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 8 }}>
+          {nameBad ? "Впишите название" : `Калорийность — от ${MIN_PER100} до ${MAX_PER100} ккал на 100 г`}
+        </div>
+      )}
     </div>
   );
 }

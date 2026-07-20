@@ -11,7 +11,7 @@ import type {
   ScanHistoryPage,
   MealResult,
   MealDiaryItem,
-  MealItem,
+
   MealType,
   MealsByDay,
   MealDays,
@@ -206,8 +206,26 @@ export async function getMealDays(from: string, to: string): Promise<MealDays> {
 }
 
 /** Тело правки приёма: любое подмножество полей. */
+/** Блюдо в правке приёма. Покрывает два случая одним массивом:
+ *  распознанное — абсолютные значения на порцию (их посчитал сервер при разборе);
+ *  ручное — значения на 100 г плюс граммовка, сервер пересчитает сам.
+ *  Различает их наличие kcal_per_100 — так же, как на бэке. */
+export interface DishPatch {
+  name: string;
+  grams: number;
+  kcal?: number;
+  protein_g?: number;
+  fat_g?: number;
+  carb_g?: number;
+  confidence?: number;
+  kcal_per_100?: number;
+  protein_per_100?: number;
+  fat_per_100?: number;
+  carb_per_100?: number;
+}
+
 export interface MealPatch {
-  dishes?: MealItem[];
+  dishes?: DishPatch[];
   eaten_at?: string;
   meal_type?: MealType;
 }
