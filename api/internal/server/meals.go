@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -89,6 +90,13 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+		return
+	}
+	// Ручной приём (JSON без фото) — отдельный путь: vision не вызывается, значит и
+	// пайплайн не нужен, и квота не списывается. Разводим по Content-Type, чтобы не
+	// заводить второй эндпоинт под ту же сущность «приём пищи».
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		s.handleMealManual(w, r, claims.UserID)
 		return
 	}
 	if s.mealPipe == nil {
@@ -562,4 +570,85 @@ func localDateFromForm(r *http.Request) string {
 		return ""
 	}
 	return day
+}
+
+// handleMealManual — POST /api/meals с JSON-телом: приём, вписанный руками, без фото.
+//
+// Зачем: фото было ЕДИНСТВЕННЫМ входом в дневник, и забытый снимок ужина ломал сразу
+// две вещи — дневную норму и серию. Ручной ввод закрывает дырку.
+//
+// Квота НЕ списывается: vision не вызывается, платить не за что. Пейволл продаёт
+// удобство фото, а не право вести дневник — юзер с исчерпанной квотой, который может
+// дописать ужин руками, скорее вернётся завтра, чем уйдёт.
+//
+// source='manual' на аналитику влияет, но НЕ на подсчёты: и meal_daily, и стрик
+// фильтруют только по status='ok' — вечерний ручной ужин спасает день наравне с фото,
+// ради чего фича и делается.
+func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID int64) {
+	ctx := r.Context()
+
+	var req struct {
+		Dishes   []dishInput `json:"dishes"`
+		MealType string      `json:"meal_type"`
+		EatenAt  *time.Time  `json:"eaten_at"`
+		Date     string      `json:"date"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "ожидается JSON {dishes, meal_type, date}")
+		return
+	}
+	if len(req.Dishes) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "добавьте хотя бы одно блюдо")
+		return
+	}
+	if req.MealType != "" {
+		if _, ok := validMealTypes[req.MealType]; !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "meal_type: breakfast|lunch|dinner|snack")
+			return
+		}
+	}
+	parsed, errMsg := parseDishes(req.Dishes)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, "bad_request", errMsg)
+		return
+	}
+	// Та же санитизация, что у распознанных: согласование ккал с БЖУ и серверный тотал.
+	dishes, total := meal.SanitizeDishes(parsed)
+	if len(dishes) == 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "блюда не распознаны как валидные")
+		return
+	}
+
+	// Локальный день клиента: без него вечерний приём у юзера не в UTC уехал бы во
+	// вчера — ровно тот дефект, ради которого заводили local_date.
+	localDate := ""
+	if req.Date != "" {
+		if day, dayErr := clientDay(req.Date); dayErr == "" {
+			localDate = day
+		}
+	}
+
+	itemsJSON, _ := json.Marshal(dishes)
+	id, err := s.store.InsertMeal(ctx, store.MealRow{
+		UserID: userID, Status: meal.StatusOK, Source: "manual", Items: itemsJSON,
+		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
+		MealType: req.MealType, EatenAt: req.EatenAt, LocalDate: localDate,
+	})
+	if err != nil {
+		s.log.Error("meal: сохранение ручного приёма", "err", err, "user", userID)
+		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
+		return
+	}
+	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes)})
+
+	// meals_left не трогаем: квота не списывалась. Отдаём актуальный остаток, чтобы
+	// фронт не пересчитывал его сам.
+	u, uerr := s.store.GetUserByID(ctx, userID)
+	left := -1
+	if uerr == nil {
+		left = remainingMeals(u)
+	}
+	writeJSON(w, http.StatusOK, mealResponse{
+		Status: meal.StatusOK, ID: id, Dishes: dishes, Total: &total, MealsLeft: left,
+	})
 }
