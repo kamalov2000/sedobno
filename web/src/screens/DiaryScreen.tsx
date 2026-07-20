@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MealsByDay, MealDaily, MealDiaryItem, NutritionProfile } from "../types";
-import { getMeals, getMealDays, deleteMeal } from "../api";
+import type { MealsByDay, MealDaily, MealDiaryItem, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
+import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
 import { MEAL_TYPE_ICONS, emptyMealWord, dayRingLine } from "../meal";
 import { haptic } from "../telegram";
 import MacroSegments from "../components/MacroSegments";
+import WaterCard from "../components/WaterCard";
+import WeightCard from "../components/WeightCard";
+import StreakFlame from "../components/StreakFlame";
 
 // Блок 2 · Дневник (финальный дизайн). День — кольцо/суммы прогресса, приёмы с иконками
 // типа, undo-снекбар при удалении; заголовок «Сегодня, 17 июля» / голая дата. Неделя —
@@ -18,6 +21,12 @@ interface Props {
   onShare?: (data: MealsByDay, profile?: NutritionProfile) => void;
   loadDay?: (day?: string) => Promise<MealsByDay>;
   loadWeek?: (from: string, to: string) => Promise<{ days: MealDaily[] }>;
+  /** Переход на экран веса. Не задан — карточка веса не показывается (превью/тесты). */
+  onOpenWeight?: () => void;
+  /** Сводка веса для карточки. Инъекция ради превью и тестов, как loadDay/loadWeek. */
+  loadWeight?: () => Promise<WeightResponse>;
+  /** Инкремент воды в мл. Инъекция по той же причине. */
+  saveWater?: (deltaMl: number, date: string) => Promise<WaterResponse>;
 }
 
 function addDays(day: string, n: number): string {
@@ -42,7 +51,11 @@ function weekdayShort(day: string): string {
 const fmtTime = (iso: string) => new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 const fmtInt = (v: number) => String(Math.round(v));
 
-export default function DiaryScreen({ onBack, profile, onOpenWizard, onShare, loadDay = getMeals, loadWeek = getMealDays }: Props) {
+export default function DiaryScreen({
+  onBack, profile, onOpenWizard, onShare,
+  loadDay = getMeals, loadWeek = getMealDays,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater,
+}: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
   const [today, setToday] = useState<string>("");
@@ -50,6 +63,9 @@ export default function DiaryScreen({ onBack, profile, onOpenWizard, onShare, lo
   const [week, setWeek] = useState<MealDaily[] | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [pending, setPending] = useState<MealDiaryItem | null>(null); // приём в очереди на удаление (undo)
+  // Сводка веса для карточки. Своим запросом, а не полем дневника: вес живёт своей
+  // жизнью (одна запись в неделю), и раздувать ответ дневника ради неё незачем.
+  const [weight, setWeight] = useState<WeightResponse | null>(null);
   const delTimer = useRef<number | null>(null);
 
   const hasNorm = profile?.filled === true;
@@ -85,6 +101,38 @@ export default function DiaryScreen({ onBack, profile, onOpenWizard, onShare, lo
     if (mode === "day") void fetchDay(day);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  // Сводка веса грузится один раз и не блокирует дневник: упавший запрос веса не
+  // должен ронять экран с едой — карточка просто не появится.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const w = await loadWeight();
+        if (alive) setWeight(w);
+      } catch {
+        /* карточка веса не показывается */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [loadWeight]);
+
+  // Вода: сервер возвращает актуальное значение дня, кладём его в дневник как есть —
+  // локально не пересчитываем, чтобы кламп (0…10000) считался в одном месте.
+  const onWater = useCallback(
+    async (deltaMl: number) => {
+      if (!data) return;
+      try {
+        const res = await saveWater(deltaMl, data.day);
+        setData((d) => (d ? { ...d, water_ml: res.water_ml, water_goal_ml: res.water_goal_ml } : d));
+      } catch {
+        /* молча: счётчик воды не стоит модалки с ошибкой */
+      }
+    },
+    [data, saveWater],
+  );
 
   const fetchWeek = useCallback(async () => {
     if (!today) return;
@@ -190,6 +238,11 @@ export default function DiaryScreen({ onBack, profile, onOpenWizard, onShare, lo
             onNext={() => goDay(1)}
             onTrash={onTrash}
             onOpenWizard={onOpenWizard}
+            water={data ? { ml: data.water_ml, goalMl: data.water_goal_ml } : undefined}
+            streak={data?.streak}
+            onWater={onWater}
+            weightSummary={weight?.summary}
+            onOpenWeight={onOpenWeight}
           />
         )}
         {mode === "week" && phase !== "error" && <WeekView week={week} target={hasNorm ? profile?.daily_kcal_target : undefined} loading={phase === "loading"} onPick={(d) => { setMode("day"); void fetchDay(d); }} />}
@@ -222,6 +275,11 @@ function DayView({
   onNext,
   onTrash,
   onOpenWizard,
+  water,
+  streak,
+  onWater,
+  weightSummary,
+  onOpenWeight,
 }: {
   day: string | null;
   today: string;
@@ -229,6 +287,11 @@ function DayView({
   total?: MealDaily;
   profile?: NutritionProfile;
   loading: boolean;
+  water?: { ml: number; goalMl: number };
+  streak?: Streak;
+  onWater: (deltaMl: number) => void | Promise<void>;
+  weightSummary?: WeightSummary;
+  onOpenWeight?: () => void;
   onPrev: () => void;
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
@@ -241,13 +304,19 @@ function DayView({
   return (
     <>
       {/* Навигация по дням */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 8 }}>
         <NavBtn icon="ti-chevron-left" onClick={onPrev} />
-        <span style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{day ? dayTitle(day, today) : "…"}</span>
+        <span style={{ flex: 1, textAlign: "center", fontSize: 16, fontWeight: 600, color: "var(--text)" }}>{day ? dayTitle(day, today) : "…"}</span>
+        {streak && <StreakFlame streak={streak} />}
         <NavBtn icon="ti-chevron-right" onClick={onNext} disabled={atToday} />
       </div>
 
       {total && !empty && (profile ? <RingCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} onOpenWizard={onOpenWizard} />)}
+
+      {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
+          поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
+      {water && <WaterCard waterMl={water.ml} goalMl={water.goalMl} onChange={onWater} />}
+      {weightSummary && onOpenWeight && <WeightCard summary={weightSummary} onOpen={onOpenWeight} />}
 
       {loading && empty && <Muted>Загружаем…</Muted>}
 
@@ -289,6 +358,10 @@ function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile:
   const target = profile.daily_kcal_target ?? 0;
   const eaten = Math.round(total.kcal);
   const pct = target > 0 ? Math.min(1, eaten / target) : 0;
+  // Перебор нормы: кольцо становится серым, а не красным. Съесть больше — не ошибка,
+  // и алармовый цвет тут врал бы. Прототип использует ту же логику (--text2).
+  const over = target > 0 && eaten > target;
+  const ringColor = over ? "var(--text2)" : "var(--cal)";
   const ringC = 2 * Math.PI * 52;
   const off = ringC * (1 - pct);
   const rightLine = dayRingLine(eaten, target);
@@ -299,12 +372,12 @@ function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile:
       <div style={{ position: "relative", width: 112, height: 112, flex: "none" }}>
         <svg width="112" height="112" viewBox="0 0 120 120" style={{ display: "block" }}>
           <circle cx="60" cy="60" r="52" fill="none" stroke="var(--bg)" strokeWidth="11" />
-          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--cal)" strokeWidth="11" strokeLinecap="round" strokeDasharray={ringC.toFixed(1)} strokeDashoffset={off.toFixed(1)} transform="rotate(-90 60 60)" />
+          <circle cx="60" cy="60" r="52" fill="none" stroke={ringColor} strokeWidth="11" strokeLinecap="round" strokeDasharray={ringC.toFixed(1)} strokeDashoffset={off.toFixed(1)} transform="rotate(-90 60 60)" />
         </svg>
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
           <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 27, lineHeight: 1, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{eaten}</span>
           <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 9.5, color: "var(--text3)", marginTop: 2 }}>ккал</span>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--cal-num)", marginTop: 1 }}>{Math.round(pct * 100)}%</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: over ? "var(--text2)" : "var(--cal-num)", marginTop: 1 }}>{Math.round(pct * 100)}%</span>
         </div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>

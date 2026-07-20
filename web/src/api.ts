@@ -19,6 +19,8 @@ import type {
   Sex,
   ActivityLevel,
   Goal,
+  WeightResponse,
+  WaterResponse,
 } from "./types";
 
 let token: string | null = null;
@@ -243,6 +245,51 @@ export async function patchProfileNutrition(body: NutritionProfilePatch): Promis
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+// --- Вес и вода (спринт 2). Бесплатные: ни квот, ни пейволла. ---
+
+/** Локальный день пользователя. Сервер верит клиенту (иначе таймзоны ломают границу
+ *  дня) и валидирует окном [сегодня−7, сегодня+1]. Считаем по локальному времени
+ *  устройства, а не по UTC — в этом весь смысл поля. */
+export function localDay(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** GET /api/weight?range=30d|90d|all — точки графика по возрастанию даты + сводка. */
+export async function getWeight(range: "30d" | "90d" | "all" = "90d"): Promise<WeightResponse> {
+  const res = await apiFetch(`/api/weight?range=${range}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** POST /api/weight — upsert по дню: повторное взвешивание перезаписывает точку. */
+export async function postWeight(weightKg: number, date = localDay()): Promise<WeightResponse> {
+  const res = await apiFetch("/api/weight", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ weight_kg: weightKg, date }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** DELETE /api/weight/{date} — удалить запись дня (опечатки случаются). */
+export async function deleteWeight(date: string): Promise<void> {
+  const res = await apiFetch(`/api/weight/${date}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+}
+
+/** POST /api/water — инкремент дня. Сервер принимает строго ±250 мл. */
+export async function addWater(deltaMl: number, date = localDay()): Promise<WaterResponse> {
+  const res = await apiFetch("/api/water", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_ml: deltaMl, date }),
   });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();

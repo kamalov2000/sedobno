@@ -48,3 +48,91 @@ describe("DiaryScreen — рендер с профилем и без", () => {
     expect(screen.queryByText("Рассчитать мою норму")).toBeNull();
   });
 });
+
+// --- Спринт 2: вода, серия, перебор нормы ---
+
+import { makeDiary, makeEmptyDiary, makeWeight, makeProfile } from "../fixtures";
+import type { WeightResponse, WaterResponse } from "../types";
+
+const noWeight = async (): Promise<WeightResponse> => ({ points: [], summary: { current_kg: null, goal_kg: null, delta_week: null, trending_to_goal: null, goal: null } });
+const noWater = async (): Promise<WaterResponse> => ({ day: "2026-07-20", water_ml: 0, water_goal_ml: 2000 });
+
+describe("DiaryScreen — вода и серия", () => {
+  it("вода: показывает налитые стаканы из миллилитров", async () => {
+    // 1250 мл при норме 2000 и восьми стаканах = 5 стаканов.
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("under", { waterMl: 1250 })}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    expect(await screen.findByText(/из 8 ст\./)).toBeTruthy();
+    expect(screen.getByText("5")).toBeTruthy();
+  });
+
+  it("серия: огонёк показывает число дней", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("under", { streakDays: 12, todayLogged: true })}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    expect(await screen.findByTitle("Серия ведения дневника")).toBeTruthy();
+  });
+
+  it("прощающая серия: сегодня не отмечено — огонёк тусклый, но серия жива", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeEmptyDiary()}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    const flame = await screen.findByTitle("Серия жива — сегодня ещё не отмечено");
+    expect(flame.textContent).toContain("4");
+  });
+
+  it("нулевая серия не рисуется вовсе", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("under", { streakDays: 0, todayLogged: false })}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    await screen.findByText(/из 8 ст\./);
+    expect(screen.queryByTitle(/Серия/)).toBeNull();
+  });
+});
+
+describe("DiaryScreen — перебор дневной нормы", () => {
+  it("день сверх нормы: подпись «перебор», кольцо не акцентного цвета", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("over")}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    expect(await screen.findByText(/перебор/)).toBeTruthy();
+    // Кольцо перебора серое (--text2), а не акцентное (--cal): переесть — не ошибка,
+    // алармовый цвет тут врал бы.
+    const ring = document.querySelector('circle[stroke="var(--text2)"]');
+    expect(ring).toBeTruthy();
+  });
+
+  it("день в пределах нормы: кольцо акцентное", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("under")}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    await screen.findByText(/осталось/);
+    expect(document.querySelector('circle[stroke="var(--cal)"]')).toBeTruthy();
+    expect(document.querySelector('circle[stroke="var(--text2)"]')).toBeNull();
+  });
+});
+
+describe("DiaryScreen — карточка веса", () => {
+  it("показывается только когда есть переход на экран веса", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()} onOpenWeight={noop}
+        loadDay={async () => makeDiary("under")}
+        loadWeek={weekData} loadWeight={async () => makeWeight("lose")} saveWater={noWater} />,
+    );
+    expect(await screen.findByText("72,4")).toBeTruthy();
+    expect(screen.getByText(/за неделю/)).toBeTruthy();
+  });
+});

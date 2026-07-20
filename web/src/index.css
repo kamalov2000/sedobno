@@ -210,3 +210,14 @@ body {
   transform: translateY(1px);
   background: var(--accent-press);
 }
+
+/* Пульсация огонька серии. Включается только когда сегодняшний день отмечен —
+   на непотверждённом дне анимация поощряла бы бездействие. Уважает
+   prefers-reduced-motion, как и остальные движения в проекте. */
+@keyframes sjstreak {
+  0%, 100% { transform: scale(1); filter: none; }
+  45% { transform: scale(1.18); filter: drop-shadow(0 0 5px var(--cal)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  @keyframes sjstreak { 0%, 100% { transform: none; filter: none; } }
+}
