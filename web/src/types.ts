@@ -14,10 +14,17 @@ export interface NutritionProfile {
   weight_kg?: number;
   activity_level?: ActivityLevel;
   goal?: Goal;
+  /** Цель по весу числом (миграция 0013). Отдельно от goal: то направление, это число.
+   *  Может отсутствовать при заданном направлении — «держать текущий» числа не требует. */
+  goal_weight_kg?: number;
   daily_kcal_target?: number;
   daily_protein_g?: number;
   daily_fat_g?: number;
   daily_carb_g?: number;
+  /** Код предупреждения от PATCH профиля: goal_conflict — направление и число цели
+   *  противоречат текущему весу (худею, но цель выше). Не ошибка: профиль сохранён,
+   *  показывать подсказку или нет — решает экран. */
+  warning?: string;
 }
 
 /** GET /api/me и authResponse.me */
@@ -176,11 +183,58 @@ export interface MealDaily {
   carb_g: number;
 }
 
-/** GET /api/meals?day= — дневник за день: агрегат + приёмы. */
+/** Серия ведения дневника. Прощающая: пустой сегодняшний день серию НЕ обнуляет,
+ *  обнуляет только пропущенный завершившийся. today_logged гасит огонёк, пока сегодня
+ *  пусто — то есть «серия жива, но сегодня ещё не отмечено». */
+export interface Streak {
+  days: number;
+  today_logged: boolean;
+}
+
+/** GET /api/meals?day= — дневник за день: агрегат + приёмы + вода и серия.
+ *  Вода и серия приходят здесь, а не отдельными запросами: экран показывает их
+ *  вместе, и три источника дали бы три состояния загрузки на одном экране. */
 export interface MealsByDay {
   day: string;
   total: MealDaily;
   items: MealDiaryItem[];
+  water_ml: number;
+  water_goal_ml: number; // норма с сервера (2000); фронт константу не знает
+  streak: Streak;
+}
+
+/** Точка графика веса. */
+export interface WeighIn {
+  weight_kg: number;
+  date: string; // YYYY-MM-DD
+  created_at: string;
+}
+
+/** Сводка веса. Всё считает сервер, чтобы правило «зелёная стрелка или серая» не
+ *  жило в двух местах. Фронт только красит по trending_to_goal.
+ *  goal_kg — числовая цель из профиля (может отсутствовать: при «держать текущий»
+ *  число не нужно). delta_week — разница с ближайшей записью ≥7 дней назад; null,
+ *  когда истории мало. trending_to_goal — null, если цель не задана: красить нечего. */
+export interface WeightSummary {
+  current_kg: number | null;
+  goal_kg: number | null;
+  delta_week: number | null;
+  trending_to_goal: boolean | null;
+  goal: Goal | null;
+}
+
+/** GET /api/weight и POST /api/weight. entry приходит только у POST, points — у GET. */
+export interface WeightResponse {
+  entry?: WeighIn;
+  points?: WeighIn[];
+  summary: WeightSummary;
+}
+
+/** POST /api/water. */
+export interface WaterResponse {
+  day: string;
+  water_ml: number;
+  water_goal_ml: number;
 }
 
 /** GET /api/meals/days?from&to — дневные агрегаты за период (недельный экран). */

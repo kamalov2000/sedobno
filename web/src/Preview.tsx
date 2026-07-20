@@ -109,6 +109,9 @@ const diaryDay = async (): Promise<MealsByDay> => ({
     { id: 1, eaten_at: "2026-07-17T09:10:00Z", created_at: "2026-07-17T09:10:00Z", status: "ok", source: "photo", meal_type: "breakfast", edited: false, dishes: [{ name: "Овсянка с бананом", grams: 250, kcal: 318, protein_g: 8, fat_g: 6, carb_g: 58, confidence: 0.8 }], total: { kcal: 318, protein_g: 8, fat_g: 6, carb_g: 58 } },
     { id: 2, eaten_at: "2026-07-17T14:20:00Z", created_at: "2026-07-17T14:20:00Z", status: "ok", source: "photo", meal_type: "lunch", edited: true, dishes: [{ name: "Борщ", grams: 300, kcal: 172, protein_g: 5, fat_g: 8, carb_g: 20, confidence: 0.8 }, { name: "Гречка с котлетой", grams: 250, kcal: 490, protein_g: 29, fat_g: 19, carb_g: 30, confidence: 0.6 }], total: { kcal: 662, protein_g: 34, fat_g: 27, carb_g: 50 } },
   ],
+  water_ml: 1000,
+  water_goal_ml: 2000,
+  streak: { days: 12, today_logged: true },
 });
 const diaryWeek = async (): Promise<MealDays> => ({
   days: [

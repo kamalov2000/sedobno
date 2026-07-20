@@ -12,6 +12,10 @@ const dayData = async (): Promise<MealsByDay> => ({
   items: [
     { id: 1, eaten_at: "2026-07-17T09:00:00Z", created_at: "2026-07-17T09:00:00Z", status: "ok", source: "photo", edited: false, dishes: [{ name: "Каша", grams: 200, kcal: 300, protein_g: 8, fat_g: 6, carb_g: 55, confidence: 0.8 }], total: { kcal: 300, protein_g: 8, fat_g: 6, carb_g: 55 } },
   ],
+  // Вода и серия приходят тем же ответом дневника (спринт 2).
+  water_ml: 750,
+  water_goal_ml: 2000,
+  streak: { days: 5, today_logged: true },
 });
 const weekData = async (): Promise<MealDays> => ({ days: [] });
 
