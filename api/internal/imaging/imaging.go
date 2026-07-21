@@ -26,6 +26,12 @@ func Normalize(data []byte, maxDim, quality int) ([]byte, error) {
 	if err != nil {
 		return nil, ErrDecode
 	}
+	// EXIF orientation — ДО ресайза: телефонные кадры приходят пиксельно-боком с тегом
+	// поворота, который image.Decode игнорирует. Без этого модель получала кадр боком и
+	// галлюцинировала на повёрнутом тексте. Тег есть только у JPEG; иначе o==1 (no-op).
+	if o := exifOrientation(data); o > 1 {
+		img = applyOrientation(img, o)
+	}
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w <= 0 || h <= 0 {
