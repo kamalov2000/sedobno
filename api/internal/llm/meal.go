@@ -165,3 +165,30 @@ func NewMealAnalyzer(cfg *config.Config) (MealAnalyzer, error) {
 		return nil, fmt.Errorf("неизвестный LLM_PROVIDER: %s", cfg.LLMProvider)
 	}
 }
+
+// NewMealEscalationAnalyzer собирает СИЛЬНЫЙ vision-провайдер модуля калорий (Sonnet) для
+// эскалации разбора. Зеркалит NewExtractFallback сканера: только anthropic, отдельный
+// клиент на модели MealEscalationModel, имя "anthropic-meal-strong" (отличимо в метрике
+// от основного "anthropic-meal"). nil — эскалация недоступна: не anthropic, нет ключа,
+// модель не задана или совпадает с основной (эскалировать не на что).
+func NewMealEscalationAnalyzer(cfg *config.Config) MealAnalyzer {
+	if cfg.LLMProvider != "anthropic" || cfg.AnthropicAPIKey == "" {
+		return nil
+	}
+	model := strings.TrimSpace(cfg.MealEscalationModel)
+	base := strings.TrimSpace(cfg.MealVisionModel)
+	if base == "" {
+		base = cfg.AnthropicVisionModel
+	}
+	if model == "" || model == base {
+		return nil
+	}
+	timeout := time.Duration(cfg.LLMTimeoutSec) * time.Second
+	return &anthropicClient{
+		http:    newHTTPClient(timeout),
+		baseURL: strings.TrimRight(cfg.AnthropicBaseURL, "/"),
+		apiKey:  cfg.AnthropicAPIKey, version: cfg.AnthropicVersion,
+		visionModel: model, textModel: model,
+		name: "anthropic-meal-strong", usdRUB: cfg.LLMUSDRUB, timeout: timeout, maxTokens: 2048,
+	}
+}

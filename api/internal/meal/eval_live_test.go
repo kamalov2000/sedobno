@@ -106,7 +106,9 @@ func runModel(t *testing.T, base config.Config, ms modelSpec, dir string, files 
 	if err != nil {
 		t.Fatalf("[%s] сборка провайдера: %v", ms.name, err)
 	}
-	pipe := meal.New(analyzer, 4, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Калибровочный харнесс гоняет каждую модель как основную, без эскалации: нам нужен
+	// «чистый» разбор каждой модели по отдельности, а не составной пайплайн.
+	pipe := meal.New(analyzer, nil, "off", 4, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	out := make([]imgResult, 0, len(files))
 	for _, f := range files {

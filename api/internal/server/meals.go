@@ -186,7 +186,7 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		UserID: u.ID, Status: res.Status, Source: "photo", Items: itemsJSON,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
-		LocalDate: localDate,
+		LocalDate: localDate, Escalated: res.Escalated, EscalationTrigger: res.EscalationTrigger,
 	})
 	if err != nil {
 		s.log.Error("meal: сохранение приёма", "err", err, "user", u.ID)
@@ -206,9 +206,14 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 			left = 0 // гонка увела за лимит между пре-чеком и списанием
 		}
 	}
-	// meal_ok: калорийность всегда; на бете (MealDiagVerbose) — полный результат
-	// распознавания для калибровочного датасета (что модель увидела до правок юзера).
+	// meal_ok: калорийность всегда; факт эскалации — тоже всегда (лёгкая метрика, нужна
+	// и в проде без verbose). На бете (MealDiagVerbose) — полный результат распознавания
+	// для калибровочного датасета (что модель увидела до правок юзера).
 	props := map[string]any{"kcal": res.Total.Kcal}
+	if res.Escalated {
+		props["escalated"] = true
+		props["escalation_trigger"] = res.EscalationTrigger
+	}
 	if s.cfg.MealDiagVerbose {
 		props["meal_id"] = id
 		props["provider"] = res.Provider

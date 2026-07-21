@@ -52,6 +52,10 @@ type MealRow struct {
 	// Пусто — день выводится из eaten_at по Europe/Moscow, как до спринта 2: старые
 	// клиенты продолжают работать без изменений.
 	LocalDate string
+	// Escalated — разбор ушёл на сильную модель; EscalationTrigger — рисковое имя (или
+	// "always"). Только для source='photo'; ручной приём их не ставит. Метрика admin/stats.
+	Escalated         bool
+	EscalationTrigger string
 }
 
 // nilIfEmpty превращает пустую строку в NULL — чтобы COALESCE в INSERT отработал
@@ -111,15 +115,80 @@ func scanMeal(row pgx.Row) (Meal, error) {
 func (s *Store) InsertMeal(ctx context.Context, m MealRow) (int64, error) {
 	const q = `
 INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fat_g, carb_g,
-                   confidence, meal_type, provider, latency_ms, cost_estimate, local_date)
+                   confidence, meal_type, provider, latency_ms, cost_estimate, local_date,
+                   escalated, escalation_trigger)
 VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14,
-        COALESCE($15::date, (COALESCE($2, now()) AT TIME ZONE 'Europe/Moscow')::date))
+        COALESCE($15::date, (COALESCE($2, now()) AT TIME ZONE 'Europe/Moscow')::date),
+        $16, NULLIF($17, ''))
 RETURNING id`
 	var id int64
 	err := s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
 		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB,
-		nilIfEmpty(m.LocalDate)).Scan(&id)
+		nilIfEmpty(m.LocalDate), m.Escalated, m.EscalationTrigger).Scan(&id)
 	return id, err
+}
+
+// MealEscalationStat — строка сводки эскалаций для admin/stats: по каждому рисковому
+// классу сколько эскалаций и сколько из них юзер потом правил (edited). Высокая доля
+// правок = эскалация не спасла (Sonnet тоже ошибся или ошибка в другом блюде); низкая =
+// класс распознаётся верно после эскалации.
+type MealEscalationStat struct {
+	Trigger string
+	Count   int
+	Edited  int
+}
+
+// MealEscalationSummary — агрегат для решения risky→always: сколько фото-разборов всего,
+// сколько эскалировано, edit-rate у эскалированных против не-эскалированных, разбивка по
+// классам. Правка (edited) — прокси «модель ошиблась»: если эскалированные приёмы правят
+// РЕЖЕ не-эскалированных, эскалация ловит реальные ошибки; если так же/чаще — жжём Sonnet
+// впустую.
+type MealEscalationSummary struct {
+	PhotoTotal      int
+	Escalated       int
+	EscalatedEdited int
+	NonEscalated    int
+	NonEscEdited    int
+	ByTrigger       []MealEscalationStat
+}
+
+// MealEscalationStats собирает сводку эскалаций по всем фото-разборам (source='photo').
+func (s *Store) MealEscalationStats(ctx context.Context) (MealEscalationSummary, error) {
+	var sum MealEscalationSummary
+	const agg = `
+SELECT
+  count(*)                                                        AS photo_total,
+  count(*) FILTER (WHERE escalated)                               AS escalated,
+  count(*) FILTER (WHERE escalated AND edited)                    AS escalated_edited,
+  count(*) FILTER (WHERE NOT escalated)                           AS non_escalated,
+  count(*) FILTER (WHERE NOT escalated AND edited)                AS non_esc_edited
+FROM meals WHERE source = 'photo'`
+	if err := s.pool.QueryRow(ctx, agg).Scan(
+		&sum.PhotoTotal, &sum.Escalated, &sum.EscalatedEdited, &sum.NonEscalated, &sum.NonEscEdited); err != nil {
+		return MealEscalationSummary{}, err
+	}
+
+	const byTrigger = `
+SELECT COALESCE(escalation_trigger, '?') AS trigger,
+       count(*)                          AS cnt,
+       count(*) FILTER (WHERE edited)    AS edited
+FROM meals
+WHERE source = 'photo' AND escalated
+GROUP BY escalation_trigger
+ORDER BY cnt DESC, trigger`
+	rows, err := s.pool.Query(ctx, byTrigger)
+	if err != nil {
+		return MealEscalationSummary{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st MealEscalationStat
+		if err := rows.Scan(&st.Trigger, &st.Count, &st.Edited); err != nil {
+			return MealEscalationSummary{}, err
+		}
+		sum.ByTrigger = append(sum.ByTrigger, st)
+	}
+	return sum, rows.Err()
 }
 
 // GetMeal читает приём по id (для проверки владения и правки). pgx.ErrNoRows — нет такого.

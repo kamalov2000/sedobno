@@ -425,3 +425,67 @@ func TestListMealsHistory_ВладениеИФлагПравки(t *testing.T) {
 		t.Error("после правки история отдаёт edited=false")
 	}
 }
+
+// Метрика эскалации: InsertMeal сохраняет escalated/trigger, а MealEscalationStats
+// агрегирует их по фото-разборам и считает edit-rate у эскалированных против обычных —
+// ровно те числа, по которым решается risky→always.
+func TestMealEscalationStats(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2020)
+	at := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+
+	// Хелпер: вставить фото-разбор с флагом эскалации и (опц.) сразу пометить edited.
+	insert := func(escalated bool, trigger string, edited bool) {
+		row := okMealRow(uid, at, 200)
+		row.Escalated = escalated
+		row.EscalationTrigger = trigger
+		id, err := s.InsertMeal(ctx, row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if edited {
+			items, _ := json.Marshal([]map[string]any{{"name": "правка", "grams": 100, "kcal": 100}})
+			if _, err := s.UpdateMeal(ctx, id, uid, items, fptr(100), fptr(1), fptr(1), fptr(1), nil, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Эскалированные по «бекон»: 3 шт, из них 1 правлена (Sonnet не спас 1 из 3).
+	insert(true, "бекон", true)
+	insert(true, "бекон", false)
+	insert(true, "бекон", false)
+	// Эскалированные по «креветк»: 1 шт, не правлена.
+	insert(true, "креветк", false)
+	// НЕ эскалированные: 4 шт, из них 3 правлены (обычные разборы правят чаще).
+	insert(false, "", true)
+	insert(false, "", true)
+	insert(false, "", true)
+	insert(false, "", false)
+
+	sum, err := s.MealEscalationStats(ctx)
+	if err != nil {
+		t.Fatalf("MealEscalationStats: %v", err)
+	}
+	if sum.PhotoTotal != 8 || sum.Escalated != 4 {
+		t.Fatalf("total=%d escalated=%d, ждали 8/4", sum.PhotoTotal, sum.Escalated)
+	}
+	if sum.EscalatedEdited != 1 {
+		t.Errorf("escalated_edited=%d, ждали 1", sum.EscalatedEdited)
+	}
+	if sum.NonEscalated != 4 || sum.NonEscEdited != 3 {
+		t.Errorf("non_esc=%d/%d, ждали 4/3", sum.NonEscalated, sum.NonEscEdited)
+	}
+	// edit-rate: эскалированные 1/4=0.25, обычные 3/4=0.75 → gap положительный (эскалация
+	// ловит реальные ошибки на этом наборе).
+	if len(sum.ByTrigger) != 2 {
+		t.Fatalf("триггеров=%d, ждали 2 (бекон, креветк)", len(sum.ByTrigger))
+	}
+	// Порядок — по убыванию count: бекон(3) первым.
+	if sum.ByTrigger[0].Trigger != "бекон" || sum.ByTrigger[0].Count != 3 || sum.ByTrigger[0].Edited != 1 {
+		t.Errorf("топ-триггер=%+v, ждали бекон/3/1", sum.ByTrigger[0])
+	}
+	if sum.ByTrigger[1].Trigger != "креветк" || sum.ByTrigger[1].Count != 1 {
+		t.Errorf("второй триггер=%+v, ждали креветк/1", sum.ByTrigger[1])
+	}
+}

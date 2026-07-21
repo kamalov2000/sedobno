@@ -48,52 +48,116 @@ type Result struct {
 	LatencyMs  int64
 	CostRUB    float64
 	Usage      llm.Usage
+	// Escalated — разбор ушёл на сильную модель (Sonnet): в режиме always всегда, в
+	// risky — когда основная модель вернула рисковый класс. EscalationTrigger — рисковое
+	// имя, вызвавшее эскалацию (или "always"); пусто, если эскалации не было. Оба поля —
+	// сырьё метрики admin/stats: на каких классах жжём Sonnet и ловим ли реальные ошибки.
+	Escalated         bool
+	EscalationTrigger string
 }
 
-// Pipeline держит vision-провайдера и конкурентный лимит на LLM-вызовы (реюз механизма
-// сканера: неблокирующий шлюз допуска → ErrBusy).
+// Pipeline держит vision-провайдера, опциональную сильную модель для эскалации и
+// конкурентный лимит на LLM-вызовы (реюз механизма сканера: неблокирующий шлюз → ErrBusy).
 type Pipeline struct {
 	analyzer llm.MealAnalyzer
+	fallback llm.MealAnalyzer // сильная модель (Sonnet); nil — эскалация недоступна
+	mode     string           // off|risky|always
 	log      *slog.Logger
 	sem      chan struct{}
 }
 
-// New собирает пайплайн калорий. maxConcurrent — семафор на vision-вызовы.
-func New(analyzer llm.MealAnalyzer, maxConcurrent int, log *slog.Logger) *Pipeline {
+// New собирает пайплайн калорий. fallback — сильная модель для эскалации (nil выключает
+// её; тогда любой режим ведёт себя как off). mode — off|risky|always. maxConcurrent —
+// семафор на vision-вызовы (общий на основной и эскалационный вызовы).
+func New(analyzer, fallback llm.MealAnalyzer, mode string, maxConcurrent int, log *slog.Logger) *Pipeline {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 20
 	}
-	return &Pipeline{analyzer: analyzer, log: log, sem: make(chan struct{}, maxConcurrent)}
+	if mode == "" {
+		mode = "off"
+	}
+	return &Pipeline{analyzer: analyzer, fallback: fallback, mode: mode, log: log, sem: make(chan struct{}, maxConcurrent)}
 }
 
 // Run прогоняет 1–3 фото одного приёма пищи через vision-разбор, валидирует числа и
 // возвращает статус. Все кадры уходят одним vision-вызовом (склейка одного приёма).
+//
+// Эскалация на сильную модель (Sonnet):
+//   - always — основной проход СРАЗУ идёт сильной моделью (один вызов, не два);
+//   - risky  — сначала дешёвый Haiku; если он вернул ok с рисковым классом среди блюд,
+//     тот же кадр перепрогоняется сильной моделью, и её результат замещает Haiku;
+//   - off / нет fallback — только основная модель, как было by design.
 func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error) {
 	start := time.Now()
-	res := &Result{Provider: p.analyzer.Name(), Status: StatusError}
 
-	// Шлюз допуска (§15): нет свободного слота → сразу ErrBusy, не занимая очередь.
-	// Работа не начиналась — без стоимости и без записи в БД (решает хендлер).
-	if !p.tryAcquire() {
-		return res, ErrBusy
+	// always: основной проход — сразу сильной моделью (если она есть).
+	primary := p.analyzer
+	alwaysStrong := p.mode == "always" && p.fallback != nil
+	if alwaysStrong {
+		primary = p.fallback
 	}
-	ma, usage, err := func() (*llm.MealAnalysis, llm.Usage, error) {
-		defer p.release()
-		return p.analyzer.AnalyzeMeal(ctx, images)
-	}()
+
+	res := &Result{Provider: primary.Name(), Status: StatusError}
+	ma, usage, err := p.callGated(ctx, primary, images)
 	res.Usage = usage
-	res.CostRUB = p.analyzer.CostRUB(usage, llm.Usage{})
+	res.CostRUB = primary.CostRUB(usage, llm.Usage{})
 	if err != nil {
 		res.LatencyMs = time.Since(start).Milliseconds()
-		return res, err
+		return res, err // ErrBusy или ошибка модели — решает хендлер
+	}
+	applyAnalysis(res, ma)
+	if alwaysStrong {
+		res.Escalated = true
+		res.EscalationTrigger = "always"
 	}
 
+	// risky: эскалируем, только если дешёвый проход дал ok с рисковым именем блюда.
+	if p.mode == "risky" && p.fallback != nil && res.Status == StatusOK {
+		if trigger := firstRiskyName(res.Dishes, func(d llm.MealItem) string { return d.Name }); trigger != "" {
+			fbMa, fbUsage, fbErr := p.callGated(ctx, p.fallback, images)
+			if fbErr != nil {
+				// Sonnet перегружен/упал — оставляем Haiku-результат: он лучше ошибки, и за
+				// его вызов уже заплачено. Приём НЕ помечаем как escalated (эскалация не
+				// состоялась), но фиксируем в логе для метрики промахов.
+				p.log.Warn("meal: эскалация не удалась, оставляю основной результат",
+					"err", fbErr, "trigger", trigger)
+			} else {
+				strong := &Result{Provider: p.fallback.Name(), Status: StatusError}
+				applyAnalysis(strong, fbMa)
+				strong.Usage = fbUsage
+				// Стоимость — за ОБА вызова: заплатили и Haiku, и Sonnet.
+				strong.CostRUB = res.CostRUB + p.fallback.CostRUB(fbUsage, llm.Usage{})
+				strong.Escalated = true
+				strong.EscalationTrigger = trigger
+				strong.LatencyMs = time.Since(start).Milliseconds()
+				return strong, nil
+			}
+		}
+	}
+
+	res.LatencyMs = time.Since(start).Milliseconds()
+	return res, nil
+}
+
+// callGated делает один vision-вызов под шлюзом допуска (§15): нет свободного слота →
+// ErrBusy, работа не начиналась. Общий семафор на основной и эскалационный проходы.
+func (p *Pipeline) callGated(ctx context.Context, a llm.MealAnalyzer, images []llm.Image) (*llm.MealAnalysis, llm.Usage, error) {
+	if !p.tryAcquire() {
+		return nil, llm.Usage{}, ErrBusy
+	}
+	defer p.release()
+	return a.AnalyzeMeal(ctx, images)
+}
+
+// applyAnalysis переносит vision-ответ в Result: confidence/note, маппинг статуса и
+// серверную санитизацию блюд. Общий код основного и эскалационного проходов.
+//
+// Проверка этикетки — ПЕРВОЙ: это самый действенный редирект («переключитесь на сканер
+// составов»), и он важнее вопроса is_food (у упаковки еды is_food может быть любым).
+// Затем — «не еда»; затем — валидные блюда → ok.
+func applyAnalysis(res *Result, ma *llm.MealAnalysis) {
 	res.Confidence = clamp01(ma.Confidence)
 	res.Note = strings.TrimSpace(ma.Note)
-
-	// Маппинг статуса. Проверка этикетки — ПЕРВОЙ: это самый действенный редирект
-	// («переключитесь на сканер составов»), и он важнее вопроса is_food (у упаковки еды
-	// is_food может быть любым). Затем — «не еда»; затем — валидные блюда → ok.
 	switch {
 	case ma.LooksLikeLabel:
 		res.Status = StatusLabelDetected
@@ -105,15 +169,12 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			// Модель сказала «еда», но ни одного пригодного блюда не распозналось —
 			// показывать нечего, лимит не списываем (как not_food).
 			res.Status = StatusNotFood
-			break
+			return
 		}
 		res.Dishes = dishes
 		res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
 		res.Status = StatusOK
 	}
-
-	res.LatencyMs = time.Since(start).Milliseconds()
-	return res, nil
 }
 
 // sanitizeDishes чистит блюда из vision-ответа: обрезает отрицательные/мусорные числа,

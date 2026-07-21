@@ -137,14 +137,25 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	return pipe, nil
 }
 
-// buildMealPipeline собирает пайплайн модуля калорий: vision-провайдер (MealVisionModel
-// или дефолтная vision-модель провайдера) + семафор конкурентности. Отдельно от сканера.
+// buildMealPipeline собирает пайплайн модуля калорий: основной vision-провайдер
+// (MealVisionModel или дефолт), сильная модель для эскалации (Sonnet) и режим эскалации.
+// Отдельно от сканера.
 func buildMealPipeline(cfg *config.Config, log *slog.Logger) (*meal.Pipeline, error) {
 	analyzer, err := llm.NewMealAnalyzer(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("инициализация vision-провайдера калорий: %w", err)
 	}
-	return meal.New(analyzer, cfg.LLMMaxConcurrent, log), nil
+	// Эскалация доступна только на anthropic и при заданной сильной модели (см.
+	// NewMealEscalationAnalyzer). nil → пайплайн работает как off независимо от режима.
+	fallback := llm.NewMealEscalationAnalyzer(cfg)
+	mode := cfg.MealEscalationMode
+	if fallback == nil && mode != "off" {
+		log.Warn("meal: эскалация недоступна (нет сильной модели/не anthropic) — режим падает на off",
+			"requested_mode", mode)
+		mode = "off"
+	}
+	log.Info("meal: пайплайн калорий", "escalation_mode", mode, "escalation_available", fallback != nil)
+	return meal.New(analyzer, fallback, mode, cfg.LLMMaxConcurrent, log), nil
 }
 
 // healthcheck дёргает локальный /api/health и завершает процесс с кодом 0/1.

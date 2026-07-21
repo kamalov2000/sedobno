@@ -62,6 +62,23 @@ type Config struct {
 	// более сильной модели (Sonnet) без влияния на сканер составов.
 	MealVisionModel string
 
+	// MealEscalationMode — режим эскалации разбора еды на сильную модель (Sonnet).
+	// Диагностика тестеров показала: единственная систематическая ошибка Haiku
+	// (кимчи→бекон, курица→креветки — визуальный прайор на «рисковые» классы) НЕ ловится
+	// ни по confidence (Haiku overconfident: 0.85 на ошибке), ни двойным проходом (temp=0
+	// детерминирован). Рабочий сигнал — само ИМЯ блюда, которое вернул Haiku: если это
+	// рисковый класс (бекон/креветки/нарезка/…), перепроверяем на Sonnet.
+	//   off    — только Haiku, как было by design;
+	//   risky  — эскалация на Sonnet, когда среди блюд Haiku есть рисковое имя (дефолт);
+	//   always — всегда Sonnet (дороже ×2.8, но чинит распознавание и калибрует confidence).
+	// Смена режима — одна переменная, без правки кода: если risky не вытянет по метрике
+	// (admin/stats), переключаем на always мгновенно.
+	MealEscalationMode string
+
+	// MealEscalationModel — сильная модель для эскалации разбора еды. Только anthropic;
+	// пусто или совпадение с основной моделью → эскалация недоступна (режим падает на off).
+	MealEscalationModel string
+
 	// ExplainEnabled — включает фазу 4 (LLM-объяснение, §4). По умолчанию ВЫКЛ: фронт
 	// его не показывает, а каждый ok-скан из-за него делал лишний text-LLM-вызов. При
 	// false пайплайн пропускает фазу целиком, result.explanation пустой (контракт цел).
@@ -179,6 +196,22 @@ func MustLoad() *Config {
 
 		// Пусто → NewMealAnalyzer возьмёт дефолтную vision-модель провайдера.
 		MealVisionModel: opt("MEAL_VISION_MODEL", ""),
+
+		// Дефолт risky: включаем вариант A сразу, метрика в admin/stats покажет, вытягивает
+		// ли он. Модель эскалации — Sonnet, та же, что fallback сканера.
+		MealEscalationMode:  opt("MEAL_ESCALATION_MODE", "risky"),
+		MealEscalationModel: opt("MEAL_ESCALATION_MODEL", "claude-sonnet-5"),
+	}
+
+	// Режим эскалации — из закрытого множества; мусор в переменной не должен молча
+	// превратиться в неожиданное поведение, поэтому неизвестное значение → дефолт risky
+	// с предупреждением (не фатально: сервис поднимется на разумном дефолте).
+	switch cfg.MealEscalationMode {
+	case "off", "risky", "always":
+		// ок
+	default:
+		invalid = append(invalid, fmt.Sprintf("MEAL_ESCALATION_MODE=%q не из {off,risky,always} — беру risky", cfg.MealEscalationMode))
+		cfg.MealEscalationMode = "risky"
 	}
 
 	// 40 — по замерам нагрузочного стенда: на потолке 20 отшивалось ~29% запросов при

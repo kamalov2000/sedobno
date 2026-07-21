@@ -35,7 +35,7 @@ var testImages = []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}}
 
 func run(t *testing.T, ma *llm.MealAnalysis, err error) (*Result, error) {
 	t.Helper()
-	p := New(&fakeAnalyzer{res: ma, err: err}, 4, slog.Default())
+	p := New(&fakeAnalyzer{res: ma, err: err}, nil, "off", 4, slog.Default())
 	return p.Run(context.Background(), testImages)
 }
 
@@ -176,7 +176,7 @@ func TestRun_Busy(t *testing.T) {
 		entered: make(chan struct{}),
 		block:   block,
 	}
-	p := New(fa, 1, slog.Default()) // единственный слот
+	p := New(fa, nil, "off", 1, slog.Default()) // единственный слот
 
 	done := make(chan struct{})
 	go func() {
