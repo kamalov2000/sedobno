@@ -185,9 +185,6 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   const nameMissing = dishes.some((d) => d.name.trim() === "");
   const blocked = emptied || manualPending || nameMissing;
 
-  const dirty =
-    JSON.stringify(dishes) !== JSON.stringify(result.dishes ?? []) || mealType !== initialMealType;
-
   // Ручные блюда уходят на 100 г — сервер пересчитает на порцию сам и прогонит через ту
   // же санитизацию, что и распознанные. Распознанные отправляем как есть.
   const toPatch = (ds: Draft[]): DishPatch[] =>
@@ -215,7 +212,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     try {
       if (manual) {
         await createManualMeal({ dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
-      } else if (dirty) {
+      } else {
+        // Правка сохранённого приёма: PATCH идёт ВСЕГДА при нажатии кнопки, без гейта по
+        // dirty. Раньше `else if (dirty)` пропускал сохранение, когда сравнение состояний
+        // ложно давало «не изменилось» — и правка молча терялась (успех показывался, а в
+        // дневнике оставалось старое). Лишний PATCH без реальных изменений безвреден
+        // (сервер идемпотентно перезапишет те же числа), потеря правки — нет.
         await patchMeal(id!, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
       }
       notify("success");

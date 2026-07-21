@@ -229,10 +229,12 @@ describe("MealResultScreen — сохранённый приём из истор
     expect(screen.getByText("ПРИЁМ В ДНЕВНИКЕ")).toBeTruthy();
   });
 
-  it("без правок ничего не отправляет — открыть и закрыть безопасно", async () => {
+  it("сохранение всегда отправляет PATCH — правка не теряется даже без «видимых» изменений", async () => {
+    // Раньше сохранение гейтилось по dirty и при ложном «не изменилось» молча теряло
+    // правку. Теперь нажатие «Сохранить» всегда шлёт PATCH (идемпотентно).
     renderSaved();
     fireEvent.click(screen.getByText("Сохранить изменения"));
-    await waitFor(() => expect(patchMeal).not.toHaveBeenCalled());
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
   });
 
   it("«Закрыть» не удаляет приём, за которым пришли из истории", () => {
@@ -330,13 +332,13 @@ describe("MealResultScreen — тип приёма у сохранённого",
     expect(body.meal_type).toBe("lunch");
   });
 
-  it("тап по активному чипу тип не снимает — PATCH обнуления не умеет", () => {
+  it("тап по активному чипу тип не снимает — PATCH шлёт прежний тип, не null", async () => {
     renderSaved();
-    fireEvent.click(screen.getByText("Обед")); // уже активен
-    // Кнопка сохранения осталась неактивной по «нечего менять» — значит состояние
-    // не изменилось. Проверяем через отправку: изменений нет.
+    fireEvent.click(screen.getByText("Обед")); // уже активен — тап не снимает (PATCH обнуления не умеет)
     fireEvent.click(screen.getByText("Сохранить изменения"));
-    expect(patchMeal).not.toHaveBeenCalled();
+    await waitFor(() => expect(patchMeal).toHaveBeenCalled());
+    const body = patchMeal.mock.calls[0][1] as { meal_type?: string };
+    expect(body.meal_type).toBe("lunch"); // тип сохранён прежним, не сброшен
   });
 });
 
