@@ -1,7 +1,7 @@
 // Чистые помощники модуля калорий (feature/calories): клиентский пересчёт КБЖУ при
 // правке граммовки и маппинг статуса разбора на экран. Без React — тестируется юнит-тестом.
 
-import type { MealDiaryItem, MealItem, MealMacros, MealResult, MealStatus, MealType } from "./types";
+import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType } from "./types";
 
 export function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -24,15 +24,19 @@ export function scaleDish(dish: MealItem, newGrams: number): MealItem {
   };
 }
 
-/** Сумма КБЖУ по блюдам — клиентский предпросмотр итога (сервер пересчитает при PATCH). */
+/** Сумма КБЖУ по блюдам — клиентский предпросмотр итога (сервер пересчитает при PATCH).
+ *  К eyeball-базе каждого блюда прибавляется вклад его счётных единиц (pieces). */
 export function totalOf(dishes: MealItem[]): MealMacros {
   const t = dishes.reduce(
-    (a, d) => ({
-      kcal: a.kcal + d.kcal,
-      protein_g: a.protein_g + d.protein_g,
-      fat_g: a.fat_g + d.fat_g,
-      carb_g: a.carb_g + d.carb_g,
-    }),
+    (a, d) => {
+      const p = pieceMacros(d.pieces);
+      return {
+        kcal: a.kcal + d.kcal + p.kcal,
+        protein_g: a.protein_g + d.protein_g + p.protein_g,
+        fat_g: a.fat_g + d.fat_g + p.fat_g,
+        carb_g: a.carb_g + d.carb_g + p.carb_g,
+      };
+    },
     { kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0 },
   );
   return {
@@ -167,6 +171,54 @@ export function withEggCount(dish: MealItem, whole: number, white: number): Meal
   const b = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(white)));
   const m = eggMacros(w, b);
   return { ...dish, dish_kind: "eggs", eggs_whole: w, eggs_white: b, grams: m.grams, kcal: m.kcal, protein_g: m.protein_g, fat_g: m.fat_g, carb_g: m.carb_g };
+}
+
+// Счётные единицы блюда (pieces): КБЖУ считает сервер по константам, а клиент дублирует их
+// для мгновенного предпросмотра тотала при тапе ± (сервер — источник истины). Значения на
+// одну штуку ОБЯЗАНЫ совпадать с реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE.
+export const PIECE_CONSTS: Record<string, { grams: number; kcal: number; protein_g: number; fat_g: number; carb_g: number }> = {
+  egg: EGG_WHOLE,
+  cutlet: { grams: 100, kcal: 220, protein_g: 14, fat_g: 15, carb_g: 8 },
+  syrnik: { grams: 60, kcal: 110, protein_g: 10, fat_g: 4, carb_g: 8 },
+  pancake: { grams: 50, kcal: 110, protein_g: 3, fat_g: 4, carb_g: 15 },
+  pelmeni: { grams: 13, kcal: 25, protein_g: 1.2, fat_g: 1, carb_g: 2.5 },
+  meatball: { grams: 40, kcal: 80, protein_g: 5, fat_g: 5, carb_g: 3 },
+  sausage: { grams: 50, kcal: 130, protein_g: 6, fat_g: 11, carb_g: 1 },
+  nugget: { grams: 18, kcal: 48, protein_g: 2.5, fat_g: 3, carb_g: 2.5 },
+};
+
+export const PIECE_LABELS: Record<string, string> = {
+  egg: "Яйца", cutlet: "Котлеты", syrnik: "Сырники", pancake: "Оладьи",
+  pelmeni: "Пельмени", meatball: "Тефтели", sausage: "Сосиски", nugget: "Наггетсы",
+};
+
+export const PIECE_MAX = 50;
+
+/** Суммарный КБЖУ счётных единиц блюда по константам (неизвестные kind игнорируются). */
+export function pieceMacros(pieces?: MealPiece[]): MealMacros {
+  const t = (pieces ?? []).reduce(
+    (a, p) => {
+      const c = PIECE_CONSTS[p.kind];
+      if (!c) return a;
+      const n = Math.max(0, p.count);
+      return { kcal: a.kcal + c.kcal * n, protein_g: a.protein_g + c.protein_g * n, fat_g: a.fat_g + c.fat_g * n, carb_g: a.carb_g + c.carb_g * n };
+    },
+    { kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0 },
+  );
+  return { kcal: round1(t.kcal), protein_g: round1(t.protein_g), fat_g: round1(t.fat_g), carb_g: round1(t.carb_g) };
+}
+
+/** Итоговая калорийность блюда для отображения: eyeball-база + вклад его счётных единиц. */
+export function effectiveDishKcal(dish: MealItem): number {
+  return round1(dish.kcal + pieceMacros(dish.pieces).kcal);
+}
+
+/** Обновляет счётчик одной единицы блюда (kind), клампит в 0..PIECE_MAX; count 0 убирает её. */
+export function withPieceCount(dish: MealItem, kind: string, count: number): MealItem {
+  const n = Math.min(PIECE_MAX, Math.max(0, Math.round(count)));
+  const rest = (dish.pieces ?? []).filter((p) => p.kind !== kind);
+  const pieces = n > 0 ? [...rest, { kind, count: n }] : rest;
+  return { ...dish, pieces };
 }
 
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, withPieceCount } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -184,5 +184,44 @@ describe("яйца — счётчик штук вместо граммовки",
   it("isEggDish отличает яичное блюдо по флагу", () => {
     expect(isEggDish({ name: "Яичница", dish_kind: "eggs" } as MealItem)).toBe(true);
     expect(isEggDish({ name: "Борщ" } as MealItem)).toBe(false);
+  });
+});
+
+describe("счётные единицы блюда (pieces) — КБЖУ поверх базы", () => {
+  it("pieceMacros суммирует по реестру, неизвестный kind игнорируется", () => {
+    const m = pieceMacros([{ kind: "egg", count: 4 }, { kind: "плюмбус", count: 5 }]);
+    expect(m.kcal).toBe(288); // 4×72, неизвестный отброшен
+    expect(m.protein_g).toBe(25.2); // 4×6.3
+  });
+
+  it("pieceMacros без единиц — нули; undefined безопасен", () => {
+    expect(pieceMacros(undefined).kcal).toBe(0);
+    expect(pieceMacros([]).kcal).toBe(0);
+  });
+
+  it("effectiveDishKcal = eyeball-база + вклад штук", () => {
+    const dish: MealItem = { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "egg", count: 4 }] };
+    expect(effectiveDishKcal(dish)).toBe(768); // 480 + 4×72
+  });
+
+  it("totalOf прибавляет вклад штук каждого блюда к базе", () => {
+    const t = totalOf([
+      { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "egg", count: 4 }] },
+    ]);
+    expect(t.kcal).toBe(768);
+    expect(t.protein_g).toBe(31.2); // 6 + 4×6.3
+  });
+
+  it("withPieceCount выставляет/заменяет вид, клампит в 0..50, count 0 убирает", () => {
+    const base: MealItem = { name: "тарелка", grams: 200, kcal: 300, protein_g: 10, fat_g: 10, carb_g: 30, confidence: 1 };
+    const d = withPieceCount(base, "cutlet", 3);
+    expect(d.pieces).toEqual([{ kind: "cutlet", count: 3 }]);
+    // повторный вид заменяется, не дублируется
+    const d2 = withPieceCount(d, "cutlet", 5);
+    expect(d2.pieces).toEqual([{ kind: "cutlet", count: 5 }]);
+    // кламп до потолка
+    expect(withPieceCount(base, "egg", 99).pieces).toEqual([{ kind: "egg", count: 50 }]);
+    // ноль убирает вид
+    expect(withPieceCount(d, "cutlet", 0).pieces).toEqual([]);
   });
 });

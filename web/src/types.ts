@@ -141,6 +141,15 @@ export interface MealItem {
   dish_kind?: string;
   eggs_whole?: number; // штук целых яиц (для dish_kind="eggs")
   eggs_white?: number; // штук «только белков»
+  /** Счётные единицы блюда (яйца/котлеты/…) — их КБЖУ считает сервер по константам ПОВЕРХ
+   *  eyeball-базы блюда. Пусто/нет — считать нечего. */
+  pieces?: MealPiece[];
+}
+
+/** Счётная единица блюда: сколько штук какого примитива. */
+export interface MealPiece {
+  kind: string;
+  count: number;
 }
 
 /** Суммарные КБЖУ приёма (сумма по блюдам). */

@@ -39,6 +39,20 @@ type MealItem struct {
 	// белки». КБЖУ и grams блюда пересчитываются из них по константам (см. пакет meal).
 	EggsWhole int `json:"eggs_whole,omitempty"`
 	EggsWhite int `json:"eggs_white,omitempty"`
+
+	// Pieces — СЧЁТНЫЕ единицы блюда (яйца, котлеты, сырники, пельмени…), которые модель
+	// стабильно недосчитывает глазом, особенно на составном блюде. Их КБЖУ считает сервер по
+	// типовой константе на штуку и добавляет ПОВЕРХ eyeball-чисел самого блюда: «авокадо,
+	// запечённое с яйцом» → name=авокадо, база=авокадо, pieces=[{egg,4}]; сервер добавит
+	// 4 яйца. База блюда сами штуки НЕ включает. Пусто — считать нечего.
+	Pieces []MealPiece `json:"pieces,omitempty"`
+}
+
+// MealPiece — счётные единицы блюда: сколько штук какого примитива. Kind — из реестра
+// (см. пакет meal): egg|cutlet|syrnik|pancake|pelmeni|meatball|sausage|nugget.
+type MealPiece struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
 }
 
 // MealMacros — суммарные КБЖУ приёма (сумма по dishes).

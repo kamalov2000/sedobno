@@ -54,6 +54,10 @@ type dishInput struct {
 	DishKind  string `json:"dish_kind"`
 	EggsWhole int    `json:"eggs_whole"`
 	EggsWhite int    `json:"eggs_white"`
+
+	// Pieces — счётные единицы блюда (яйца/котлеты/…). КБЖУ считает сервер по константам,
+	// клиентские числа для них игнорируются (как у dish_kind=eggs). База блюда — eyeball.
+	Pieces []llm.MealPiece `json:"pieces"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -81,6 +85,7 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 		item := llm.MealItem{
 			Name: name, Grams: d.Grams, Kcal: d.Kcal,
 			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, Confidence: d.Confidence,
+			Pieces: d.Pieces, // счётные единицы — санитизация нормализует и посчитает по константам
 		}
 
 		switch {

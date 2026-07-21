@@ -194,16 +194,21 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d.Kcal = clampNonNeg(d.Kcal, maxDishKcal)
 		d.Confidence = clamp01(d.Confidence)
 
-		// Пустое блюдо (ни массы, ни КБЖУ) — распознавательный шум, не показываем.
-		// Яичное блюдо не отбрасываем по нулям: у него КБЖУ ещё не посчитан (asEggDish
-		// ниже сделает это из штук), а первый разбор мог прийти с нулевыми числами.
-		if !isEggDish(d.Name) && d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
+		// Счётные единицы блюда нормализуем сразу: их КБЖУ добавит total по константам, а
+		// база блюда (eyeball) остаётся как есть — сами штуки в неё не входят.
+		d.Pieces = normPieces(d.Pieces)
+
+		// Пустое блюдо (ни массы, ни КБЖУ) — распознавательный шум, не показываем. Не
+		// отбрасываем яичное блюдо (asEggDish посчитает из штук) и блюдо со счётными
+		// единицами (у него весь вклад — в pieces, база может быть нулевой).
+		if !isEggDish(d.Name) && len(d.Pieces) == 0 && d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
 			continue
 		}
 
 		if egg, ok := asEggDish(d); ok {
-			// Яйца: КБЖУ и grams уже посчитаны из штук по константам — согласование ккал
-			// с макросами не нужно (константы согласованы), и числа округлены внутри.
+			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам. pieces у такого блюда
+			// обнуляем — иначе яйца посчитались бы дважды (и как dish_kind, и как pieces).
+			egg.Pieces = nil
 			out = append(out, egg)
 			continue
 		}
@@ -228,6 +233,9 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 }
 
 // sumMacros суммирует КБЖУ по блюдам — серверный источник истины для total приёма.
+// К eyeball-числам каждого блюда прибавляется детерминированный вклад его счётных единиц
+// (pieces) по константам реестра: так «авокадо + 4 яйца» даёт авокадо-eyeball + 4 яйца,
+// а не заниженную глазом сумму.
 func sumMacros(dishes []llm.MealItem) llm.MealMacros {
 	var m llm.MealMacros
 	for _, d := range dishes {
@@ -235,6 +243,11 @@ func sumMacros(dishes []llm.MealItem) llm.MealMacros {
 		m.ProteinG += d.ProteinG
 		m.FatG += d.FatG
 		m.CarbG += d.CarbG
+		_, pk, pp, pf, pc := pieceMacros(d.Pieces)
+		m.Kcal += pk
+		m.ProteinG += pp
+		m.FatG += pf
+		m.CarbG += pc
 	}
 	return llm.MealMacros{
 		Kcal: round1(m.Kcal), ProteinG: round1(m.ProteinG),
