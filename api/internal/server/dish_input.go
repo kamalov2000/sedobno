@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sostav/api/internal/llm"
+	"github.com/sostav/api/internal/meal"
 )
 
 // Пределы ручного ввода. Шире здравого смысла, но уже абсурда: задача — отсечь
@@ -46,6 +47,13 @@ type dishInput struct {
 	ProteinPer100 *float64 `json:"protein_per_100"`
 	FatPer100     *float64 `json:"fat_per_100"`
 	CarbPer100    *float64 `json:"carb_per_100"`
+
+	// Яичное блюдо: счётчики штук (целые/белки). Числа КБЖУ от клиента для такого блюда
+	// игнорируются — сервер пересчитает из штук по константам (LLM/клиент к числам не
+	// подпускаем). DishKind="eggs" маркирует блюдо; санитизация делает пересчёт.
+	DishKind  string `json:"dish_kind"`
+	EggsWhole int    `json:"eggs_whole"`
+	EggsWhite int    `json:"eggs_white"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -75,7 +83,14 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, Confidence: d.Confidence,
 		}
 
-		if d.KcalPer100 != nil {
+		switch {
+		case d.DishKind == meal.DishKindEggs:
+			// Яичное блюдо: несём только счётчики штук; КБЖУ клиента игнорируем — его
+			// посчитает SanitizeDishes из штук по константам. confidence не трогаем.
+			item.DishKind = meal.DishKindEggs
+			item.EggsWhole = d.EggsWhole
+			item.EggsWhite = d.EggsWhite
+		case d.KcalPer100 != nil:
 			converted, errMsg := manualToPortion(name, i+1, d)
 			if errMsg != "" {
 				return nil, errMsg

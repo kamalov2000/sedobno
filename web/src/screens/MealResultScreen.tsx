@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import EggCounter from "../components/EggCounter";
 import { patchMeal, deleteMeal, createManualMeal } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
@@ -112,6 +113,13 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name } : d)));
   };
 
+  // Яичное блюдо: тап по счётчику штук пересчитывает КБЖУ детерминированно (те же
+  // константы, что на сервере), тотал приёма обновляется на лету — как вода пересчитывает
+  // мл. К числам ни LLM, ни ручной ввод не подпускаются: только штуки.
+  const setEggCount = (i: number, whole: number, white: number) => {
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? withEggCount(d, whole, white) : d)));
+  };
+
   // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
   // пересчитывался на лету, как у степперов граммовки.
   const setManual = (i: number, patch: { name?: string; per100Raw?: string }) => {
@@ -140,11 +148,15 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   // Ручные блюда уходят на 100 г — сервер пересчитает на порцию сам и прогонит через ту
   // же санитизацию, что и распознанные. Распознанные отправляем как есть.
   const toPatch = (ds: Draft[]): DishPatch[] =>
-    ds.map((d) =>
-      d.manual
+    ds.map((d) => {
+      // Яичное блюдо: несём только штуки, сервер пересчитает КБЖУ из констант.
+      if (isEggDish(d)) {
+        return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", eggs_whole: d.eggs_whole ?? 0, eggs_white: d.eggs_white ?? 0 };
+      }
+      return d.manual
         ? { name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0 }
-        : { name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence },
-    );
+        : { name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence };
+    });
 
   const onSave = async () => {
     if (busy || blocked) return;
@@ -266,7 +278,10 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         {/* Карточки блюд */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
           {dishes.map((d, i) =>
-            d.manual ? (
+            isEggDish(d) ? (
+              // Яичное блюдо: счётчик штук (± как вода) вместо поля-граммовки.
+              <EggCounter key={i} dish={d} onName={(v) => setName(i, v)} onCount={(w, b) => setEggCount(i, w, b)} onRemove={() => removeDish(i)} />
+            ) : d.manual ? (
               <ManualDishCard
                 key={i}
                 dish={d}

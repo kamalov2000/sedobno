@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -152,5 +152,37 @@ describe("diaryItemToResult — сохранённый приём в форму 
     expect(res.dishes).toEqual(item.dishes);
     expect(res.total).toEqual(item.total);
     expect(res.meals_left).toBe(5);
+  });
+});
+
+describe("яйца — счётчик штук вместо граммовки", () => {
+  it("eggMacros считает КБЖУ детерминированно из штук", () => {
+    const m = eggMacros(3, 0); // 3 целых
+    expect(m.kcal).toBe(216); // 3×72
+    expect(m.protein_g).toBe(18.9); // 3×6.3
+    expect(m.grams).toBe(150); // 3×50
+  });
+
+  it("целые + белки суммируются по своим константам", () => {
+    const m = eggMacros(2, 4); // 2 целых + 4 белка
+    expect(m.kcal).toBe(212); // 2×72 + 4×17
+    expect(m.grams).toBe(232); // 2×50 + 4×33
+  });
+
+  it("withEggCount проставляет kind, счётчики и пересчитанное КБЖУ, клампит в 0..30", () => {
+    const base: MealItem = { name: "Яичница", grams: 0, kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1, dish_kind: "eggs" };
+    const d = withEggCount(base, 2, 1);
+    expect(d.eggs_whole).toBe(2);
+    expect(d.eggs_white).toBe(1);
+    expect(d.kcal).toBe(161); // 2×72 + 1×17
+    expect(d.name).toBe("Яичница"); // имя сохраняется
+    // кламп
+    expect(withEggCount(base, 99, -5).eggs_whole).toBe(30);
+    expect(withEggCount(base, 99, -5).eggs_white).toBe(0);
+  });
+
+  it("isEggDish отличает яичное блюдо по флагу", () => {
+    expect(isEggDish({ name: "Яичница", dish_kind: "eggs" } as MealItem)).toBe(true);
+    expect(isEggDish({ name: "Борщ" } as MealItem)).toBe(false);
   });
 });

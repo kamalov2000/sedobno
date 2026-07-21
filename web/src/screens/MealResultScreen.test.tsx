@@ -333,3 +333,47 @@ describe("MealResultScreen — тип приёма у сохранённого",
     expect(patchMeal).not.toHaveBeenCalled();
   });
 });
+
+describe("MealResultScreen — яичное блюдо как счётчик штук", () => {
+  const eggResult = () => ({
+    status: "ok" as const,
+    id: 55,
+    dishes: [
+      { name: "Яичница", grams: 100, kcal: 144, protein_g: 12.6, fat_g: 9.6, carb_g: 0.8, confidence: 1, dish_kind: "eggs", eggs_whole: 2, eggs_white: 0 },
+    ],
+    total: { kcal: 144, protein_g: 12.6, fat_g: 9.6, carb_g: 0.8 },
+    meals_left: -1,
+  });
+
+  it("рендерит счётчик штук (± как вода), а не поле граммовки", () => {
+    render(<MealResultScreen result={eggResult()} isSubscribed onDone={noop} onRetake={noop} />);
+    // Есть счётчики целых и белков, нет граммовки.
+    expect(screen.getByLabelText("Целые яйца: штук").textContent).toBe("2");
+    expect(screen.getByLabelText("Только белки: штук").textContent).toBe("0");
+    expect(screen.queryByLabelText("Граммовка")).toBeNull();
+  });
+
+  it("плюс добавляет штуку и пересчитывает тотал приёма на лету", () => {
+    render(<MealResultScreen result={eggResult()} isSubscribed onDone={noop} onRetake={noop} />);
+    expect(screen.getByText("144")).toBeTruthy(); // 2 целых
+    fireEvent.click(screen.getByLabelText("Целые яйца: больше"));
+    // 3 целых → 216 ккал в карточке-герое (rolled), счётчик = 3.
+    expect(screen.getByLabelText("Целые яйца: штук").textContent).toBe("3");
+  });
+
+  it("сохранение шлёт штуки и dish_kind, а не КБЖУ (числа считает сервер)", async () => {
+    const savedMeal = {
+      id: 55, eaten_at: "2026-07-21T10:00:00Z", created_at: "2026-07-21T10:00:00Z",
+      status: "ok" as const, source: "photo", dishes: eggResult().dishes,
+      total: eggResult().total, edited: false,
+    };
+    render(<MealResultScreen result={eggResult()} saved={savedMeal as never} isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByLabelText("Только белки: больше")); // +1 белок
+    fireEvent.click(screen.getByText("Сохранить изменения"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const body = patchMeal.mock.calls[0][1] as { dishes: Array<Record<string, unknown>> };
+    expect(body.dishes[0]).toMatchObject({ dish_kind: "eggs", eggs_whole: 2, eggs_white: 1 });
+    // КБЖУ в патче для яиц не шлём — сервер пересчитает.
+    expect(body.dishes[0].kcal).toBeUndefined();
+  });
+});

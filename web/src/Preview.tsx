@@ -143,6 +143,15 @@ const mealHistoryLoad = async (): Promise<MealHistoryPage> => ({
 });
 const mealHistoryEmpty = async (): Promise<MealHistoryPage> => ({ items: [] });
 
+const mockEggMeal: MealResult = {
+  status: "ok", id: 2, meals_left: 6, confidence: 0.8, note: "",
+  dishes: [
+    { name: "Яичница", grams: 150, kcal: 216, protein_g: 18.9, fat_g: 14.4, carb_g: 1.2, confidence: 1, dish_kind: "eggs", eggs_whole: 3, eggs_white: 0 },
+    { name: "Хлеб ржаной", grams: 30, kcal: 70, protein_g: 2, fat_g: 1, carb_g: 14, confidence: 0.9 },
+  ],
+  total: { kcal: 286, protein_g: 20.9, fat_g: 15.4, carb_g: 15.2 },
+};
+
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} /> },
@@ -169,6 +178,7 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
+  { title: "07 · КАЛОРИИ · яйца (счётчик штук)", node: <MealResultScreen result={mockEggMeal} isSubscribed onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · не еда", node: <MealStateScreen kind="not_food" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · это упаковка", node: <MealStateScreen kind="label" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · лоадер", node: <MealLoader /> },

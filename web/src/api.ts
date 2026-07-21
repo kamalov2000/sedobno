@@ -233,6 +233,11 @@ export interface DishPatch {
   protein_per_100?: number;
   fat_per_100?: number;
   carb_per_100?: number;
+  /** Яичное блюдо: dish_kind="eggs" + счётчики штук. Числа КБЖУ сервер пересчитает из
+   *  штук по константам — клиентские kcal/grams для такого блюда игнорируются. */
+  dish_kind?: string;
+  eggs_whole?: number;
+  eggs_white?: number;
 }
 
 export interface MealPatch {

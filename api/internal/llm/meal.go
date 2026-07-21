@@ -30,6 +30,15 @@ type MealItem struct {
 	FatG       float64 `json:"fat_g"`
 	CarbG      float64 `json:"carb_g"`
 	Confidence float64 `json:"confidence"`
+
+	// DishKind — спец-вид блюда, который считается НЕ граммовкой, а штуками по
+	// детерминированным константам (LLM к числам не подпускаем). Пусто — обычное блюдо.
+	// Сейчас единственный вид — "eggs": яйца считают в штуках, не взвешивают.
+	DishKind string `json:"dish_kind,omitempty"`
+	// EggsWhole / EggsWhite — счётчики штук для DishKind="eggs": целые яйца и «только
+	// белки». КБЖУ и grams блюда пересчитываются из них по константам (см. пакет meal).
+	EggsWhole int `json:"eggs_whole,omitempty"`
+	EggsWhite int `json:"eggs_white,omitempty"`
 }
 
 // MealMacros — суммарные КБЖУ приёма (сумма по dishes).

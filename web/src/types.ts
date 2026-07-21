@@ -136,6 +136,11 @@ export interface MealItem {
   fat_g: number;
   carb_g: number;
   confidence: number; // 0..1
+  /** Спец-вид блюда, считающийся штуками, а не граммовкой. "eggs" — яйца (счётчик штук,
+   *  КБЖУ детерминированно из констант на сервере). Пусто/нет — обычное блюдо. */
+  dish_kind?: string;
+  eggs_whole?: number; // штук целых яиц (для dish_kind="eggs")
+  eggs_white?: number; // штук «только белков»
 }
 
 /** Суммарные КБЖУ приёма (сумма по блюдам). */

@@ -136,6 +136,39 @@ export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealR
   };
 }
 
+// Яичное блюдо считается ШТУКАМИ, не граммовкой (см. бэкенд internal/meal/eggs.go).
+// Константы на одну штуку ДУБЛИРУЮТ серверные — фронт считает КБЖУ мгновенно для
+// предпросмотра тотала при тапе, но источник истины при сохранении — сервер (он
+// пересчитает те же числа из штук). Значения обязаны совпадать с eggs.go.
+export const EGG_WHOLE = { grams: 50, kcal: 72, protein_g: 6.3, fat_g: 4.8, carb_g: 0.4 };
+export const EGG_WHITE = { grams: 33, kcal: 17, protein_g: 3.6, fat_g: 0.1, carb_g: 0.2 };
+export const EGG_MAX_PER_KIND = 30;
+
+export const isEggDish = (d: MealItem): boolean => d.dish_kind === "eggs";
+
+/** КБЖУ и вес яичного блюда из счётчиков штук — детерминированно, как на сервере. */
+export function eggMacros(whole: number, white: number): MealItem {
+  const w = Math.max(0, whole);
+  const b = Math.max(0, white);
+  return {
+    name: "",
+    grams: round1(w * EGG_WHOLE.grams + b * EGG_WHITE.grams),
+    kcal: round1(w * EGG_WHOLE.kcal + b * EGG_WHITE.kcal),
+    protein_g: round1(w * EGG_WHOLE.protein_g + b * EGG_WHITE.protein_g),
+    fat_g: round1(w * EGG_WHOLE.fat_g + b * EGG_WHITE.fat_g),
+    carb_g: round1(w * EGG_WHOLE.carb_g + b * EGG_WHITE.carb_g),
+    confidence: 1,
+  };
+}
+
+/** Обновляет счётчик штук яичного блюда и пересчитывает его КБЖУ/вес (клампит в 0..MAX). */
+export function withEggCount(dish: MealItem, whole: number, white: number): MealItem {
+  const w = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(whole)));
+  const b = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(white)));
+  const m = eggMacros(w, b);
+  return { ...dish, dish_kind: "eggs", eggs_whole: w, eggs_white: b, grams: m.grams, kcal: m.kcal, protein_g: m.protein_g, fat_g: m.fat_g, carb_g: m.carb_g };
+}
+
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
 export function pluralDishes(n: number): string {
   const a = Math.abs(n) % 100;

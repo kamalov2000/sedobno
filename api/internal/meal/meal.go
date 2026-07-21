@@ -195,7 +195,16 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d.Confidence = clamp01(d.Confidence)
 
 		// Пустое блюдо (ни массы, ни КБЖУ) — распознавательный шум, не показываем.
-		if d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
+		// Яичное блюдо не отбрасываем по нулям: у него КБЖУ ещё не посчитан (asEggDish
+		// ниже сделает это из штук), а первый разбор мог прийти с нулевыми числами.
+		if !isEggDish(d.Name) && d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
+			continue
+		}
+
+		if egg, ok := asEggDish(d); ok {
+			// Яйца: КБЖУ и grams уже посчитаны из штук по константам — согласование ккал
+			// с макросами не нужно (константы согласованы), и числа округлены внутри.
+			out = append(out, egg)
 			continue
 		}
 
