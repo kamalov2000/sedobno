@@ -373,6 +373,13 @@ func (s *Server) handleMealsByDay(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleFoodReference — GET /api/food-reference (за JWT). Статический справочник частых
+// продуктов для автоподсказки при ручном вводе. Список мал (~150), отдаём целиком: фронт
+// кеширует в памяти и фильтрует локально, серверный поиск не нужен.
+func (s *Server) handleFoodReference(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, meal.FoodReference())
+}
+
 // handleMealsHistory — GET /api/meals/history?limit=20&before=<курсор>.
 //
 // Плоский список приёмов по убыванию времени — это НЕ дневник: дневник отвечает

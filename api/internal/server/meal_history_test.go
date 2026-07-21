@@ -170,3 +170,25 @@ func TestMealHistoryResponse_ФормаЭлемента(t *testing.T) {
 		t.Errorf("next_cursor=%v", got["next_cursor"])
 	}
 }
+
+// Справочник продуктов отдаётся за JWT непустым массивом (список из embed, БД не нужна).
+func TestFoodReference_ЭндпоинтЗаJWT(t *testing.T) {
+	resp := authedGet(t, "/api/food-reference")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("статус=%d, ждали 200", resp.StatusCode)
+	}
+	var items []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		t.Fatalf("ответ не JSON-массив: %v", err)
+	}
+	if len(items) < 100 {
+		t.Fatalf("позиций=%d, ждали ≥100", len(items))
+	}
+	// Форма позиции: name + kcal_per_100 + БЖУ.
+	for _, k := range []string{"name", "kcal_per_100", "protein_g", "fat_g", "carb_g"} {
+		if _, ok := items[0][k]; !ok {
+			t.Errorf("в позиции нет ключа %q: %v", k, items[0])
+		}
+	}
+}

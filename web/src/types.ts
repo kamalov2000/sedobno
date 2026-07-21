@@ -178,6 +178,16 @@ export interface MealDiaryItem {
   confidence?: number;
 }
 
+/** Позиция справочника частых продуктов (GET /api/food-reference) — КБЖУ на 100 г.
+ *  Для автоподсказки при ручном вводе: подстрочный фильтр по name, тап подставляет ккал/100. */
+export interface FoodRefItem {
+  name: string;
+  kcal_per_100: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+}
+
 /** GET /api/meals/history — страница плоской истории приёмов.
  *
  *  Элементы — те же MealDiaryItem, что и в дневнике: приём из истории открывается тем

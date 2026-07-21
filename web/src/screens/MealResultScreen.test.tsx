@@ -9,11 +9,17 @@ import { diaryItemToResult } from "../meal";
 const patchMeal = vi.fn(async (_id: number, _body: unknown) => ({}) as never);
 const createManualMeal = vi.fn(async (_body: unknown) => ({}) as never);
 const deleteMeal = vi.fn(async (_id: number) => {});
+const FOOD_REF = [
+  { name: "Творог 5%", kcal_per_100: 121, protein_g: 17.2, fat_g: 5, carb_g: 1.8 },
+  { name: "Творог 9%", kcal_per_100: 159, protein_g: 16.7, fat_g: 9, carb_g: 2 },
+  { name: "Молоко 2.5%", kcal_per_100: 52, protein_g: 2.8, fat_g: 2.5, carb_g: 4.7 },
+];
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   patchMeal: (id: number, body: unknown) => patchMeal(id, body),
   createManualMeal: (body: unknown) => createManualMeal(body),
   deleteMeal: (id: number) => deleteMeal(id),
+  getFoodReference: async () => FOOD_REF,
 }));
 
 afterEach(() => {
@@ -375,5 +381,72 @@ describe("MealResultScreen — яичное блюдо как счётчик ш�
     expect(body.dishes[0]).toMatchObject({ dish_kind: "eggs", eggs_whole: 2, eggs_white: 1 });
     // КБЖУ в патче для яиц не шлём — сервер пересчитает.
     expect(body.dishes[0].kcal).toBeUndefined();
+  });
+});
+
+describe("MealResultScreen — автоподсказка справочника при ручном вводе", () => {
+  const renderManual = () =>
+    render(
+      <MealResultScreen result={{ status: "ok", dishes: [], meals_left: 7 }} isSubscribed={false} manual onDone={noop} onRetake={noop} />,
+    );
+
+  it("подстрочный фильтр показывает совпадения справочника", async () => {
+    renderManual();
+    const name = lastNameInput();
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "твор" } });
+    // Оба творога — в выпадающем списке, молоко — нет.
+    expect(await screen.findByText("Творог 5%")).toBeTruthy();
+    expect(screen.getByText("Творог 9%")).toBeTruthy();
+    expect(screen.queryByText("Молоко 2.5%")).toBeNull();
+  });
+
+  it("тап по подсказке подставляет имя и ккал/100", async () => {
+    renderManual();
+    const name = lastNameInput();
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "твор" } });
+    const opt = await screen.findByText("Творог 5%");
+    fireEvent.pointerDown(opt);
+    // Имя подставилось, ккал/100 = 121 в поле калорийности.
+    expect(lastNameInput().value).toBe("Творог 5%");
+    expect((screen.getByLabelText("Калорийность на 100 грамм") as HTMLInputElement).value).toBe("121");
+  });
+
+  it("подставленный продукт корректно идёт в PATCH с БЖУ из справочника", async () => {
+    // saved-режим (сохранение через PATCH); ручное блюдо добавляем кнопкой — у него и
+    // работает автоподсказка. manual-проп и saved взаимоисключающи, поэтому именно saved.
+    const dish = { name: "Овсянка", grams: 200, kcal: 176, protein_g: 6, fat_g: 3.4, carb_g: 30, confidence: 1 };
+    const savedMeal = {
+      id: 90, eaten_at: "2026-07-21T10:00:00Z", created_at: "2026-07-21T10:00:00Z",
+      status: "ok" as const, source: "photo", dishes: [dish], total: { kcal: 176, protein_g: 6, fat_g: 3.4, carb_g: 30 }, edited: false,
+    };
+    render(<MealResultScreen result={{ status: "ok", id: 90, dishes: [dish], meals_left: -1 }} saved={savedMeal as never} isSubscribed onDone={noop} onRetake={noop} />);
+
+    fireEvent.click(screen.getByText("Добавить блюдо")); // пустое ручное блюдо
+    const name = lastNameInput();
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "Творог 5" } });
+    fireEvent.pointerDown(await screen.findByText("Творог 5%"));
+    expect((screen.getByLabelText("Калорийность на 100 грамм") as HTMLInputElement).value).toBe("121");
+
+    fireEvent.click(screen.getByText("Сохранить изменения"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const body = patchMeal.mock.calls[0][1] as { dishes: Array<Record<string, unknown>> };
+    // Второе (ручное) блюдо: ккал/100 + БЖУ/100 из справочника (сервер пересчитает на порцию).
+    expect(body.dishes[1]).toMatchObject({ name: "Творог 5%", kcal_per_100: 121, protein_per_100: 17.2, fat_per_100: 5, carb_per_100: 1.8 });
+  });
+
+  it("нет совпадений → ручной ввод работает как прежде (список не мешает)", async () => {
+    renderManual();
+    const name = lastNameInput();
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "как兎ляма" } });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    // Ручной ввод ккал/100 по-прежнему работает.
+    fireEvent.change(name, { target: { value: "Моё блюдо" } });
+    fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "200" } });
+    const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
   });
 });

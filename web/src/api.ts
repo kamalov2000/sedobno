@@ -12,6 +12,7 @@ import type {
   MealResult,
   MealDiaryItem,
   MealHistoryPage,
+  FoodRefItem,
   MealType,
   MealsByDay,
   MealDays,
@@ -196,6 +197,20 @@ export async function getMeals(day?: string): Promise<MealsByDay> {
   const res = await apiFetch(`/api/meals${q}`);
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
+}
+
+// Справочник продуктов кешируется в памяти на сессию: он статичен и мал (~150), грузить
+// повторно незачем. null — ещё не загружен.
+let foodRefCache: FoodRefItem[] | null = null;
+
+/** GET /api/food-reference — статический справочник для автоподсказки ручного ввода.
+ *  Отдаётся целиком, фильтрация — на клиенте. Кешируется на сессию. */
+export async function getFoodReference(): Promise<FoodRefItem[]> {
+  if (foodRefCache) return foodRefCache;
+  const res = await apiFetch("/api/food-reference");
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  foodRefCache = (await res.json()) as FoodRefItem[];
+  return foodRefCache;
 }
 
 /** GET /api/meals/history — плоская история приёмов, keyset-пагинация.

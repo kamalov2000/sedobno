@@ -152,6 +152,12 @@ const mockEggMeal: MealResult = {
   total: { kcal: 286, protein_g: 20.9, fat_g: 15.4, carb_g: 15.2 },
 };
 
+const FOOD_REF_DEMO = [
+  { name: "Творог 5%", kcal_per_100: 121, protein_g: 17.2, fat_g: 5, carb_g: 1.8 },
+  { name: "Творог 9%", kcal_per_100: 159, protein_g: 16.7, fat_g: 9, carb_g: 2 },
+  { name: "Творог обезжиренный", kcal_per_100: 71, protein_g: 18, fat_g: 0.6, carb_g: 1.8 },
+];
+
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} /> },
@@ -179,6 +185,7 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · яйца (счётчик штук)", node: <MealResultScreen result={mockEggMeal} isSubscribed onDone={noop} onRetake={noop} /> },
+  { title: "07 · КАЛОРИИ · ручной ввод + справочник", node: <MealResultScreen result={{ status: "ok", dishes: [], meals_left: 7 }} manual isSubscribed={false} foodReference={FOOD_REF_DEMO} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · не еда", node: <MealStateScreen kind="not_food" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · это упаковка", node: <MealStateScreen kind="label" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · лоадер", node: <MealLoader /> },

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MealResult, MealItem, MealType, MealDiaryItem } from "../types";
+import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
 import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import EggCounter from "../components/EggCounter";
-import { patchMeal, deleteMeal, createManualMeal } from "../api";
+import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
 import { useRolledNumber } from "../useRoll";
@@ -32,6 +32,9 @@ interface Props {
    *  (чипы открываются в актуальном состоянии) и источник — у вписанного руками приёма
    *  строка «AI распознал» была бы прямой неправдой. */
   saved?: MealDiaryItem;
+  /** Справочник для автоподсказки — инъекция для витрины/тестов (офлайн). Не задан —
+   *  грузим сами через getFoodReference (кеш в api). */
+  foodReference?: FoodRefItem[];
 }
 
 const GRAM_STEP = 10;
@@ -45,8 +48,10 @@ const MANUAL_START_GRAMS = 100;
 
 /** Блюдо в редакторе. Ручное отличается флагом: у него нет распознанных значений, и
  *  пользователь вводит имя и ккал/100 г сам — достепперить их от нуля никто не станет.
- *  per100Raw держит СЫРОЙ ввод, чтобы промежуточные «12,» не схлопывались при наборе. */
-type Draft = MealItem & { manual?: boolean; per100Raw?: string };
+ *  per100Raw держит СЫРОЙ ввод, чтобы промежуточные «12,» не схлопывались при наборе.
+ *  proteinPer100/… — БЖУ на 100 г, подставленные из справочника (при ручном вводе с нуля
+ *  их нет — уходят только ккал). */
+type Draft = MealItem & { manual?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number };
 
 function parseNum(raw: string): number | null {
   const n = parseFloat(raw.replace(",", "."));
@@ -70,7 +75,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
   // Строка распознавания и плашка уверенности — про РАЗБОР ФОТО. Ни у ручного приёма,
@@ -80,6 +85,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   const [dishes, setDishes] = useState<Draft[]>(() => (manual ? [blankManual()] : (result.dishes ?? [])));
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   const [busy, setBusy] = useState(false);
+
+  // Справочник для автоподсказки ручного ввода: инъекция (витрина/тесты) или ленивая
+  // загрузка (кеш в api), молча — без него ручной ввод просто работает как раньше.
+  const [foodRef, setFoodRef] = useState<FoodRefItem[]>(foodReference ?? []);
+  useEffect(() => {
+    if (foodReference) return;
+    void getFoodReference().then(setFoodRef).catch(() => {});
+  }, [foodReference]);
 
   const total = useMemo(() => totalOf(dishes), [dishes]);
   const rolledKcal = useRolledNumber(Math.round(total.kcal), 220);
@@ -120,13 +133,43 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     setDishes((ds) => ds.map((d, idx) => (idx === i ? withEggCount(d, whole, white) : d)));
   };
 
+  // Подстановка из справочника: имя + ккал/100 + БЖУ/100. Граммы юзер ставит сам,
+  // ккал/100 остаётся редактируемым (справочное значение — ориентир). Числа детерминированы
+  // из справочника, не из LLM.
+  const onPickFood = (i: number, item: FoodRefItem) => {
+    haptic("light");
+    setDishes((ds) =>
+      ds.map((d, idx) => {
+        if (idx !== i) return d;
+        return {
+          ...d,
+          manual: true,
+          name: item.name,
+          per100Raw: String(item.kcal_per_100),
+          proteinPer100: item.protein_g,
+          fatPer100: item.fat_g,
+          carbPer100: item.carb_g,
+          kcal: Math.round((item.kcal_per_100 * d.grams) / 100),
+        };
+      }),
+    );
+  };
+
   // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
-  // пересчитывался на лету, как у степперов граммовки.
+  // пересчитывался на лету, как у степперов граммовки. Ручная правка ккал/100 сбрасывает
+  // подставленные из справочника БЖУ: они относились к тому продукту, а не к новому числу.
   const setManual = (i: number, patch: { name?: string; per100Raw?: string }) => {
     setDishes((ds) =>
       ds.map((d, idx) => {
         if (idx !== i) return d;
         const next = { ...d, ...patch };
+        // Ручная правка ккал/100 отвязывает блюдо от справочной позиции — БЖУ той позиции
+        // больше не относятся к новому числу, сбрасываем (уйдут только ккал).
+        if (patch.per100Raw !== undefined) {
+          next.proteinPer100 = undefined;
+          next.fatPer100 = undefined;
+          next.carbPer100 = undefined;
+        }
         const per = parseNum(next.per100Raw ?? "");
         next.kcal = per != null ? Math.round((per * next.grams) / 100) : 0;
         return next;
@@ -154,7 +197,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", eggs_whole: d.eggs_whole ?? 0, eggs_white: d.eggs_white ?? 0 };
       }
       return d.manual
-        ? { name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0 }
+        ? {
+            name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0,
+            // БЖУ/100 — только если подставлены из справочника; при ручном вводе с нуля их
+            // нет, и сервер посчитает приём по одним ккал (прежнее поведение).
+            ...(d.proteinPer100 != null
+              ? { protein_per_100: d.proteinPer100, fat_per_100: d.fatPer100, carb_per_100: d.carbPer100 }
+              : {}),
+          }
         : { name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence };
     });
 
@@ -285,6 +335,8 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
               <ManualDishCard
                 key={i}
                 dish={d}
+                suggestions={foodRef}
+                onPick={(item) => onPickFood(i, item)}
                 onName={(v) => setManual(i, { name: v })}
                 onPer100={(v) => setManual(i, { per100Raw: v })}
                 onStep={(delta) => stepGrams(i, delta)}
@@ -363,11 +415,13 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
  *  претензия к разбору, и раньше её нельзя было исправить, не удалив блюдо и не вписав
  *  его заново руками (потеряв при этом распознанные БЖУ). Поле выглядит как текст,
  *  пока в него не ткнули: карточка не должна читаться как форма. */
-function DishNameInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { value: string; onChange: (v: string) => void; placeholder?: string; onFocus?: () => void; onBlur?: () => void }) {
   return (
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onFocus={onFocus}
+      onBlur={onBlur}
       placeholder={placeholder}
       aria-label="Название блюда"
       style={{
@@ -447,9 +501,11 @@ function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; o
 // нет ккал/100 г, от которых можно оттолкнуться степпером, — поэтому и имя, и
 // калорийность вводятся руками, на той же decimal-клавиатуре, что и вес.
 function ManualDishCard({
-  dish, onName, onPer100, onStep, onSet, onRemove,
+  dish, suggestions, onPick, onName, onPer100, onStep, onSet, onRemove,
 }: {
   dish: Draft;
+  suggestions: FoodRefItem[];
+  onPick: (item: FoodRefItem) => void;
   onName: (v: string) => void;
   onPer100: (v: string) => void;
   onStep: (delta: number) => void;
@@ -460,10 +516,48 @@ function ManualDishCard({
   const perBad = dish.per100Raw !== "" && (per == null || per < MIN_PER100 || per > MAX_PER100);
   const nameBad = dish.name.trim() === "";
 
+  // Автоподсказка: подстрочный фильтр справочника по имени. Список прячем, когда поле не в
+  // фокусе или единственное совпадение точно равно введённому (значит уже выбрал).
+  const [focused, setFocused] = useState(false);
+  const q = dish.name.trim().toLowerCase();
+  const matches = q ? suggestions.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 8) : [];
+  const exact = matches.length === 1 && matches[0].name.toLowerCase() === q;
+  const showSuggest = focused && matches.length > 0 && !exact;
+
   return (
     <div style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <DishNameInput value={dish.name} onChange={onName} placeholder="Название блюда" />
+        <div style={{ position: "relative", flex: 1, minWidth: 0, display: "flex" }}>
+          <DishNameInput
+            value={dish.name}
+            onChange={onName}
+            placeholder="Название блюда"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+          />
+          {showSuggest && (
+            <div role="listbox" aria-label="Подсказки продуктов" style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, marginTop: 5, overflow: "hidden", boxShadow: "0 8px 22px rgba(0,0,0,0.14)" }}>
+              {matches.map((s) => (
+                <button
+                  key={s.name}
+                  type="button"
+                  role="option"
+                  // onPointerDown+preventDefault: тап по подсказке НЕ должен сначала снять
+                  // фокус с поля (blur закрыл бы список раньше, чем сработает выбор).
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    onPick(s);
+                    setFocused(false);
+                  }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 12px", background: "none", border: "none", borderBottom: "0.5px solid var(--border)", cursor: "pointer", textAlign: "left" }}
+                >
+                  <span style={{ fontSize: 14, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                  <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11.5, color: "var(--text3)", whiteSpace: "nowrap" }}>{s.kcal_per_100} ккал/100</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(dish.kcal)} ккал</span>
         <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />

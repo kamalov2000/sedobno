@@ -106,6 +106,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/meals", s.handleMealsByDay)
 			r.Get("/meals/days", s.handleMealDays)
 			r.Get("/meals/history", s.handleMealsHistory)
+			r.Get("/food-reference", s.handleFoodReference) // справочник для автоподсказки ручного ввода
 			r.Patch("/meals/{id}", s.handleMealUpdate)
 			r.Delete("/meals/{id}", s.handleMealDelete)
 
