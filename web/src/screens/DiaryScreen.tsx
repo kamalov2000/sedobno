@@ -414,6 +414,12 @@ function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile:
   const off = ringC * (1 - pct);
   const rightLine = dayRingLine(eaten, target);
   const macros = `Б${NBSP}${fmtInt(total.protein_g)}${NBSP}г · Ж${NBSP}${fmtInt(total.fat_g)}${NBSP}г · У${NBSP}${fmtInt(total.carb_g)}${NBSP}г`;
+  // Остаток Б/Ж/У до нормы — как остаток ккал в rightLine. Показываем, только если у
+  // профиля есть таргеты макросов; перебор макроса — «осталось 0» (кольцо ккал и так
+  // сигналит перебор, дублировать красным в этой строке незачем).
+  const macroTargets = profile.daily_protein_g != null || profile.daily_fat_g != null || profile.daily_carb_g != null;
+  const left = (t: number | undefined, e: number) => Math.max(0, Math.round((t ?? 0) - e));
+  const macrosLeft = `осталось Б${NBSP}${left(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${left(profile.daily_fat_g, total.fat_g)} · У${NBSP}${left(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
 
   return (
     <div onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: 20, display: "flex", alignItems: "center", gap: 20, marginBottom: 16, cursor: "pointer" }}>
@@ -434,6 +440,9 @@ function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile:
           <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
         </div>
         <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8 }}>{macros}</div>
+        {macroTargets && (
+          <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3 }}>{macrosLeft}</div>
+        )}
       </div>
     </div>
   );

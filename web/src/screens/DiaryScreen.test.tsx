@@ -119,9 +119,19 @@ describe("DiaryScreen — перебор дневной нормы", () => {
         loadDay={async () => makeDiary("under")}
         loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
     );
-    await screen.findByText(/осталось/);
+    await screen.findByText(/осталось.*ккал/);
     expect(document.querySelector('circle[stroke="var(--cal)"]')).toBeTruthy();
     expect(document.querySelector('circle[stroke="var(--text2)"]')).toBeNull();
+  });
+
+  it("показывает остаток Б/Ж/У до нормы, как остаток ккал", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => makeDiary("under")}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    // Строка остатка по всем трём макросам (Б/Ж/У) рядом с остатком ккал.
+    expect(await screen.findByText(/осталось Б.*Ж.*У.*г/)).toBeTruthy();
   });
 });
 
