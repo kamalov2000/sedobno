@@ -293,16 +293,49 @@ func (s *Store) InsertFeedback(ctx context.Context, userID *int64, text string) 
 	return err
 }
 
+// Планы и статусы подписки (подписки v2). Plan различает месяц/год; PlanMonthly —
+// дефолт (существующие строки, Stars). Статусы: Active/Expired (истёк, свип) —
+// как было; Cancelled (юзер отменил автопродление, доступ до конца периода);
+// PastDue (неуспех автосписания, ждём ретрая планировщика).
+const (
+	PlanMonthly = "monthly"
+	PlanAnnual  = "annual"
+
+	SubStatusActive    = "active"
+	SubStatusExpired   = "expired"
+	SubStatusCancelled = "cancelled"
+	SubStatusPastDue   = "past_due"
+)
+
 // SubscriptionInput — данные успешного Stars-платежа для активации доступа (§9).
 type SubscriptionInput struct {
 	UserID int64
 	Stars  int
-	// PeriodSec — оплаченный период в секундах (30 дней). Разовый платёж, не рекуррентная
-	// подписка Telegram: срок окончания считаем сами, «остаток + период», как в СБП-канале
-	// (не абсолютная дата от Telegram).
+	// Plan — 'monthly' | 'annual'. Пусто → monthly. Stars всегда monthly (Bot API даёт
+	// рекуррентный период только 30 дней; год — отдельный канал ЮKassa).
+	Plan string
+	// PeriodSec — оплаченный период в секундах (30 дней). Срок окончания считаем сами,
+	// «остаток + период», как в СБП-канале (не абсолютная дата от Telegram).
 	PeriodSec  int
 	ChargeID   string // telegram_payment_charge_id — ключ идемпотентности
 	RawPayload []byte // сырой successful_payment (jsonb) для аудита
+}
+
+// planOrDefault нормализует план: пусто → monthly (существующие строки/Stars).
+func planOrDefault(plan string) string {
+	if plan == PlanAnnual {
+		return PlanAnnual
+	}
+	return PlanMonthly
+}
+
+// nullStr превращает пустую строку в SQL NULL (nil *string), иначе — указатель на неё.
+// Для nullable-колонок (provider_payment_method_id): "" должно лечь NULL, не пустой строкой.
+func nullStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // periodExpiry считает дату окончания доступа при (пере)активации: оплаченный период
@@ -345,10 +378,10 @@ func (s *Store) ActivateSubscription(ctx context.Context, sub SubscriptionInput)
 	var id int64
 	err = tx.QueryRow(ctx, `
 INSERT INTO subscriptions
-  (user_id, provider, status, stars_amount, started_at, expires_at, telegram_charge_id, raw_payload)
-VALUES ($1, 'stars', 'active', $2, now(), $3, $4, $5)
+  (user_id, provider, plan, status, stars_amount, started_at, expires_at, telegram_charge_id, raw_payload)
+VALUES ($1, 'stars', $2, 'active', $3, now(), $4, $5, $6)
 ON CONFLICT (telegram_charge_id) DO NOTHING
-RETURNING id`, sub.UserID, sub.Stars, exp, sub.ChargeID, sub.RawPayload).Scan(&id)
+RETURNING id`, sub.UserID, planOrDefault(sub.Plan), sub.Stars, exp, sub.ChargeID, sub.RawPayload).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return false, nil // charge_id уже вставлен ранее — дубликат, откатываемся
 	}
@@ -369,11 +402,16 @@ type SBPPaymentInput struct {
 	UserID            int64
 	ProviderPaymentID string // id платежа ЮKassa — ключ идемпотентности вебхука
 	AmountRub         int
-	// PeriodSec — оплаченный период в секундах (30 дней). Не абсолютная дата: срок
+	// Plan — 'monthly' | 'annual'. Пусто → monthly.
+	Plan string
+	// PeriodSec — оплаченный период в секундах (30 или 365 дней). Не абсолютная дата: срок
 	// окончания считается тут же, в транзакции, как «остаток + период» (periodExpiry).
-	// Stars-канал теперь считает так же (разовый платёж, не рекуррентная подписка).
-	PeriodSec  int
-	RawPayload []byte // объект платежа из API ЮKassa (jsonb) для аудита
+	PeriodSec int
+	// PaymentMethodID — сохранённый способ оплаты ЮKassa (save_payment_method). Непусто →
+	// подписка АВТОПРОДЛЯЕМАЯ: планировщик спишет по нему следующий период. Тогда
+	// next_charge_at выставляется = дате окончания доступа. Пусто → разовый платёж (как было).
+	PaymentMethodID string
+	RawPayload      []byte // объект платежа из API ЮKassa (jsonb) для аудита
 }
 
 // RecordSBPPaymentAndActivate идемпотентно применяет успешный СБП/карта-платёж: в одной
@@ -410,11 +448,21 @@ RETURNING id`, in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Sca
 	if err != nil {
 		return false, err
 	}
+	// Автопродление: если платёж сохранил способ оплаты, планируем следующее списание на
+	// дату окончания доступа (планировщик его подхватит). Разовый платёж — способа нет,
+	// next_charge_at остаётся NULL (никто не спишет автоматически). Так один код обслуживает
+	// и рекуррент, и прежний разовый платёж.
+	pm := nullStr(in.PaymentMethodID)
+	var nextCharge *time.Time
+	if pm != nil {
+		nextCharge = &exp
+	}
 	// Подписка канала СБП: stars_amount/telegram_charge_id остаются NULL (не Stars),
 	// потому revenue_stars их не суммирует, а UNIQUE(telegram_charge_id) допускает NULL.
 	if _, err = tx.Exec(ctx, `
-INSERT INTO subscriptions (user_id, provider, status, started_at, expires_at, raw_payload)
-VALUES ($1, 'sbp', 'active', now(), $2, $3)`, in.UserID, exp, in.RawPayload); err != nil {
+INSERT INTO subscriptions (user_id, provider, plan, status, started_at, expires_at, provider_payment_method_id, next_charge_at, raw_payload)
+VALUES ($1, 'sbp', $2, 'active', now(), $3, $4, $5, $6)`,
+		in.UserID, planOrDefault(in.Plan), exp, pm, nextCharge, in.RawPayload); err != nil {
 		return false, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE users SET is_subscribed = true WHERE id = $1`, in.UserID); err != nil {
