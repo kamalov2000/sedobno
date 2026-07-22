@@ -46,18 +46,18 @@ func TestAsEggDish_КбжуИзШтук(t *testing.T) {
 	if got.EggsWhole != 3 || got.EggsWhite != 0 {
 		t.Errorf("счётчики=%d/%d, ждали 3/0", got.EggsWhole, got.EggsWhite)
 	}
-	// 3 целых: ккал 3×72=216, белок 3×6.3=18.9, жир 3×4.8=14.4, углев 3×0.4=1.2, вес 150.
-	if got.Kcal != 216 || got.ProteinG != 18.9 || got.FatG != 14.4 || got.CarbG != 1.2 || got.Grams != 150 {
-		t.Errorf("КБЖУ/вес=%v ккал %v/%v/%v %vг, ждали 216 18.9/14.4/1.2 150", got.Kcal, got.ProteinG, got.FatG, got.CarbG, got.Grams)
+	// 3 целых: ккал 3×78=234, белок 3×6.3=18.9, жир 3×5.3=15.9, углев 3×0.6=1.8, вес 3×55=165.
+	if got.Kcal != 234 || got.ProteinG != 18.9 || got.FatG != 15.9 || got.CarbG != 1.8 || got.Grams != 165 {
+		t.Errorf("КБЖУ/вес=%v ккал %v/%v/%v %vг, ждали 234 18.9/15.9/1.8 165", got.Kcal, got.ProteinG, got.FatG, got.CarbG, got.Grams)
 	}
 }
 
 // Целые + белки суммируются по своим константам.
 func TestAsEggDish_ЦелыеИБелки(t *testing.T) {
 	got, _ := asEggDish(llm.MealItem{Name: "Яйца", EggsWhole: 2, EggsWhite: 4})
-	// 2 целых (144 ккал) + 4 белка (68 ккал) = 212; вес 2×50 + 4×33 = 232.
-	if got.Kcal != 212 || got.Grams != 232 {
-		t.Errorf("ккал=%v вес=%v, ждали 212 / 232", got.Kcal, got.Grams)
+	// 2 целых (156 ккал) + 4 белка (68 ккал) = 224; вес 2×55 + 4×33 = 242.
+	if got.Kcal != 224 || got.Grams != 242 {
+		t.Errorf("ккал=%v вес=%v, ждали 224 / 242", got.Kcal, got.Grams)
 	}
 	// белок: 2×6.3 + 4×3.6 = 12.6 + 14.4 = 27.
 	if got.ProteinG != 27 {
@@ -70,7 +70,7 @@ func TestAsEggDish_ЦелыеИБелки(t *testing.T) {
 func TestAsEggDish_ПервичнаяДогадкаИзГраммовки(t *testing.T) {
 	got, _ := asEggDish(llm.MealItem{Name: "Яичница", Grams: 100}) // ~2 яйца
 	if got.EggsWhole != 2 {
-		t.Errorf("догадка=%d, ждали 2 (100г/50)", got.EggsWhole)
+		t.Errorf("догадка=%d, ждали 2 (100г/55≈2)", got.EggsWhole)
 	}
 	// Совсем без граммовки — минимум одно целое, а не ноль.
 	got0, _ := asEggDish(llm.MealItem{Name: "Яйцо"})
@@ -96,14 +96,14 @@ func TestSanitizeDishes_ЯйцаЧерезОбщийПуть(t *testing.T) {
 	if len(dishes) != 2 {
 		t.Fatalf("блюд=%d, ждали 2", len(dishes))
 	}
-	if dishes[0].DishKind != DishKindEggs || dishes[0].Kcal != 144 {
-		t.Errorf("яйца: kind=%q ккал=%v, ждали eggs/144", dishes[0].DishKind, dishes[0].Kcal)
+	if dishes[0].DishKind != DishKindEggs || dishes[0].Kcal != 156 {
+		t.Errorf("яйца: kind=%q ккал=%v, ждали eggs/156", dishes[0].DishKind, dishes[0].Kcal)
 	}
 	if dishes[1].DishKind != "" {
 		t.Errorf("обычное блюдо помечено kind=%q, ждали пусто", dishes[1].DishKind)
 	}
 	// Тотал включает яйца как блюдо.
-	if total.Kcal != 144+dishes[1].Kcal {
+	if total.Kcal != 156+dishes[1].Kcal {
 		t.Errorf("тотал=%v, ждали сумму с яйцами", total.Kcal)
 	}
 }

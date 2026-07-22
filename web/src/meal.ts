@@ -144,7 +144,7 @@ export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealR
 // Константы на одну штуку ДУБЛИРУЮТ серверные — фронт считает КБЖУ мгновенно для
 // предпросмотра тотала при тапе, но источник истины при сохранении — сервер (он
 // пересчитает те же числа из штук). Значения обязаны совпадать с eggs.go.
-export const EGG_WHOLE = { grams: 50, kcal: 72, protein_g: 6.3, fat_g: 4.8, carb_g: 0.4 };
+export const EGG_WHOLE = { grams: 55, kcal: 78, protein_g: 6.3, fat_g: 5.3, carb_g: 0.6 };
 export const EGG_WHITE = { grams: 33, kcal: 17, protein_g: 3.6, fat_g: 0.1, carb_g: 0.2 };
 export const EGG_MAX_PER_KIND = 30;
 
@@ -173,26 +173,39 @@ export function withEggCount(dish: MealItem, whole: number, white: number): Meal
   return { ...dish, dish_kind: "eggs", eggs_whole: w, eggs_white: b, grams: m.grams, kcal: m.kcal, protein_g: m.protein_g, fat_g: m.fat_g, carb_g: m.carb_g };
 }
 
-// Счётные единицы блюда (pieces): КБЖУ считает сервер по константам, а клиент дублирует их
-// для мгновенного предпросмотра тотала при тапе ± (сервер — источник истины). Значения на
-// одну штуку ОБЯЗАНЫ совпадать с реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE.
+// Детерминированные примитивы блюда (pieces): КБЖУ считает сервер по константам, а клиент
+// дублирует их для мгновенного предпросмотра тотала при тапе (сервер — источник истины).
+// MVP-реестр — РОВНО 4 (штучный egg + ложечные oil_veg/butter/sugar). Значения ОБЯЗАНЫ
+// совпадать с реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE; ложечные — на 1 ч.л.
+const SPOON_G = 5; // масса одной чайной ложки добавки, г
 export const PIECE_CONSTS: Record<string, { grams: number; kcal: number; protein_g: number; fat_g: number; carb_g: number }> = {
   egg: EGG_WHOLE,
-  cutlet: { grams: 100, kcal: 220, protein_g: 14, fat_g: 15, carb_g: 8 },
-  syrnik: { grams: 60, kcal: 110, protein_g: 10, fat_g: 4, carb_g: 8 },
-  pancake: { grams: 50, kcal: 110, protein_g: 3, fat_g: 4, carb_g: 15 },
-  pelmeni: { grams: 13, kcal: 25, protein_g: 1.2, fat_g: 1, carb_g: 2.5 },
-  meatball: { grams: 40, kcal: 80, protein_g: 5, fat_g: 5, carb_g: 3 },
-  sausage: { grams: 50, kcal: 130, protein_g: 6, fat_g: 11, carb_g: 1 },
-  nugget: { grams: 18, kcal: 48, protein_g: 2.5, fat_g: 3, carb_g: 2.5 },
+  oil_veg: { grams: SPOON_G, kcal: 45, protein_g: 0, fat_g: 5.0, carb_g: 0 },
+  butter: { grams: SPOON_G, kcal: 37, protein_g: 0, fat_g: 4.1, carb_g: 0 },
+  sugar: { grams: SPOON_G, kcal: 20, protein_g: 0, fat_g: 0, carb_g: 5.0 },
 };
 
 export const PIECE_LABELS: Record<string, string> = {
-  egg: "Яйца", cutlet: "Котлеты", syrnik: "Сырники", pancake: "Оладьи",
-  pelmeni: "Пельмени", meatball: "Тефтели", sausage: "Сосиски", nugget: "Наггетсы",
+  egg: "Яйца", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
+};
+
+// Эмодзи чипса примитива (штучный egg + ложечные).
+export const PIECE_EMOJI: Record<string, string> = {
+  egg: "🥚", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
 };
 
 export const PIECE_MAX = 50;
+
+// Ложечные добавки «готовилось с» (масло/сливочное/сахар) считаются в ЧАЙНЫХ ложках
+// (тап = +1 ч.л.), штучные (egg) — в штуках (×N). Различаем для подписи и стиля чипса.
+export const ADDON_KINDS = ["oil_veg", "butter", "sugar"] as const;
+export const ADDON_UNIT = "ч.л.";
+export const isAddonKind = (kind: string): boolean => (ADDON_KINDS as readonly string[]).includes(kind);
+
+/** Бытовая подпись количества примитива: ложечные «N ч.л.», штучные «×N». */
+export function pieceCountLabel(kind: string, count: number): string {
+  return isAddonKind(kind) ? `${count} ${ADDON_UNIT}` : `×${count}`;
+}
 
 /** Суммарный КБЖУ счётных единиц блюда по константам (неизвестные kind игнорируются). */
 export function pieceMacros(pieces?: MealPiece[]): MealMacros {
@@ -213,11 +226,16 @@ export function effectiveDishKcal(dish: MealItem): number {
   return round1(dish.kcal + pieceMacros(dish.pieces).kcal);
 }
 
-/** Обновляет счётчик одной единицы блюда (kind), клампит в 0..PIECE_MAX; count 0 убирает её. */
+/** Обновляет счётчик одного примитива блюда (kind), клампит в 0..PIECE_MAX. Любая правка
+ *  пользователя снимает assumed (он подтвердил/изменил число — это уже не догадка модели).
+ *  count 0 НЕ убирает чипс из массива: он остаётся видимым неактивным, чтобы вернуть одним
+ *  тапом (сервер при сохранении сам отбросит нулевые). */
 export function withPieceCount(dish: MealItem, kind: string, count: number): MealItem {
   const n = Math.min(PIECE_MAX, Math.max(0, Math.round(count)));
-  const rest = (dish.pieces ?? []).filter((p) => p.kind !== kind);
-  const pieces = n > 0 ? [...rest, { kind, count: n }] : rest;
+  const existing = dish.pieces ?? [];
+  const pieces = existing.some((p) => p.kind === kind)
+    ? existing.map((p) => (p.kind === kind ? { kind, count: n, assumed: false } : p))
+    : [...existing, { kind, count: n, assumed: false }];
   return { ...dish, pieces };
 }
 

@@ -59,11 +59,4 @@ func TestFoodReference_ЯйцаСогласованыСEggs(t *testing.T) {
 	if white.KcalPer100 != round1(e.WhiteKcal/e.WhiteGrams*100) {
 		t.Errorf("белок ккал/100=%v рассинхрон с eggs.go", white.KcalPer100)
 	}
-
-	// Инвариант единого источника: 100 г целого яйца по справочнику == 2 яйца (2×50 г)
-	// по egg-счётчику. Так «100 г яйца из справочника» и «2 яйца тапами» сходятся.
-	_, kcal2, _, _, _ := 0.0, round1(e.WholeKcal*2), 0.0, 0.0, 0.0
-	if whole.KcalPer100 != kcal2 {
-		t.Errorf("100 г целого яйца (%v ккал) ≠ 2 штуки по счётчику (%v ккал)", whole.KcalPer100, kcal2)
-	}
 }

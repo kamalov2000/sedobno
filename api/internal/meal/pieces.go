@@ -6,45 +6,80 @@ import (
 	"github.com/sostav/api/internal/llm"
 )
 
-// Счётные единицы блюда (pieces). Vision-модель стабильно недосчитывает штучные
-// компоненты по КБЖУ, особенно внутри составного блюда («авокадо с 4 яйцами» → считает
-// будто там 2 яйца). Поэтому такие единицы модель выносит в поле pieces=[{kind,count}], а
-// КБЖУ и массу их считает СЕРВЕР детерминированно по типовой константе на штуку — поверх
-// eyeball-чисел самого блюда. Родительское блюдо (авокадо, лапша, тарелка) остаётся
-// eyeball — его модель на глаз тянет нормально, а вот число штук и их вклад — нет.
+// Детерминированные примитивы блюда (pieces). Vision-модель на составных блюдах не
+// синхронизирует КБЖУ со своей же граммовкой и теряет компоненты: штучные (яйца) не входят
+// в вес, скрытые ложечные (масло, сахар) не видны в принципе. Поэтому такие компоненты
+// модель выносит из eyeball-оценки в поле pieces=[{kind,count,assumed}], а их КБЖУ и массу
+// считает СЕРВЕР детерминированно по константе реестра — ПОВЕРХ eyeball-чисел самого блюда,
+// которое модель оценивает БЕЗ примитивов. Юзер правит счётчиком в один тап.
 //
-// Реестр расширяется правкой этого файла (список kind согласован с промптом). Яйцо —
-// точная константа из EggConsts (единый источник с egg-счётчиком и справочником);
-// остальные — типовые значения на одну штуку (Скурихин/USDA, съедобная часть).
+// MVP-реестр — ровно 4 примитива (штучный egg + ложечные oil_veg/butter/sugar). Реестр
+// расширяется данными позже (котлеты/сырники — по калибровке), не «на всякий случай».
+// Egg берём из EggConsts — единый источник с egg-счётчиком и справочником (числа совпадают).
 
-const maxPiecesPerKind = 50 // потолок штук одного вида — защита от мусора
+const maxPiecesPerKind = 50 // потолок штук/ложек одного вида — защита от мусора
 
-// pieceSpec — КБЖУ и масса ОДНОЙ штуки примитива.
+// Константы ложечных добавок на 1 Ч.Л. (~5 г) — единый источник для калибровки (не магические
+// числа в литерале). Egg-константы живут в eggs.go (общий источник с egg-счётчиком).
+const (
+	spoonGrams = 5.0 // масса одной чайной ложки добавки, г
+
+	oilVegKcal = 45.0 // растительное масло, 1 ч.л.
+	oilVegFat  = 5.0
+
+	butterKcal = 37.0 // сливочное масло, 1 ч.л.
+	butterFat  = 4.1
+
+	sugarKcal = 20.0 // сахар, 1 ч.л.
+	sugarCarb = 5.0
+)
+
+// pieceSpec — КБЖУ и масса ОДНОЙ единицы примитива (штука для штучных, 1 ч.л. для ложечных).
+// Addon=true — ложечная добавка «готовилось с» (масло/сахар): считается в чайных ложках,
+// на фронте помечается бытовым «N ч.л.» (не мл/граммы).
 type pieceSpec struct {
 	Grams, Kcal, Protein, Fat, Carb float64
+	Addon                           bool
 }
 
-// pieceRegistry — типовые константы на штуку. Egg берём из EggConsts, чтобы яйцо в pieces,
-// яйцо-счётчик (DishKind=eggs) и яйцо-справочник давали одинаковые числа.
+// pieceRegistry — MVP-реестр из 4 примитивов. Значения на 1 штуку (egg) / 1 ч.л. (ложечные).
 func pieceRegistry() map[string]pieceSpec {
 	e := EggConsts()
 	return map[string]pieceSpec{
-		"egg":      {e.WholeGrams, e.WholeKcal, e.WholeProtein, e.WholeFat, e.WholeCarb},
-		"cutlet":   {100, 220, 14, 15, 8}, // котлета жареная
-		"syrnik":   {60, 110, 10, 4, 8},   // сырник
-		"pancake":  {50, 110, 3, 4, 15},   // блин / оладья
-		"pelmeni":  {13, 25, 1.2, 1, 2.5}, // пельмень (одна штука)
-		"meatball": {40, 80, 5, 5, 3},     // тефтеля / фрикаделька
-		"sausage":  {50, 130, 6, 11, 1},   // сосиска
-		"nugget":   {18, 48, 2.5, 3, 2.5}, // наггетс
+		"egg":     {Grams: e.WholeGrams, Kcal: e.WholeKcal, Protein: e.WholeProtein, Fat: e.WholeFat, Carb: e.WholeCarb},
+		"oil_veg": {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
+		"butter":  {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
+		"sugar":   {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
 	}
 }
 
 // PieceLabels — русские подписи для UI (kind → «Яйца» и т.п.). Экспортируется, чтобы фронт
 // не хардкодил названия. Порядок для UI не важен — блюдо несёт свои pieces.
 var PieceLabels = map[string]string{
-	"egg": "Яйца", "cutlet": "Котлеты", "syrnik": "Сырники", "pancake": "Оладьи",
-	"pelmeni": "Пельмени", "meatball": "Тефтели", "sausage": "Сосиски", "nugget": "Наггетсы",
+	"egg": "Яйца", "oil_veg": "Масло", "butter": "Сливочное", "sugar": "Сахар",
+}
+
+// isAddonKind — ложечная добавка (масло/сахар), а не штучная еда. Для egg-счётчика и
+// разделения стиля чипса на фронте.
+func isAddonKind(kind string) bool {
+	spec, ok := pieceRegistry()[kind]
+	return ok && spec.Addon
+}
+
+// keepAddonPieces оставляет только ложечные добавки (масло/сахар), выбрасывая штучные.
+// Нужно для яичного блюда-счётчика: яйца оно считает само, но масло «готовилось с» —
+// законная добавка, которую нельзя терять (яичница жарится на масле).
+func keepAddonPieces(in []llm.MealPiece) []llm.MealPiece {
+	out := make([]llm.MealPiece, 0, len(in))
+	for _, p := range in {
+		if isAddonKind(p.Kind) {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func clampPieces(n int) int {
@@ -57,8 +92,8 @@ func clampPieces(n int) int {
 	return n
 }
 
-// normPieces чистит счётные единицы: нормализует kind, клампит count, выбрасывает
-// неизвестные примитивы и нулевые. Порядок сохраняется.
+// normPieces чистит примитивы: нормализует kind, клампит count, выбрасывает неизвестные
+// (неизвестный id — игнор, не падение) и нулевые. Флаг assumed сохраняется. Порядок держим.
 func normPieces(in []llm.MealPiece) []llm.MealPiece {
 	if len(in) == 0 {
 		return nil
@@ -74,7 +109,7 @@ func normPieces(in []llm.MealPiece) []llm.MealPiece {
 		if n == 0 {
 			continue
 		}
-		out = append(out, llm.MealPiece{Kind: kind, Count: n})
+		out = append(out, llm.MealPiece{Kind: kind, Count: n, Assumed: p.Assumed})
 	}
 	if len(out) == 0 {
 		return nil
@@ -82,7 +117,7 @@ func normPieces(in []llm.MealPiece) []llm.MealPiece {
 	return out
 }
 
-// pieceMacros — детерминированный КБЖУ и масса всех счётных единиц блюда по реестру.
+// pieceMacros — детерминированный КБЖУ и масса всех примитивов блюда по реестру.
 // Входные pieces предполагаются уже нормализованными (normPieces).
 func pieceMacros(pieces []llm.MealPiece) (grams, kcal, protein, fat, carb float64) {
 	reg := pieceRegistry()

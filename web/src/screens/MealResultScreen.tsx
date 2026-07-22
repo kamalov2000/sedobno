@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, withPieceCount, PIECE_LABELS, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, withPieceCount, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
 import type { DishPatch } from "../api";
@@ -196,12 +196,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   // же санитизацию, что и распознанные. Распознанные отправляем как есть.
   const toPatch = (ds: Draft[]): DishPatch[] =>
     ds.map((d) => {
-      // Яичное блюдо: несём только штуки, сервер пересчитает КБЖУ из констант.
-      if (isEggDish(d)) {
-        return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", eggs_whole: d.eggs_whole ?? 0, eggs_white: d.eggs_white ?? 0 };
-      }
-      // Счётные единицы блюда несём как есть — сервер посчитает их КБЖУ по константам.
+      // Примитивы (штучные + ложечные) несём как есть — сервер посчитает их КБЖУ по константам
+      // и отбросит нулевые/неизвестные. У яичного блюда штучные яйца сервер снимет (двойной
+      // счёт со счётчиком), а ложечное масло оставит.
       const pieces = d.pieces && d.pieces.length ? { pieces: d.pieces } : {};
+      // Яичное блюдо: несём счётчики яиц + возможное масло; сервер пересчитает КБЖУ.
+      if (isEggDish(d)) {
+        return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", eggs_whole: d.eggs_whole ?? 0, eggs_white: d.eggs_white ?? 0, ...pieces };
+      }
       return d.manual
         ? {
             name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0,
@@ -358,10 +360,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
               ) : (
                 <DishCard dish={d} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
               )}
-              {/* Счётные единицы блюда (яйца/котлеты внутри составного) — ± счётчик под
-                  карточкой; их КБЖУ считает сервер, тотал обновляется на лету. */}
-              {!isEggDish(d) && (d.pieces?.length ?? 0) > 0 && (
-                <PieceCounters dish={d} onCount={(kind, count) => setPieceCount(i, kind, count)} />
+              {/* Примитивы блюда чипсами: штучные (яйца ×4) и ложечные добавки (масло 1 ч.л.).
+                  Их КБЖУ считает сервер, тотал обновляется на лету. Показываем у распознанных
+                  и яичных блюд (яичница жарится на масле); у ручного числа юзер вводит сам.
+                  assumed=true (модель предположила) помечается пунктиром. */}
+              {!d.manual && (d.pieces?.length ?? 0) > 0 && (
+                <PieceChips dish={d} onCount={(kind, count) => setPieceCount(i, kind, count)} />
               )}
             </div>
           ))}
@@ -631,42 +635,67 @@ function ManualDishCard({
 // прижатый под карточку блюда. Модель выносит штуки сюда, потому что на глаз их
 // систематически недосчитывает; КБЖУ штук сервер добавляет по константам ПОВЕРХ
 // eyeball-базы блюда, а родитель дублирует расчёт для мгновенного тотала (meal.withPieceCount).
-function PieceCounters({ dish, onCount }: { dish: MealItem; onCount: (kind: string, count: number) => void }) {
+// Ряд чипсов примитивов под карточкой блюда: штучные (яйца ×4) и ложечные добавки
+// (масло 1 ч.л.). Прижат к низу карточки (borderTop:none). assumed-чипсы помечены пунктиром.
+function PieceChips({ dish, onCount }: { dish: MealItem; onCount: (kind: string, count: number) => void }) {
   const pieces = dish.pieces ?? [];
   if (pieces.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "-2px 8px 0", padding: "8px 12px 10px", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-soft)" }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "-2px 8px 0", padding: "8px 12px 10px", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-soft)" }}>
       {pieces.map((p) => (
-        <PieceRow key={p.kind} label={PIECE_LABELS[p.kind] ?? p.kind} count={p.count} onSet={(n) => onCount(p.kind, n)} />
+        <PieceChip key={p.kind} kind={p.kind} count={p.count} assumed={p.assumed ?? false} onSet={(n) => onCount(p.kind, n)} />
       ))}
     </div>
   );
 }
 
-// Одна строка-счётчик вида: подпись + компактный ± (0..PIECE_MAX). Тоньше яичного —
-// он живёт под карточкой, а не внутри неё.
-function PieceRow({ label, count, onSet }: { label: string; count: number; onSet: (n: number) => void }) {
+// Один чипс примитива. Активный (count>0): [−] эмодзи·подпись·количество [+]; «−» на 1 → 0
+// снимает целиком, чипс становится неактивным. assumed=true — пунктирная рамка и «≈» (модель
+// предположила). Неактивный (count=0): остаётся видимым, один тап возвращает. Ложечные
+// подписываются «N ч.л.», штучные «×N» (никаких мл/грамм в лейбле).
+function PieceChip({ kind, count, assumed, onSet }: { kind: string; count: number; assumed: boolean; onSet: (n: number) => void }) {
+  const emoji = PIECE_EMOJI[kind] ?? "";
+  const label = PIECE_LABELS[kind] ?? kind;
   const step = (delta: number) => {
     const next = Math.min(PIECE_MAX, Math.max(0, count + delta));
     if (next === count) return;
     haptic("light");
     onSet(next);
   };
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ flex: 1, fontSize: 12.5, color: "var(--text2)", display: "flex", alignItems: "center", gap: 6 }}>
-        <i className="ti ti-circles" aria-hidden="true" style={{ fontSize: 13, color: "var(--text3)" }} />
+
+  // Снятый (count=0) — неактивный чипс, один тап возвращает единицу.
+  if (count <= 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => step(1)}
+        aria-label={`Добавить: ${label}`}
+        style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 30, padding: "0 11px", border: "1px dashed var(--border)", borderRadius: 15, background: "none", color: "var(--text3)", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, cursor: "pointer" }}
+      >
+        <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 12 }} />
+        <span aria-hidden="true">{emoji}</span>
         {label}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      aria-label={`${assumed ? "предположено: " : ""}${label} ${pieceCountLabel(kind, count)}`}
+      style={{ display: "inline-flex", alignItems: "center", height: 30, borderRadius: 15, overflow: "hidden", border: `1px ${assumed ? "dashed" : "solid"} var(--cal-border)`, background: "var(--cal-soft)" }}
+    >
+      <button type="button" onClick={() => step(-1)} aria-label={`${label}: меньше`} style={{ width: 28, height: "100%", background: "none", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 12 }} />
+      </button>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "0 2px", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, color: "var(--text)", whiteSpace: "nowrap" }}>
+        <span aria-hidden="true">{emoji}</span>
+        {label}
+        {assumed && <span aria-hidden="true" title="предположено" style={{ color: "var(--text3)", fontSize: 11 }}>≈</span>}
+        <span style={{ fontFamily: "'PT Mono',monospace", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{pieceCountLabel(kind, count)}</span>
       </span>
-      <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 9, overflow: "hidden", height: 32, background: "var(--bg)" }}>
-        <button type="button" onClick={() => step(-1)} disabled={count <= 0} aria-label={`${label}: меньше`} style={{ width: 34, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: count <= 0 ? "default" : "pointer", opacity: count <= 0 ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 13 }} />
-        </button>
-        <span aria-label={`${label}: штук`} style={{ minWidth: 30, textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 14, fontWeight: 600, color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{count}</span>
-        <button type="button" onClick={() => step(1)} disabled={count >= PIECE_MAX} aria-label={`${label}: больше`} style={{ width: 34, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: count >= PIECE_MAX ? "default" : "pointer", opacity: count >= PIECE_MAX ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 13 }} />
-        </button>
-      </div>
+      <button type="button" onClick={() => step(1)} disabled={count >= PIECE_MAX} aria-label={`${label}: больше`} style={{ width: 28, height: "100%", background: "none", border: "none", color: "var(--text)", cursor: count >= PIECE_MAX ? "default" : "pointer", opacity: count >= PIECE_MAX ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 12 }} />
+      </button>
     </div>
   );
 }

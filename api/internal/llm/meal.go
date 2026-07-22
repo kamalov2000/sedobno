@@ -48,11 +48,15 @@ type MealItem struct {
 	Pieces []MealPiece `json:"pieces,omitempty"`
 }
 
-// MealPiece — счётные единицы блюда: сколько штук какого примитива. Kind — из реестра
-// (см. пакет meal): egg|cutlet|syrnik|pancake|pelmeni|meatball|sausage|nugget.
+// MealPiece — детерминированный примитив блюда: сколько единиц какого вида. Kind — из
+// MVP-реестра (см. пакет meal): egg (штучный) | oil_veg | butter | sugar (ложечные, 1 ч.л.).
+// Assumed=false — модель ВИДЕЛА единицы (сосчитанные яйца); Assumed=true — модель
+// ПРЕДПОЛОЖИЛА вероятную скрытую добавку (масло при жарке, сахар в каше) с консервативным
+// count (обычно 1). Их КБЖУ считает сервер по константе, поверх eyeball-базы блюда.
 type MealPiece struct {
-	Kind  string `json:"kind"`
-	Count int    `json:"count"`
+	Kind    string `json:"kind"`
+	Count   int    `json:"count"`
+	Assumed bool   `json:"assumed,omitempty"`
 }
 
 // MealMacros — суммарные КБЖУ приёма (сумма по dishes).

@@ -55,8 +55,9 @@ type dishInput struct {
 	EggsWhole int    `json:"eggs_whole"`
 	EggsWhite int    `json:"eggs_white"`
 
-	// Pieces — счётные единицы блюда (яйца/котлеты/…). КБЖУ считает сервер по константам,
-	// клиентские числа для них игнорируются (как у dish_kind=eggs). База блюда — eyeball.
+	// Pieces — детерминированные примитивы блюда: штучные (egg) и ложечные добавки
+	// (oil_veg/butter/sugar). КБЖУ считает сервер по константам, клиентские числа для них
+	// игнорируются (как у dish_kind=eggs). Флаг assumed переживает правку (модель предположила).
 	Pieces []llm.MealPiece `json:"pieces"`
 }
 
@@ -85,7 +86,7 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 		item := llm.MealItem{
 			Name: name, Grams: d.Grams, Kcal: d.Kcal,
 			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, Confidence: d.Confidence,
-			Pieces: d.Pieces, // счётные единицы — санитизация нормализует и посчитает по константам
+			Pieces: d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
 		}
 
 		switch {

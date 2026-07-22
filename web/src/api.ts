@@ -253,8 +253,9 @@ export interface DishPatch {
   dish_kind?: string;
   eggs_whole?: number;
   eggs_white?: number;
-  /** Счётные единицы блюда — КБЖУ считает сервер по константам поверх базы. */
-  pieces?: { kind: string; count: number }[];
+  /** Примитивы блюда (штучные + ложечные добавки) — КБЖУ считает сервер по константам
+   *  поверх базы. Флаг assumed переживает правку (модель предположила добавку). */
+  pieces?: { kind: string; count: number; assumed?: boolean }[];
 }
 
 export interface MealPatch {

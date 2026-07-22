@@ -194,8 +194,9 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d.Kcal = clampNonNeg(d.Kcal, maxDishKcal)
 		d.Confidence = clamp01(d.Confidence)
 
-		// Счётные единицы блюда нормализуем сразу: их КБЖУ добавит total по константам, а
-		// база блюда (eyeball) остаётся как есть — сами штуки в неё не входят.
+		// Примитивы блюда нормализуем сразу: их КБЖУ добавит total по константам, а база
+		// блюда (eyeball) остаётся как есть — сами примитивы в неё не входят. Штучные (egg)
+		// и ложечные добавки (oil_veg/butter/sugar) живут в одном pieces, различаясь Addon-видом.
 		d.Pieces = normPieces(d.Pieces)
 
 		// Пустое блюдо (ни массы, ни КБЖУ) — распознавательный шум, не показываем. Не
@@ -206,9 +207,11 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		}
 
 		if egg, ok := asEggDish(d); ok {
-			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам. pieces у такого блюда
-			// обнуляем — иначе яйца посчитались бы дважды (и как dish_kind, и как pieces).
-			egg.Pieces = nil
+			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам. Штучные pieces у такого
+			// блюда выбрасываем — иначе яйца посчитались бы дважды (и как dish_kind, и как
+			// pieces). Но ложечные добавки (масло — яичница жарится на нём) сохраняем: их
+			// вклад не дублируется, а терять его нельзя.
+			egg.Pieces = keepAddonPieces(egg.Pieces)
 			out = append(out, egg)
 			continue
 		}
