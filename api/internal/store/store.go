@@ -611,6 +611,34 @@ func (s *Store) RenewSubscriptionFailure(ctx context.Context, subID, userID int6
 	return expired, attempts, nil
 }
 
+// SubscriptionDetail — сводка действующей подписки для экрана подписки (§14: план, дата
+// следующего списания, способ, кнопка отмены). Provider различает канал (stars|sbp);
+// NextCharge — когда спишется следующий период (nil у отменённой/разовой); AutoRenew —
+// включено ли автопродление (есть плановое списание).
+type SubscriptionDetail struct {
+	Provider   string
+	Plan       string
+	Status     string
+	ExpiresAt  time.Time
+	NextCharge *time.Time
+	AutoRenew  bool
+}
+
+// CurrentSubscription возвращает действующую подписку пользователя (самую позднюю по сроку
+// среди дающих доступ) или nil, если подписки нет. Для экрана подписки в mini-app.
+func (s *Store) CurrentSubscription(ctx context.Context, userID int64) (*SubscriptionDetail, error) {
+	var d SubscriptionDetail
+	err := s.pool.QueryRow(ctx, namedQuery("sub_current_detail"), userID).
+		Scan(&d.Provider, &d.Plan, &d.Status, &d.ExpiresAt, &d.NextCharge, &d.AutoRenew)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // UpcomingRenewal — подписка, по которой пора предупредить о скором автосписании.
 // TelegramID нужен, чтобы отправить сообщение через бот.
 type UpcomingRenewal struct {

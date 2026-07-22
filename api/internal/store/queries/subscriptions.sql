@@ -97,6 +97,17 @@ LIMIT $1;
 -- name: sub_mark_notified
 UPDATE subscriptions SET renewal_notified_at = now() WHERE id = $1;
 
+-- name: sub_current_detail
+-- Текущая действующая подписка пользователя для экрана подписки: самая поздняя по сроку
+-- среди дающих доступ (active|cancelled, срок ещё идёт). auto_renew = есть плановое списание
+-- (next_charge_at IS NOT NULL): true у active-рекуррента, false у отменённой и разовой.
+SELECT provider, plan, status, expires_at, next_charge_at,
+       (next_charge_at IS NOT NULL) AS auto_renew
+FROM subscriptions
+WHERE user_id = $1 AND status IN ('active', 'cancelled') AND expires_at > now()
+ORDER BY expires_at DESC
+LIMIT 1;
+
 -- name: sub_charge_increment_attempts
 UPDATE subscriptions SET charge_attempts = charge_attempts + 1 WHERE id = $1 RETURNING charge_attempts;
 

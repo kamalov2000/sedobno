@@ -65,3 +65,26 @@ WHERE user_id=$1 AND plan='monthly' AND provider_payment_method_id IS NULL AND n
 		t.Fatalf("разовый sbp-платёж завёл автосписание: подходящих строк=%d, ждали 1", n)
 	}
 }
+
+// CurrentSubscription отдаёт действующую подписку с авто-продлением (для экрана подписки).
+func TestCurrentSubscription_ДетальДляЭкрана(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 4201)
+	mustRecordAuto(t, s, ctx, uid, "pay-cur", "pm-cur") // автопродляемая monthly
+
+	d, err := s.CurrentSubscription(ctx, uid)
+	if err != nil || d == nil {
+		t.Fatalf("CurrentSubscription: %v (d=%v)", err, d)
+	}
+	if d.Provider != "sbp" || d.Plan != PlanMonthly || !d.AutoRenew || d.NextCharge == nil {
+		t.Fatalf("деталь неверна: %+v", d)
+	}
+	// После отмены — доступ есть, но auto_renew=false и next_charge пуст.
+	if _, err := s.CancelSubscription(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	d2, _ := s.CurrentSubscription(ctx, uid)
+	if d2 == nil || d2.Status != SubStatusCancelled || d2.AutoRenew || d2.NextCharge != nil {
+		t.Fatalf("после отмены деталь неверна: %+v", d2)
+	}
+}

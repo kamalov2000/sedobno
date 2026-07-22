@@ -35,6 +35,21 @@ type meView struct {
 	// SBPAvailable — включён ли канал оплаты по СБП/карте (§14.1). Фронт по нему решает,
 	// показывать ли вторую кнопку пейволла. Всегда присутствует (не omitempty).
 	SBPAvailable bool `json:"sbp_available"`
+	// Subscription — детали действующей подписки для экрана подписки (план, дата следующего
+	// списания, автопродление). Опущено, если подписки нет.
+	Subscription *subscriptionView `json:"subscription,omitempty"`
+}
+
+// subscriptionView — сводка подписки для экрана управления (§14: план, следующее списание,
+// автопродление, канал). AutoRenew=true → показываем кнопку отмены; NextCharge — дата
+// следующего автосписания (nil у отменённой: доступ до ExpiresAt, дальше пейволл).
+type subscriptionView struct {
+	Provider   string     `json:"provider"` // stars | sbp
+	Plan       string     `json:"plan"`     // monthly | annual
+	Status     string     `json:"status"`   // active | cancelled | past_due
+	ExpiresAt  time.Time  `json:"expires_at"`
+	NextCharge *time.Time `json:"next_charge_at,omitempty"`
+	AutoRenew  bool       `json:"auto_renew"`
 }
 
 type authResponse struct {
@@ -106,10 +121,14 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		SBPAvailable: s.cfg.SBPEnabled,
 	}
 	if u.IsSubscribed {
-		if exp, err := s.store.ActiveSubExpiry(ctx, u.ID); err != nil {
-			s.log.Warn("me: чтение срока подписки", "err", err, "user", u.ID)
-		} else {
-			v.SubscriptionExpiresAt = exp
+		if sub, err := s.store.CurrentSubscription(ctx, u.ID); err != nil {
+			s.log.Warn("me: чтение подписки", "err", err, "user", u.ID)
+		} else if sub != nil {
+			v.SubscriptionExpiresAt = &sub.ExpiresAt // прежнее поле (бейдж) — из той же записи
+			v.Subscription = &subscriptionView{
+				Provider: sub.Provider, Plan: sub.Plan, Status: sub.Status,
+				ExpiresAt: sub.ExpiresAt, NextCharge: sub.NextCharge, AutoRenew: sub.AutoRenew,
+			}
 		}
 	}
 	return v
