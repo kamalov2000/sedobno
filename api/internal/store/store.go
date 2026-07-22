@@ -611,6 +611,32 @@ func (s *Store) RenewSubscriptionFailure(ctx context.Context, subID, userID int6
 	return expired, attempts, nil
 }
 
+// CancelSubscription отменяет автопродление пользователя: переводит автопродляемую
+// подписку в 'cancelled' и снимает плановое списание. Доступ НЕ трогаем — он живёт до конца
+// оплаченного периода (expires_at), безлимит снимет свип по истечении. Возвращает дату, до
+// которой действует доступ (max expires_at отменённых записей), или nil — отменять было
+// нечего (нет автопродляемой подписки; Stars отменяется в настройках Telegram). Идемпотентно:
+// повторная отмена ничего не находит и вернёт nil.
+func (s *Store) CancelSubscription(ctx context.Context, userID int64) (*time.Time, error) {
+	rows, err := s.pool.Query(ctx, namedQuery("sub_cancel"), userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var until *time.Time
+	for rows.Next() {
+		var exp time.Time
+		if err := rows.Scan(&exp); err != nil {
+			return nil, err
+		}
+		if until == nil || exp.After(*until) {
+			e := exp
+			until = &e
+		}
+	}
+	return until, rows.Err()
+}
+
 // InsertEvent пишет аналитическое событие (§10). props может быть nil.
 // Best-effort — вызывающий обычно игнорирует ошибку.
 func (s *Store) InsertEvent(ctx context.Context, userID *int64, name string, props map[string]any) error {

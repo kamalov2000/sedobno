@@ -2,9 +2,14 @@
 -- в internal/store/store.go; здесь только сам SQL. Денежная механика: срок = «остаток +
 -- период» (sub_period_expiry) под блокировкой строки пользователя (sub_lock_user).
 
+-- Доступ действует, пока status IN ('active','cancelled') И expires_at > now(): 'cancelled' —
+-- автопродление выключено пользователем, но оплаченный период ещё идёт. 'past_due' доступа
+-- НЕ даёт (период кончился, идёт ретрай списания). Этот предикат — общий для всех запросов,
+-- решающих «есть ли безлимит».
+
 -- name: sub_active_expiry
 SELECT max(expires_at) FROM subscriptions
-WHERE user_id = $1 AND status = 'active';
+WHERE user_id = $1 AND status IN ('active', 'cancelled');
 
 -- name: sub_lock_user
 SELECT 1 FROM users WHERE id = $1 FOR UPDATE;
@@ -14,7 +19,7 @@ UPDATE users SET is_subscribed = true WHERE id = $1;
 
 -- name: sub_period_expiry
 SELECT GREATEST(now(), COALESCE(
-  (SELECT max(expires_at) FROM subscriptions WHERE user_id = $1 AND status = 'active'), now()
+  (SELECT max(expires_at) FROM subscriptions WHERE user_id = $1 AND status IN ('active', 'cancelled')), now()
 )) + make_interval(secs => $2);
 
 -- name: sub_activate_stars_insert
@@ -36,16 +41,17 @@ INSERT INTO subscriptions
 VALUES ($1, 'sbp', $2, 'active', now(), $3, $4, $5, $6);
 
 -- name: sub_lapse_expire
--- АВТОПРОДЛЯЕМЫЕ (next_charge_at NOT NULL) свип НЕ трогает: их ведёт планировщик.
+-- Истёкшие active/cancelled → expired. АВТОПРОДЛЯЕМЫЕ (next_charge_at NOT NULL) свип НЕ
+-- трогает: их ведёт планировщик. Отменённые уже с next_charge_at=NULL, потому сюда попадут.
 UPDATE subscriptions SET status = 'expired'
-WHERE status = 'active' AND expires_at <= now() AND next_charge_at IS NULL;
+WHERE status IN ('active', 'cancelled') AND expires_at <= now() AND next_charge_at IS NULL;
 
 -- name: sub_lapse_drop_subscribed
 UPDATE users u SET is_subscribed = false
 WHERE u.is_subscribed = true
   AND NOT EXISTS (
     SELECT 1 FROM subscriptions s
-    WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > now()
+    WHERE s.user_id = u.id AND s.status IN ('active', 'cancelled') AND s.expires_at > now()
   )
 RETURNING u.id;
 
@@ -80,8 +86,17 @@ UPDATE users u SET is_subscribed = false
 WHERE u.id = $1 AND u.is_subscribed = true
   AND NOT EXISTS (
     SELECT 1 FROM subscriptions s
-    WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > now()
+    WHERE s.user_id = u.id AND s.status IN ('active', 'cancelled') AND s.expires_at > now()
   );
+
+-- name: sub_cancel
+-- Отмена автопродления: подписку в 'cancelled', снимаем плановое списание. expires_at НЕ
+-- трогаем — доступ до конца оплаченного периода. Отменяем автопродляемую запись (есть
+-- next_charge_at); Stars-рекуррент отменяется в настройках Telegram, не здесь.
+UPDATE subscriptions
+SET status = 'cancelled', next_charge_at = NULL
+WHERE user_id = $1 AND status IN ('active', 'past_due') AND next_charge_at IS NOT NULL
+RETURNING expires_at;
 
 -- name: sub_charge_pastdue
 UPDATE subscriptions SET status = 'past_due', next_charge_at = now() + make_interval(secs => $2) WHERE id = $1;

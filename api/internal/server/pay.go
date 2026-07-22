@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/sostav/api/internal/tg"
 )
@@ -64,4 +65,36 @@ func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 
 	_ = s.store.InsertEvent(ctx, &u.ID, "pay_started", nil)
 	writeJSON(w, http.StatusOK, payCreateResponse{InvoiceLink: link})
+}
+
+// subCancelResponse — итог отмены. access_until — до какого момента действует доступ
+// (конец оплаченного периода); cancelled=false — отменять было нечего (нет автопродляемой
+// подписки ЮKassa; Stars отменяется в настройках Telegram).
+type subCancelResponse struct {
+	Cancelled   bool       `json:"cancelled"`
+	AccessUntil *time.Time `json:"access_until,omitempty"`
+}
+
+// handleSubCancel — POST /api/sub/cancel (защищённый). Выключает автопродление подписки
+// ЮKassa: доступ остаётся до конца оплаченного периода, автосписаний больше нет. Без
+// удержаний и пересчётов (§подписки v2, поправка 3). Идемпотентно: повторная отмена —
+// no-op. Отмену Stars-подписки делает пользователь в настройках Telegram, не здесь.
+func (s *Server) handleSubCancel(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+		return
+	}
+	ctx := r.Context()
+
+	until, err := s.store.CancelSubscription(ctx, claims.UserID)
+	if err != nil {
+		s.log.Error("sub cancel: отмена подписки", "err", err, "user", claims.UserID)
+		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
+		return
+	}
+	if until != nil {
+		_ = s.store.InsertEvent(ctx, &claims.UserID, "sub_cancelled", nil)
+	}
+	writeJSON(w, http.StatusOK, subCancelResponse{Cancelled: until != nil, AccessUntil: until})
 }
