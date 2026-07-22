@@ -1,0 +1,87 @@
+-- Запросы домена подписок (Stars + ЮKassa/СБП, автопродление v2). Оркестрация транзакций —
+-- в internal/store/store.go; здесь только сам SQL. Денежная механика: срок = «остаток +
+-- период» (sub_period_expiry) под блокировкой строки пользователя (sub_lock_user).
+
+-- name: sub_active_expiry
+SELECT max(expires_at) FROM subscriptions
+WHERE user_id = $1 AND status = 'active';
+
+-- name: sub_lock_user
+SELECT 1 FROM users WHERE id = $1 FOR UPDATE;
+
+-- name: sub_mark_user_subscribed
+UPDATE users SET is_subscribed = true WHERE id = $1;
+
+-- name: sub_period_expiry
+SELECT GREATEST(now(), COALESCE(
+  (SELECT max(expires_at) FROM subscriptions WHERE user_id = $1 AND status = 'active'), now()
+)) + make_interval(secs => $2);
+
+-- name: sub_activate_stars_insert
+INSERT INTO subscriptions
+  (user_id, provider, plan, status, stars_amount, started_at, expires_at, telegram_charge_id, raw_payload)
+VALUES ($1, 'stars', $2, 'active', $3, now(), $4, $5, $6)
+ON CONFLICT (telegram_charge_id) DO NOTHING
+RETURNING id;
+
+-- name: sub_sbp_insert_payment
+INSERT INTO sbp_payments (user_id, provider_payment_id, amount_rub, status, raw_payload)
+VALUES ($1, $2, $3, 'succeeded', $4)
+ON CONFLICT (provider_payment_id) DO NOTHING
+RETURNING id;
+
+-- name: sub_sbp_insert_subscription
+INSERT INTO subscriptions
+  (user_id, provider, plan, status, started_at, expires_at, provider_payment_method_id, next_charge_at, raw_payload)
+VALUES ($1, 'sbp', $2, 'active', now(), $3, $4, $5, $6);
+
+-- name: sub_lapse_expire
+-- АВТОПРОДЛЯЕМЫЕ (next_charge_at NOT NULL) свип НЕ трогает: их ведёт планировщик.
+UPDATE subscriptions SET status = 'expired'
+WHERE status = 'active' AND expires_at <= now() AND next_charge_at IS NULL;
+
+-- name: sub_lapse_drop_subscribed
+UPDATE users u SET is_subscribed = false
+WHERE u.is_subscribed = true
+  AND NOT EXISTS (
+    SELECT 1 FROM subscriptions s
+    WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > now()
+  )
+RETURNING u.id;
+
+-- name: sub_due_for_charge
+-- Автопродляемые, которым пора списать. Grandfathering: строки без способа/next_charge_at
+-- (старые разовые, а также Stars) сюда не попадают.
+SELECT id, user_id, plan, provider_payment_method_id, expires_at, charge_attempts
+FROM subscriptions
+WHERE status IN ('active', 'past_due')
+  AND provider = 'sbp'
+  AND provider_payment_method_id IS NOT NULL
+  AND next_charge_at IS NOT NULL
+  AND next_charge_at <= $1
+ORDER BY next_charge_at
+LIMIT $2;
+
+-- name: sub_renew_update
+-- Продлеваем ТУ ЖЕ подписку (не вставляем новую): срок и следующее списание на новый конец
+-- периода, сброс счётчика неудач, снова active.
+UPDATE subscriptions
+SET expires_at = $2, next_charge_at = $2, charge_attempts = 0, status = 'active', raw_payload = $3
+WHERE id = $1;
+
+-- name: sub_charge_increment_attempts
+UPDATE subscriptions SET charge_attempts = charge_attempts + 1 WHERE id = $1 RETURNING charge_attempts;
+
+-- name: sub_charge_expire
+UPDATE subscriptions SET status = 'expired', next_charge_at = NULL WHERE id = $1;
+
+-- name: sub_charge_drop_subscribed
+UPDATE users u SET is_subscribed = false
+WHERE u.id = $1 AND u.is_subscribed = true
+  AND NOT EXISTS (
+    SELECT 1 FROM subscriptions s
+    WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > now()
+  );
+
+-- name: sub_charge_pastdue
+UPDATE subscriptions SET status = 'past_due', next_charge_at = now() + make_interval(secs => $2) WHERE id = $1;

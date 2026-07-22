@@ -78,11 +78,8 @@ RETURNING free_scans_used`
 // ActiveSubExpiry возвращает дату окончания активной подписки пользователя
 // (максимальную, если их несколько после продлений). nil — активной подписки нет.
 func (s *Store) ActiveSubExpiry(ctx context.Context, userID int64) (*time.Time, error) {
-	const q = `
-SELECT max(expires_at) FROM subscriptions
-WHERE user_id = $1 AND status = 'active'`
 	var exp *time.Time
-	if err := s.pool.QueryRow(ctx, q, userID).Scan(&exp); err != nil {
+	if err := s.pool.QueryRow(ctx, namedQuery("sub_active_expiry"), userID).Scan(&exp); err != nil {
 		return nil, err
 	}
 	return exp, nil
@@ -346,10 +343,7 @@ func nullStr(s string) *string {
 // параллельная активация того же пользователя посчитает базу от того же остатка.
 func periodExpiry(ctx context.Context, tx pgx.Tx, userID int64, periodSec int) (time.Time, error) {
 	var exp time.Time
-	err := tx.QueryRow(ctx, `
-SELECT GREATEST(now(), COALESCE(
-  (SELECT max(expires_at) FROM subscriptions WHERE user_id = $1 AND status = 'active'), now()
-)) + make_interval(secs => $2)`, userID, periodSec).Scan(&exp)
+	err := tx.QueryRow(ctx, namedQuery("sub_period_expiry"), userID, periodSec).Scan(&exp)
 	return exp, err
 }
 
@@ -367,7 +361,7 @@ func (s *Store) ActivateSubscription(ctx context.Context, sub SubscriptionInput)
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
 
 	// Сериализуем активации одного пользователя: продление не должно терять остаток.
-	if _, err = tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, sub.UserID); err != nil {
+	if _, err = tx.Exec(ctx, namedQuery("sub_lock_user"), sub.UserID); err != nil {
 		return false, err
 	}
 	exp, err := periodExpiry(ctx, tx, sub.UserID, sub.PeriodSec)
@@ -376,19 +370,15 @@ func (s *Store) ActivateSubscription(ctx context.Context, sub SubscriptionInput)
 	}
 
 	var id int64
-	err = tx.QueryRow(ctx, `
-INSERT INTO subscriptions
-  (user_id, provider, plan, status, stars_amount, started_at, expires_at, telegram_charge_id, raw_payload)
-VALUES ($1, 'stars', $2, 'active', $3, now(), $4, $5, $6)
-ON CONFLICT (telegram_charge_id) DO NOTHING
-RETURNING id`, sub.UserID, planOrDefault(sub.Plan), sub.Stars, exp, sub.ChargeID, sub.RawPayload).Scan(&id)
+	err = tx.QueryRow(ctx, namedQuery("sub_activate_stars_insert"),
+		sub.UserID, planOrDefault(sub.Plan), sub.Stars, exp, sub.ChargeID, sub.RawPayload).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return false, nil // charge_id уже вставлен ранее — дубликат, откатываемся
 	}
 	if err != nil {
 		return false, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE users SET is_subscribed = true WHERE id = $1`, sub.UserID); err != nil {
+	if _, err = tx.Exec(ctx, namedQuery("sub_mark_user_subscribed"), sub.UserID); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -428,11 +418,8 @@ func (s *Store) RecordSBPPaymentAndActivate(ctx context.Context, in SBPPaymentIn
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
 
 	var id int64
-	err = tx.QueryRow(ctx, `
-INSERT INTO sbp_payments (user_id, provider_payment_id, amount_rub, status, raw_payload)
-VALUES ($1, $2, $3, 'succeeded', $4)
-ON CONFLICT (provider_payment_id) DO NOTHING
-RETURNING id`, in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Scan(&id)
+	err = tx.QueryRow(ctx, namedQuery("sub_sbp_insert_payment"),
+		in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Scan(&id)
 	if err == pgx.ErrNoRows {
 		return false, nil // этот платёж уже обработан ранее — дубликат, откатываемся
 	}
@@ -441,7 +428,7 @@ RETURNING id`, in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Sca
 	}
 	// Сериализуем активации одного пользователя (см. periodExpiry): дубликаты гасит
 	// UNIQUE выше, а вот два РАЗНЫХ платежа подряд могут прийти параллельно.
-	if _, err = tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, in.UserID); err != nil {
+	if _, err = tx.Exec(ctx, namedQuery("sub_lock_user"), in.UserID); err != nil {
 		return false, err
 	}
 	exp, err := periodExpiry(ctx, tx, in.UserID, in.PeriodSec)
@@ -459,13 +446,11 @@ RETURNING id`, in.UserID, in.ProviderPaymentID, in.AmountRub, in.RawPayload).Sca
 	}
 	// Подписка канала СБП: stars_amount/telegram_charge_id остаются NULL (не Stars),
 	// потому revenue_stars их не суммирует, а UNIQUE(telegram_charge_id) допускает NULL.
-	if _, err = tx.Exec(ctx, `
-INSERT INTO subscriptions (user_id, provider, plan, status, started_at, expires_at, provider_payment_method_id, next_charge_at, raw_payload)
-VALUES ($1, 'sbp', $2, 'active', now(), $3, $4, $5, $6)`,
+	if _, err = tx.Exec(ctx, namedQuery("sub_sbp_insert_subscription"),
 		in.UserID, planOrDefault(in.Plan), exp, pm, nextCharge, in.RawPayload); err != nil {
 		return false, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE users SET is_subscribed = true WHERE id = $1`, in.UserID); err != nil {
+	if _, err = tx.Exec(ctx, namedQuery("sub_mark_user_subscribed"), in.UserID); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -486,20 +471,13 @@ func (s *Store) LapseExpiredSubscriptions(ctx context.Context) ([]int64, error) 
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
 
 	// Просроченные active → expired (чтобы admin-статистика и ActiveSubExpiry были точны).
-	if _, err = tx.Exec(ctx,
-		`UPDATE subscriptions SET status = 'expired' WHERE status = 'active' AND expires_at <= now()`); err != nil {
+	// Автопродляемые свип не трогает (см. sub_lapse_expire) — их ведёт планировщик.
+	if _, err = tx.Exec(ctx, namedQuery("sub_lapse_expire")); err != nil {
 		return nil, err
 	}
 
 	// Снимаем безлимит у тех, у кого не осталось действующей (непросроченной) подписки.
-	rows, err := tx.Query(ctx, `
-UPDATE users u SET is_subscribed = false
-WHERE u.is_subscribed = true
-  AND NOT EXISTS (
-    SELECT 1 FROM subscriptions s
-    WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > now()
-  )
-RETURNING u.id`)
+	rows, err := tx.Query(ctx, namedQuery("sub_lapse_drop_subscribed"))
 	if err != nil {
 		return nil, err
 	}
@@ -520,6 +498,117 @@ RETURNING u.id`)
 		return nil, err
 	}
 	return ids, nil
+}
+
+// maxChargeAttempts — сколько подряд неудачных автосписаний терпим, прежде чем погасить
+// подписку (§подписки v2, Этап 3.2: «после 3 неудач — sub_expired»).
+const maxChargeAttempts = 3
+
+// DueSubscription — автопродляемая подписка, которой пора списать следующий период.
+// ExpiresAt (текущий конец периода) служит маркером периода для ключа идемпотентности
+// автосписания: одно списание на период, повторный тик его не дублирует.
+type DueSubscription struct {
+	ID              int64
+	UserID          int64
+	Plan            string
+	PaymentMethodID string
+	ExpiresAt       time.Time
+	Attempts        int
+}
+
+// SubscriptionsDueForCharge возвращает автопродляемые подписки, которым пора списать
+// (next_charge_at <= now). Включает active и past_due (ретрай). GRANDFATHERING: строки без
+// provider_payment_method_id/next_charge_at (старые разовые покупки, а также Stars —
+// рекуррент там ведёт Telegram) сюда не попадают.
+//
+// Блокировку строк FOR UPDATE не берём: планировщик — одна горутина одного инстанса, а
+// истинная защита от двойного списания — ключ идемпотентности ЮKassa (subscription_id +
+// период). Держать строковый лок через сетевой вызов к ЮKassa было бы хуже (долгая
+// транзакция), чем эта явная гарантия на стороне платёжного API.
+func (s *Store) SubscriptionsDueForCharge(ctx context.Context, now time.Time, limit int) ([]DueSubscription, error) {
+	rows, err := s.pool.Query(ctx, namedQuery("sub_due_for_charge"), now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DueSubscription
+	for rows.Next() {
+		var d DueSubscription
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Plan, &d.PaymentMethodID, &d.ExpiresAt, &d.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// RenewSubscriptionSuccess применяет успешное автосписание: продлевает ТУ ЖЕ подписку
+// (новый срок = остаток + период через общий periodExpiry под FOR UPDATE), переносит
+// next_charge_at на новый конец периода, сбрасывает счётчик неудач и снова помечает
+// пользователя подписчиком (на случай, если он проседал в past_due). Платёж пишется в
+// sbp_payments (аудит + идемпотентность по provider_payment_id). Продлеваем существующую
+// строку, а НЕ вставляем новую: иначе у пользователя было бы несколько next_charge_at.
+func (s *Store) RenewSubscriptionSuccess(ctx context.Context, subID, userID int64, periodSec int, providerPaymentID string, amountRub int, raw []byte) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
+
+	if _, err = tx.Exec(ctx, namedQuery("sub_lock_user"), userID); err != nil {
+		return err
+	}
+	exp, err := periodExpiry(ctx, tx, userID, periodSec)
+	if err != nil {
+		return err
+	}
+	// Тот же INSERT платежа, что и у покупки (RETURNING id игнорируем через Exec):
+	// ON CONFLICT DO NOTHING делает повтор безопасным.
+	if _, err = tx.Exec(ctx, namedQuery("sub_sbp_insert_payment"), userID, providerPaymentID, amountRub, raw); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, namedQuery("sub_renew_update"), subID, exp, raw); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, namedQuery("sub_mark_user_subscribed"), userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RenewSubscriptionFailure применяет неудачное автосписание: инкремент счётчика; при
+// достижении потолка (maxChargeAttempts) гасит подписку (status='expired', next_charge_at=
+// NULL) и снимает безлимит, если не осталось действующей подписки; иначе — статус past_due
+// и следующая попытка через retryAfterSec. Возвращает (гашение_состоялось, счётчик).
+// Доступ до конца оплаченного периода не трогаем — expires_at здесь не меняется.
+func (s *Store) RenewSubscriptionFailure(ctx context.Context, subID, userID int64, retryAfterSec int) (expired bool, attempts int, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
+
+	if err = tx.QueryRow(ctx, namedQuery("sub_charge_increment_attempts"), subID).Scan(&attempts); err != nil {
+		return false, 0, err
+	}
+	if attempts >= maxChargeAttempts {
+		if _, err = tx.Exec(ctx, namedQuery("sub_charge_expire"), subID); err != nil {
+			return false, 0, err
+		}
+		// Снять безлимит, если у пользователя не осталось действующей подписки.
+		if _, err = tx.Exec(ctx, namedQuery("sub_charge_drop_subscribed"), userID); err != nil {
+			return false, 0, err
+		}
+		expired = true
+	} else {
+		if _, err = tx.Exec(ctx, namedQuery("sub_charge_pastdue"), subID, retryAfterSec); err != nil {
+			return false, 0, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return false, 0, err
+	}
+	return expired, attempts, nil
 }
 
 // InsertEvent пишет аналитическое событие (§10). props может быть nil.
