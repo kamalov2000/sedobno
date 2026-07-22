@@ -611,6 +611,45 @@ func (s *Store) RenewSubscriptionFailure(ctx context.Context, subID, userID int6
 	return expired, attempts, nil
 }
 
+// UpcomingRenewal — подписка, по которой пора предупредить о скором автосписании.
+// TelegramID нужен, чтобы отправить сообщение через бот.
+type UpcomingRenewal struct {
+	ID         int64
+	UserID     int64
+	TelegramID int64
+	Plan       string
+	NextCharge time.Time
+}
+
+// SubscriptionsDueForRenewalNotice возвращает автопродляемые подписки ЮKassa, у которых
+// списание в ближайшие 48ч и предупреждение ещё не отправлено. Идемпотентность повторных
+// тиков — через renewal_notified_at (см. MarkRenewalNotified): следующий тик того же периода
+// подписку уже не выберет.
+func (s *Store) SubscriptionsDueForRenewalNotice(ctx context.Context, limit int) ([]UpcomingRenewal, error) {
+	rows, err := s.pool.Query(ctx, namedQuery("sub_due_for_notice"), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UpcomingRenewal
+	for rows.Next() {
+		var r UpcomingRenewal
+		if err := rows.Scan(&r.ID, &r.UserID, &r.TelegramID, &r.Plan, &r.NextCharge); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MarkRenewalNotified помечает, что предупреждение о списании за текущий период отправлено.
+// Ставим ПОСЛЕ успешной отправки: сбой отправки оставит подписку в выборке — следующий тик
+// повторит (лучше повтор, чем молчание перед списанием). Продление сбрасывает пометку.
+func (s *Store) MarkRenewalNotified(ctx context.Context, subID int64) error {
+	_, err := s.pool.Exec(ctx, namedQuery("sub_mark_notified"), subID)
+	return err
+}
+
 // CancelSubscription отменяет автопродление пользователя: переводит автопродляемую
 // подписку в 'cancelled' и снимает плановое списание. Доступ НЕ трогаем — он живёт до конца
 // оплаченного периода (expires_at), безлимит снимет свип по истечении. Возвращает дату, до

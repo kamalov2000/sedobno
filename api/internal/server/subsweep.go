@@ -38,12 +38,47 @@ func (s *Server) StartSubscriptionSweeper(ctx context.Context) {
 	}
 }
 
-// tickSubscriptions — один проход планировщика подписок. Автосписания ПЕРЕД свипом: сначала
-// продлеваем автопродляемые (иначе свип увидел бы истёкший срок и погасил бы подписку до
-// списания), затем свип гасит то, что реально истекло без автопродления.
+// tickSubscriptions — один проход планировщика подписок. Порядок: предупреждаем о скором
+// списании → списываем подошедшие → свип гасит истёкшее без автопродления. Автосписания
+// ПЕРЕД свипом обязательны (иначе свип погасил бы срок до продления); уведомление первым —
+// его смысл в том, чтобы прийти заранее, до списания.
 func (s *Server) tickSubscriptions(ctx context.Context) {
+	s.notifyUpcomingRenewals(ctx)
 	s.chargeDueSubscriptions(ctx)
 	s.sweepExpiredSubs(ctx)
+}
+
+// notifyUpcomingRenewals шлёт предупреждение «скоро продлится» за ~24–48ч до автосписания
+// ЮKassa (требование к подпискам в РФ + режет чарджбэки). Пометку ставим только после
+// успешной отправки — сбой оставит подписку в выборке для повтора на следующем тике.
+func (s *Server) notifyUpcomingRenewals(ctx context.Context) {
+	if !s.cfg.SBPEnabled || s.tg == nil {
+		return
+	}
+	due, err := s.store.SubscriptionsDueForRenewalNotice(ctx, 200)
+	if err != nil {
+		s.log.Error("уведомление о продлении: выборка", "err", err)
+		return
+	}
+	for _, r := range due {
+		amountRub, _, _ := s.planParams(r.Plan)
+		text := fmt.Sprintf(
+			"Напоминание: завтра продлим подписку «Съедобно» — %d ₽ спишутся автоматически. Не нужно — отмените в приложении, доступ останется до конца оплаченного периода.",
+			amountRub)
+		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			s.log.Warn("уведомление о продлении: отправка", "err", err, "sub", r.ID)
+			continue // не помечаем — повторим на следующем тике
+		}
+		if err := s.store.MarkRenewalNotified(ctx, r.ID); err != nil {
+			s.log.Error("уведомление о продлении: пометка", "err", err, "sub", r.ID)
+			continue
+		}
+		uid := r.UserID
+		_ = s.store.InsertEvent(ctx, &uid, "renewal_notice_sent", map[string]any{"plan": r.Plan, "rub": amountRub})
+	}
+	if len(due) > 0 {
+		s.log.Info("уведомления о продлении отправлены", "count", len(due))
+	}
 }
 
 // chargeDueSubscriptions списывает следующий период у автопродляемых подписок ЮKassa,

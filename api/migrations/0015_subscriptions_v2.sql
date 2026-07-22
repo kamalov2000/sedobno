@@ -18,7 +18,12 @@ ALTER TABLE subscriptions
     ADD COLUMN next_charge_at             TIMESTAMPTZ,
     -- charge_attempts — счётчик подряд неудачных автосписаний (past_due). После 3-й
     -- неудачи подписку гасим (sub_expired). Успех сбрасывает счётчик в 0.
-    ADD COLUMN charge_attempts            INTEGER NOT NULL DEFAULT 0;
+    ADD COLUMN charge_attempts            INTEGER NOT NULL DEFAULT 0,
+    -- renewal_notified_at — когда отправлено предупреждение «скоро спишем» за текущий период
+    -- (за 24–48ч до next_charge_at). NULL = ещё не уведомляли. Продление сбрасывает в NULL,
+    -- чтобы уведомить и в следующий период. Только для автосписаний ЮKassa (Stars уведомляет
+    -- Telegram сам).
+    ADD COLUMN renewal_notified_at        TIMESTAMPTZ;
 
 -- Планировщик автосписаний выбирает «активные, которым пора списать». Частичный индекс
 -- держит выборку дешёвой: в него попадают только строки с назначенным списанием.
@@ -28,6 +33,7 @@ CREATE INDEX idx_subscriptions_next_charge ON subscriptions (next_charge_at)
 -- +goose Down
 DROP INDEX IF EXISTS idx_subscriptions_next_charge;
 ALTER TABLE subscriptions
+    DROP COLUMN IF EXISTS renewal_notified_at,
     DROP COLUMN IF EXISTS charge_attempts,
     DROP COLUMN IF EXISTS next_charge_at,
     DROP COLUMN IF EXISTS provider_payment_method_id,

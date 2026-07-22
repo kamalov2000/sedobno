@@ -70,10 +70,32 @@ LIMIT $2;
 
 -- name: sub_renew_update
 -- Продлеваем ТУ ЖЕ подписку (не вставляем новую): срок и следующее списание на новый конец
--- периода, сброс счётчика неудач, снова active.
+-- периода, сброс счётчика неудач, снова active. renewal_notified_at сбрасываем — чтобы
+-- предупредить и перед списанием следующего периода.
 UPDATE subscriptions
-SET expires_at = $2, next_charge_at = $2, charge_attempts = 0, status = 'active', raw_payload = $3
+SET expires_at = $2, next_charge_at = $2, charge_attempts = 0, status = 'active',
+    renewal_notified_at = NULL, raw_payload = $3
 WHERE id = $1;
+
+-- name: sub_due_for_notice
+-- Автопродляемые ЮKassa, у которых списание в ближайшие 48ч и предупреждение ещё не слали.
+-- Часовой тик поймает подписку сразу на входе в окно (~48ч), давая лид ≥24ч. Джойним users
+-- за telegram_id (шлём бот-сообщение). Grandfathered/Stars/past_due сюда не попадают.
+SELECT s.id, s.user_id, u.telegram_id, s.plan, s.next_charge_at
+FROM subscriptions s
+JOIN users u ON u.id = s.user_id
+WHERE s.status = 'active'
+  AND s.provider = 'sbp'
+  AND s.provider_payment_method_id IS NOT NULL
+  AND s.next_charge_at IS NOT NULL
+  AND s.next_charge_at > now()
+  AND s.next_charge_at <= now() + interval '48 hours'
+  AND s.renewal_notified_at IS NULL
+ORDER BY s.next_charge_at
+LIMIT $1;
+
+-- name: sub_mark_notified
+UPDATE subscriptions SET renewal_notified_at = now() WHERE id = $1;
 
 -- name: sub_charge_increment_attempts
 UPDATE subscriptions SET charge_attempts = charge_attempts + 1 WHERE id = $1 RETURNING charge_attempts;
