@@ -135,6 +135,14 @@ func (s *Server) handleSBPWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Автосписание (kind=renewal) финализирует ПЛАНИРОВЩИК (RenewSubscriptionSuccess),
+	// а не вебхук: иначе на тот же платёж создалась бы дублирующая строка подписки. Просто
+	// квитируем — планировщик применит успех (идемпотентно по ключу и sbp_payments).
+	if p.Metadata["kind"] == "renewal" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	// План и период — по метаданным платежа (их мы положили при создании). Способ оплаты
 	// берём, только если ЮKassa его сохранила (saved): непустой method → подписка станет
 	// автопродляемой (store выставит next_charge_at). Разовый платёж без сохранённого
