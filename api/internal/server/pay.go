@@ -17,9 +17,14 @@ type payCreateResponse struct {
 }
 
 // handlePayCreate — POST /api/pay/create (защищённый). Создаёт invoice-ссылку Stars на
-// РАЗОВЫЙ платёж (доступ на 30 дней, не рекуррентная подписка) и возвращает её; фронт
-// открывает через WebApp.openInvoice (§8). Доступ начисляется не здесь, а в вебхуке
-// successful_payment (3.4) — этот роут только выдаёт ссылку. Уже подписанному — 409.
+// РЕКУРРЕНТНУЮ подписку (subscription_period=30 дней): Telegram сам списывает звёзды
+// каждый период и шлёт successful_payment на продление. Отмену делает пользователь в
+// настройках Telegram. Доступ начисляется не здесь, а в вебхуке successful_payment —
+// этот роут только выдаёт ссылку. Уже подписанному — 409.
+//
+// ВНИМАНИЕ (порядок выката): рекуррентный инвойс нельзя выкатывать в прод раньше, чем
+// оферта/лендинг легализуют автопродление (иначе документы обещают разовый платёж, а
+// списывается подписка). См. Этап 5.
 func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
@@ -40,13 +45,15 @@ func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	link, err := s.tg.CreateInvoiceLink(ctx, tg.InvoiceParams{
-		Title:       "Съедобно — доступ на 30 дней",
-		Description: "Безлимитные проверки составов на 30 дней",
+		Title:       "Съедобно — подписка",
+		Description: "Безлимитные проверки. Автопродление каждые 30 дней, отмена в настройках Telegram.",
 		// payload привязывает будущий платёж к пользователю: вебхук 3.4 разберёт его.
 		Payload: fmt.Sprintf("sub_v1:%d", u.ID),
 		Stars:   s.cfg.SubscriptionStarsPrice,
-		// PeriodSec не задаём: инвойс РАЗОВЫЙ (не рекуррентная Stars-подписка). Срок
-		// доступа начисляет вебхук successful_payment через store (остаток + период).
+		// PeriodSec делает инвойс РЕКУРРЕНТНОЙ подпиской (subscription_period): Telegram
+		// продлевает сам и шлёт successful_payment. Срок доступа всё равно начисляет store
+		// как «остаток + период» (денежная механика едина со СБП), дату Telegram не берём.
+		PeriodSec: accessPeriodSec,
 	})
 	if err != nil {
 		s.log.Error("pay: createInvoiceLink", "err", err, "user", u.ID)

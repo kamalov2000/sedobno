@@ -61,6 +61,18 @@ type tgSuccessfulPayment struct {
 	TotalAmount             int    `json:"total_amount"`
 	InvoicePayload          string `json:"invoice_payload"`
 	TelegramPaymentChargeID string `json:"telegram_payment_charge_id"`
+	// Рекуррентная Stars-подписка (§подписки v2). IsRecurring — платёж относится к
+	// подписке; IsFirstRecurring — это ПЕРВЫЙ платёж (оформление), последующие продления
+	// приходят с IsRecurring=true, IsFirstRecurring=false. Разовый инвойс — оба false.
+	IsRecurring      bool `json:"is_recurring"`
+	IsFirstRecurring bool `json:"is_first_recurring"`
+}
+
+// isRenewal — платёж является ПРОДЛЕНИЕМ подписки (не первым платежом и не разовым).
+// Первый платёж подписки (IsFirstRecurring) и легаси-разовый инвойс (оба флага false)
+// продлением не считаются — это оформление доступа.
+func (sp *tgSuccessfulPayment) isRenewal() bool {
+	return sp.IsRecurring && !sp.IsFirstRecurring
 }
 
 // handleWebhook — POST /api/tg/webhook (§8). Не под requireAuth: зовёт Telegram.
@@ -129,11 +141,13 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 
 	raw, _ := json.Marshal(sp)
 
-	// Разовый платёж на 30 дней (не рекуррентная подписка): срок доступа считает store
-	// как «остаток + период», как в СБП-канале. subscription_expiration_date у разового
-	// инвойса Telegram не присылает — мы его и не используем.
+	// Stars-подписка (рекуррент). Первый платёж и каждое продление приходят одним и тем же
+	// successful_payment (разный telegram_charge_id) — обрабатываем идемпотентно. Срок
+	// доступа считает store как «остаток + период» (единая денежная механика со СБП);
+	// subscription_expiration_date Telegram не берём. План всегда monthly (Bot API даёт
+	// рекуррентный период только 30 дней).
 	processed, err := s.store.ActivateSubscription(ctx, store.SubscriptionInput{
-		UserID: userID, Stars: sp.TotalAmount, PeriodSec: accessPeriodSec,
+		UserID: userID, Stars: sp.TotalAmount, Plan: store.PlanMonthly, PeriodSec: accessPeriodSec,
 		ChargeID: sp.TelegramPaymentChargeID, RawPayload: raw,
 	})
 	if err != nil {
@@ -142,9 +156,16 @@ func (s *Server) handleSuccessfulPayment(w http.ResponseWriter, ctx context.Cont
 		return
 	}
 	if processed {
-		_ = s.store.InsertEvent(ctx, &userID, "pay_ok", map[string]any{"stars": sp.TotalAmount})
+		// Продление (IsRecurring без IsFirstRecurring) отделяем от оформления: разные
+		// событие и сообщение. Разовый легаси-инвойс (оба флага false) идёт как оформление.
+		renewal := sp.isRenewal()
+		event, text := "pay_ok", "Оплата прошла ✅ Безлимит на 30 дней. Продление автоматическое — отменить можно в настройках Telegram."
+		if renewal {
+			event, text = "pay_renewal_ok", "Подписка продлена ✅ Ещё 30 дней безлимита."
+		}
+		_ = s.store.InsertEvent(ctx, &userID, event, map[string]any{"stars": sp.TotalAmount, "channel": "stars"})
 		if msg.Chat != nil {
-			_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Оплата прошла ✅ Безлимитные проверки на 30 дней.", nil)
+			_ = s.tg.SendMessage(ctx, msg.Chat.ID, text, nil)
 		}
 	}
 	w.WriteHeader(http.StatusOK)
