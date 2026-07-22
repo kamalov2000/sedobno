@@ -4,7 +4,7 @@
 // 402/429 обрабатываются на уровне /scan (4.2), здесь — только базовый транспорт.
 
 import { getInitData } from "./telegram";
-import type { AuthResponse, Me, ScanResult, ScanHistoryPage } from "./types";
+import type { AuthResponse, Me, ScanResult, ScanHistoryPage, SubPlan } from "./types";
 
 let token: string | null = null;
 
@@ -112,11 +112,26 @@ export type SbpPayOutcome =
   | { kind: "url"; url: string }
   | { kind: "error"; message: string };
 
-export async function sbpPay(): Promise<SbpPayOutcome> {
-  const res = await apiFetch("/api/payments/sbp/create", { method: "POST" });
+export async function sbpPay(plan: SubPlan = "monthly"): Promise<SbpPayOutcome> {
+  const q = plan === "annual" ? "?plan=annual" : "";
+  const res = await apiFetch(`/api/payments/sbp/create${q}`, { method: "POST" });
   if (!res.ok) return { kind: "error", message: await readMessage(res) };
   const data = (await res.json()) as { url: string };
   return { kind: "url", url: data.url };
+}
+
+/** Отмена автопродления. cancelled=false — отменять было нечего (Stars отменяется в
+ *  настройках Telegram). access_until — до какого момента остаётся доступ. */
+export type SubCancelOutcome =
+  | { kind: "cancelled"; accessUntil?: string }
+  | { kind: "nothing" }
+  | { kind: "error"; message: string };
+
+export async function subCancel(): Promise<SubCancelOutcome> {
+  const res = await apiFetch("/api/sub/cancel", { method: "POST" });
+  if (!res.ok) return { kind: "error", message: await readMessage(res) };
+  const data = (await res.json()) as { cancelled: boolean; access_until?: string };
+  return data.cancelled ? { kind: "cancelled", accessUntil: data.access_until } : { kind: "nothing" };
 }
 
 export async function scanPhoto(files: File[]): Promise<ScanOutcome> {

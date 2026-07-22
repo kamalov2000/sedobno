@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult } from "./types";
 import HomeScreen from "./screens/HomeScreen";
+import SubscriptionScreen from "./screens/SubscriptionScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
@@ -15,7 +16,8 @@ const noop = () => {};
 const asyncNoop = async () => {};
 
 const meFree: Me = { scans_left: 8, free_scans_used: 2, is_subscribed: false, sbp_available: true };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z" };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z", subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
+const meSubCancelled: Me = { ...meSub, subscription: { provider: "sbp", plan: "annual", status: "cancelled", expires_at: "2027-07-22T10:00:00Z", auto_renew: false } };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
@@ -82,9 +84,9 @@ const historyLoad = async (cur?: number): Promise<ScanHistoryPage> => (cur ? { i
 const historyEmpty = async (): Promise<ScanHistoryPage> => ({ items: [] });
 
 const SCREENS: { title: string; node: ReactNode }[] = [
-  { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} onHistory={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · свободные проверки", node: <HomeScreen me={meFree} onScan={noop} onSubscribe={noop} onHistory={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · 0 из 10 (подписка)", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} onScan={noop} onSubscribe={noop} onHistory={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} onScan={noop} onSubscribe={noop} onHistory={noop} onManageSub={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
   { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} /> },
   { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} /> },
@@ -102,6 +104,8 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   },
   { title: "05 · ПЕЙВОЛЛ · Stars + СБП", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable onSbpPay={asyncNoop} /> },
   { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} /> },
+  { title: "06 · ПОДПИСКА · активна (автопродление)", node: <SubscriptionScreen me={meSub} onBack={noop} onChanged={asyncNoop} /> },
+  { title: "06 · ПОДПИСКА · отменена (год)", node: <SubscriptionScreen me={meSubCancelled} onBack={noop} onChanged={asyncNoop} /> },
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
 ];

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { bootAuth, scanPhoto, payCreate, sbpPay, getMe, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
-import type { Me, ScanResult } from "./types";
+import type { Me, ScanResult, SubPlan } from "./types";
 import HomeScreen from "./screens/HomeScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
@@ -9,9 +9,10 @@ import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
+import SubscriptionScreen from "./screens/SubscriptionScreen";
 
 // Стейт-машина mini-app. 4.2: полный флоу фото → лоадер → результат/ошибка/пейволл.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "subscription";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -204,8 +205,8 @@ export default function App() {
   // Оплата картой/СБП: создаём платёж и открываем ПРЯМУЮ ссылку ЮKassa (openLink) —
   // без промежуточного лендинга. Подписка активируется вебхуком ЮKassa на бэке; при
   // возврате в mini-app обновляем профиль.
-  const onSbpPay = useCallback(async () => {
-    const out = await sbpPay();
+  const onSbpPay = useCallback(async (plan: SubPlan = "monthly") => {
+    const out = await sbpPay(plan);
     if (out.kind === "error") {
       notify("error");
       return; // остаёмся на пейволле
@@ -281,7 +282,7 @@ export default function App() {
   return (
     <Shell>
       {view === "home" && me && (
-        <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} onHistory={() => setView("history")} />
+        <HomeScreen me={me} onScan={onScan} onSubscribe={() => setView("paywall")} onHistory={() => setView("history")} onManageSub={() => setView("subscription")} />
       )}
       {view === "history" && (
         <HistoryScreen
@@ -310,6 +311,19 @@ export default function App() {
           onDismiss={() => setView("home")}
           sbpAvailable={me?.sbp_available ?? false}
           onSbpPay={onSbpPay}
+        />
+      )}
+      {view === "subscription" && me && (
+        <SubscriptionScreen
+          me={me}
+          onBack={() => setView("home")}
+          onChanged={async () => {
+            try {
+              setMe(await getMe());
+            } catch {
+              /* обновим при следующем действии */
+            }
+          }}
         />
       )}
     </Shell>

@@ -1,5 +1,19 @@
 // Контракты API (см. api/internal/server/*.go). Держим в синхроне с бэком.
 
+/** Тариф подписки: месяц | год. Год — только СБП/карта (через Stars период 30д). */
+export type SubPlan = "monthly" | "annual";
+
+/** Детали действующей подписки для экрана управления (§14). auto_renew=true → показываем
+ *  кнопку отмены; next_charge_at — дата следующего автосписания (нет у отменённой/разовой). */
+export interface SubscriptionInfo {
+  provider: string; // stars | sbp
+  plan: SubPlan;
+  status: string; // active | cancelled | past_due
+  expires_at: string; // RFC3339
+  next_charge_at?: string; // RFC3339, есть только при автопродлении
+  auto_renew: boolean;
+}
+
 /** GET /api/me и authResponse.me */
 export interface Me {
   scans_left: number; // для подписчика бэк отдаёт -1 — в UI не показываем (см. is_subscribed)
@@ -7,6 +21,7 @@ export interface Me {
   is_subscribed: boolean;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла
+  subscription?: SubscriptionInfo; // детали подписки для экрана управления; нет — подписки нет
 }
 
 /** POST /api/auth */
