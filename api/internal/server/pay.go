@@ -10,7 +10,8 @@ import (
 // accessPeriodSec — срок доступа за один платёж: 30 дней (§9). Разовый платёж, НЕ
 // рекуррентная подписка Telegram: срок доступа начисляет store как «остаток + период»
 // (одинаково для Stars и СБП). Значение передаётся в store из sbp.go и webhook.go.
-const accessPeriodSec = 2592000
+const accessPeriodSec = 2592000  // 30 дней — месячный период (Stars и СБП-месяц)
+const annualPeriodSec = 31536000 // 365 дней — годовой период (только СБП/карта)
 
 type payCreateResponse struct {
 	InvoiceLink string `json:"invoice_link"`

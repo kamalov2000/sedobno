@@ -13,9 +13,12 @@
 -- status: к существующим 'active'|'expired'|'cancelled' добавляется 'past_due' (неуспех
 -- автосписания, ждём ретрая). CHECK на статус в 0002 нет — новое значение просто валидно.
 ALTER TABLE subscriptions
-    ADD COLUMN plan                       TEXT NOT NULL DEFAULT 'monthly',
+    ADD COLUMN plan                       TEXT    NOT NULL DEFAULT 'monthly',
     ADD COLUMN provider_payment_method_id TEXT,
-    ADD COLUMN next_charge_at             TIMESTAMPTZ;
+    ADD COLUMN next_charge_at             TIMESTAMPTZ,
+    -- charge_attempts — счётчик подряд неудачных автосписаний (past_due). После 3-й
+    -- неудачи подписку гасим (sub_expired). Успех сбрасывает счётчик в 0.
+    ADD COLUMN charge_attempts            INTEGER NOT NULL DEFAULT 0;
 
 -- Планировщик автосписаний выбирает «активные, которым пора списать». Частичный индекс
 -- держит выборку дешёвой: в него попадают только строки с назначенным списанием.
@@ -25,6 +28,7 @@ CREATE INDEX idx_subscriptions_next_charge ON subscriptions (next_charge_at)
 -- +goose Down
 DROP INDEX IF EXISTS idx_subscriptions_next_charge;
 ALTER TABLE subscriptions
+    DROP COLUMN IF EXISTS charge_attempts,
     DROP COLUMN IF EXISTS next_charge_at,
     DROP COLUMN IF EXISTS provider_payment_method_id,
     DROP COLUMN IF EXISTS plan;

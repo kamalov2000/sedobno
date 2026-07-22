@@ -48,23 +48,35 @@ type Confirmation struct {
 	ConfirmationURL string `json:"confirmation_url,omitempty"`
 }
 
+// PaymentMethod — способ оплаты платежа. Для рекуррента важны id (сохранённый способ,
+// которым потом списываем без участия плательщика) и saved (сохранён ли он у ЮKassa).
+type PaymentMethod struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Saved bool   `json:"saved"`
+}
+
 // Payment — объект платежа ЮKassa (нужные поля).
 type Payment struct {
-	ID           string            `json:"id"`
-	Status       string            `json:"status"` // pending|waiting_for_capture|succeeded|canceled
-	Paid         bool              `json:"paid"`
-	Amount       Amount            `json:"amount"`
-	Confirmation *Confirmation     `json:"confirmation,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	ID            string            `json:"id"`
+	Status        string            `json:"status"` // pending|waiting_for_capture|succeeded|canceled
+	Paid          bool              `json:"paid"`
+	Amount        Amount            `json:"amount"`
+	Confirmation  *Confirmation     `json:"confirmation,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	PaymentMethod *PaymentMethod    `json:"payment_method,omitempty"`
 }
 
 // CreateInput — параметры создания платежа.
 type CreateInput struct {
-	AmountRub      int               // целые рубли; в API уходит как "N.00"
-	Description    string            // назначение (видит плательщик)
-	ReturnURL      string            // куда вернуть браузер после оплаты
-	Metadata       map[string]string // произвольные данные (нам — user_id для вебхука)
-	IdempotenceKey string            // ключ идемпотентности запроса (обязателен ЮKassa)
+	AmountRub   int               // целые рубли; в API уходит как "N.00"
+	Description string            // назначение (видит плательщик)
+	ReturnURL   string            // куда вернуть браузер после оплаты
+	Metadata    map[string]string // произвольные данные (нам — user_id для вебхука)
+	// SavePaymentMethod=true просит ЮKassa сохранить способ оплаты для последующих
+	// автосписаний (рекуррент): в succeeded-платеже придёт payment_method.id/saved.
+	SavePaymentMethod bool
+	IdempotenceKey    string // ключ идемпотентности запроса (обязателен ЮKassa)
 }
 
 // CreatePayment создаёт платёж с автосписанием (capture=true) и redirect-подтверждением.
@@ -75,6 +87,33 @@ func (c *Client) CreatePayment(ctx context.Context, in CreateInput) (*Payment, e
 		"confirmation": Confirmation{Type: "redirect", ReturnURL: in.ReturnURL},
 		"description":  in.Description,
 		"metadata":     in.Metadata,
+	}
+	if in.SavePaymentMethod {
+		body["save_payment_method"] = true
+	}
+	return c.do(ctx, http.MethodPost, "/payments", in.IdempotenceKey, body)
+}
+
+// AutoChargeInput — параметры автосписания по сохранённому способу (рекуррент, без участия
+// плательщика: нет confirmation).
+type AutoChargeInput struct {
+	AmountRub       int
+	Description     string
+	PaymentMethodID string            // сохранённый способ (из первого платежа)
+	Metadata        map[string]string // user_id + план для вебхука/аудита
+	IdempotenceKey  string            // = subscription_id + период: повторный тик не дублирует платёж
+}
+
+// CreateAutoPayment списывает по сохранённому способу оплаты без подтверждения плательщиком
+// (server-initiated рекуррент). capture=true — сразу списываем. Идемпотентность — по
+// IdempotenceKey (одинаковый ключ на один период не создаст второй платёж).
+func (c *Client) CreateAutoPayment(ctx context.Context, in AutoChargeInput) (*Payment, error) {
+	body := map[string]any{
+		"amount":            Amount{Value: fmt.Sprintf("%d.00", in.AmountRub), Currency: "RUB"},
+		"capture":           true,
+		"payment_method_id": in.PaymentMethodID,
+		"description":       in.Description,
+		"metadata":          in.Metadata,
 	}
 	return c.do(ctx, http.MethodPost, "/payments", in.IdempotenceKey, body)
 }

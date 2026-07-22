@@ -52,14 +52,24 @@ func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// План выбирает пользователь на пейволле (?plan=annual|monthly, дефолт monthly).
+	// Год доступен только здесь (СБП/карта): через Stars годовой период Bot API не даёт.
+	amountRub, _, normPlan := s.planParams(planFromRequest(r))
+	desc := "Съедобно — подписка на месяц"
+	if normPlan == store.PlanAnnual {
+		desc = "Съедобно — подписка на год"
+	}
 	p, err := s.yk.CreatePayment(ctx, yookassa.CreateInput{
-		AmountRub:   s.cfg.SBPPriceRub,
-		Description: "Съедобно — подписка на месяц",
+		AmountRub:   amountRub,
+		Description: desc,
 		// ReturnURL — куда ЮKassa вернёт браузер ПОСЛЕ оплаты: лендинг с подсказкой
 		// «вернитесь в Telegram». Это НЕ часть пути ДО оплаты, лендинг там больше не участвует.
-		ReturnURL:      s.cfg.LandingURL,
-		Metadata:       map[string]string{"user_id": strconv.FormatInt(uid, 10)},
-		IdempotenceKey: randIdemKey(),
+		ReturnURL: s.cfg.LandingURL,
+		Metadata:  map[string]string{"user_id": strconv.FormatInt(uid, 10), "plan": normPlan},
+		// Рекуррент: сохраняем способ оплаты для автопродления. Grandfathering: способ
+		// сохраняется только у НОВЫХ покупок — старые разовые записи автопродления не получат.
+		SavePaymentMethod: true,
+		IdempotenceKey:    randIdemKey(),
 	})
 	if err != nil {
 		s.log.Error("sbp pay: ЮKassa", "err", err, "user", uid)
@@ -125,15 +135,26 @@ func (s *Server) handleSBPWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// План и период — по метаданным платежа (их мы положили при создании). Способ оплаты
+	// берём, только если ЮKassa его сохранила (saved): непустой method → подписка станет
+	// автопродляемой (store выставит next_charge_at). Разовый платёж без сохранённого
+	// способа продолжит работать как раньше (одноразово).
+	_, periodSec, normPlan := s.planParams(p.Metadata["plan"])
+	methodID := ""
+	if p.PaymentMethod != nil && p.PaymentMethod.Saved {
+		methodID = p.PaymentMethod.ID
+	}
 	raw, _ := json.Marshal(p) // авторитетный объект (не тело вебхука) — для аудита
 	processed, err := s.store.RecordSBPPaymentAndActivate(ctx, store.SBPPaymentInput{
 		UserID:            uid,
 		ProviderPaymentID: p.ID,
 		AmountRub:         rubFromValue(p.Amount.Value),
+		Plan:              normPlan,
 		// Передаём период, а не дату: срок = остаток + период, считается в транзакции
 		// (store) — продлившийся заранее не должен терять оплаченный остаток.
-		PeriodSec:  accessPeriodSec,
-		RawPayload: raw,
+		PeriodSec:       periodSec,
+		PaymentMethodID: methodID,
+		RawPayload:      raw,
 	})
 	if err != nil {
 		s.log.Error("sbp webhook: активация подписки", "err", err, "user", uid, "payment", p.ID)
@@ -181,6 +202,21 @@ func rubFromValue(v string) int {
 	}
 	n, _ := strconv.Atoi(strings.TrimSpace(v))
 	return n
+}
+
+// planFromRequest читает выбранный план из запроса создания платежа (?plan=annual|monthly).
+func planFromRequest(r *http.Request) string {
+	return r.URL.Query().Get("plan")
+}
+
+// planParams разворачивает план в цену (₽), период (сек) и нормализованное имя. Всё,
+// кроме явного 'annual', трактуем как месяц — неизвестное значение не должно завести
+// платёж по неожиданной цене.
+func (s *Server) planParams(plan string) (amountRub, periodSec int, normPlan string) {
+	if plan == store.PlanAnnual {
+		return s.cfg.SBPAnnualPriceRub, annualPeriodSec, store.PlanAnnual
+	}
+	return s.cfg.SBPPriceRub, accessPeriodSec, store.PlanMonthly
 }
 
 // randIdemKey генерит ключ идемпотентности для запроса создания платежа.

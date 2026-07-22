@@ -64,7 +64,8 @@ type Config struct {
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
 	SBPEnabled        bool         // включён ли канал СБП (при false эндпоинты /payments/sbp/* выключены)
-	SBPPriceRub       int          // цена подписки в рублях (default 249, как на пейволле)
+	SBPPriceRub       int          // цена месячной подписки в рублях (default 249, как на пейволле)
+	SBPAnnualPriceRub int          // цена годовой подписки в рублях (default 2490; только СБП/карта)
 	YooKassaShopID    string       // shopId для Basic-auth к API ЮKassa
 	YooKassaSecretKey string       // секретный ключ для Basic-auth к API ЮKassa
 	YooKassaAPIBase   string       // база API ЮKassa (default https://api.yookassa.ru/v3; стаб в тестах)
@@ -175,6 +176,7 @@ func MustLoad() *Config {
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
+	cfg.SBPAnnualPriceRub = optInt(opt("SBP_ANNUAL_PRICE_RUB", "2490"), 2490, &invalid, "SBP_ANNUAL_PRICE_RUB")
 	cfg.YooKassaAPIBase = opt("YOOKASSA_API_BASE", "https://api.yookassa.ru/v3")
 	cfg.YooKassaAllowlist = parseCIDRs(opt("YOOKASSA_ALLOWLIST", defaultYooKassaAllowlist), &invalid)
 	if cfg.SBPEnabled {
