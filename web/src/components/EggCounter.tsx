@@ -1,5 +1,5 @@
 import type { MealItem } from "../types";
-import { EGG_MAX_PER_KIND } from "../meal";
+import { EGG_MAX_PER_KIND, effectiveDishKcal } from "../meal";
 import { haptic } from "../telegram";
 
 // Карточка яичного блюда: яйца считают по ЧАСТЯМ — желток и белок (как разрезанное
@@ -33,7 +33,11 @@ export default function EggCounter({ dish, onName, onCount, onRemove }: Props) {
           aria-label="Название блюда"
           style={{ flex: 1, minWidth: 0, border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, fontWeight: 500, color: "var(--text)", padding: 0, outline: "none", textOverflow: "ellipsis" }}
         />
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(dish.kcal)} ккал</span>
+        {/* Число на карточке = ПОЛНЫЙ вклад блюда: яичная база (желток+белок) + ложечные
+            примитивы (масло). Раньше показывали dish.kcal (только яйца) — и вклад масла на
+            карточке был невидим: минус масла до 0 и возврат «+» не двигали цифру. Считаем
+            через effectiveDishKcal, как в обычной DishCard, чтобы карточки были согласованы. */}
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(effectiveDishKcal(dish))} ккал</span>
         <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />
         </button>

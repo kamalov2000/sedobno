@@ -385,6 +385,44 @@ describe("MealResultScreen — яичное блюдо как счётчик ш�
     // КБЖУ в патче для яиц не шлём — сервер пересчитает.
     expect(body.dishes[0].kcal).toBeUndefined();
   });
+
+  // Баг тестера: ложечное масло на ЯИЧНОМ блюде — минус до 0 и возврат «+». Карточка
+  // яичного блюда показывала dish.kcal (только яйца), и вклад масла на ней был невидим:
+  // число не двигалось через цикл 0→N. Теперь карточка считает effectiveDishKcal (яйца +
+  // масло), как обычная DishCard, и вклад восстанавливается визуально; PATCH шлёт count.
+  const eggWithOil = () => {
+    const r = eggResult();
+    return { ...r, dishes: [{ ...r.dishes[0], pieces: [{ kind: "oil_veg", count: 1, assumed: true }] }] };
+  };
+
+  it("масло на яичном блюде: цикл 1→0→2 восстанавливает вклад на карточке", () => {
+    render(<MealResultScreen result={eggWithOil() as never} isSubscribed onDone={noop} onRetake={noop} />);
+    // «N ккал» слитным текстом есть только на карточке блюда (в герое число и «ккал» —
+    // отдельными span). старт: 156 (яйца) + 45 (масло ×1) = 201.
+    expect(screen.getByText("201 ккал")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Масло: меньше")); // →0
+    expect(screen.getByText("156 ккал")).toBeTruthy(); // только яйца
+    fireEvent.click(screen.getByLabelText("Добавить: Масло")); // →1
+    expect(screen.getByText("201 ккал")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Масло: больше")); // →2
+    expect(screen.getByText("246 ккал")).toBeTruthy(); // 156 + 45×2
+  });
+
+  it("масло на яичном блюде: возврат чипса уходит в PATCH с count", async () => {
+    const saved = {
+      id: 55, eaten_at: "2026-07-21T10:00:00Z", created_at: "2026-07-21T10:00:00Z",
+      status: "ok" as const, source: "photo", dishes: eggWithOil().dishes,
+      total: eggWithOil().total, edited: false,
+    };
+    render(<MealResultScreen result={eggWithOil() as never} saved={saved as never} isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByLabelText("Масло: меньше")); // →0
+    fireEvent.click(screen.getByLabelText("Добавить: Масло")); // →1
+    fireEvent.click(screen.getByLabelText("Масло: больше")); // →2
+    fireEvent.click(screen.getByText("Сохранить изменения"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const body = patchMeal.mock.calls[0][1] as { dishes: Array<{ pieces?: Array<{ kind: string; count: number }> }> };
+    expect(body.dishes[0].pieces).toEqual([{ kind: "oil_veg", count: 2, assumed: false }]);
+  });
 });
 
 describe("MealResultScreen — автоподсказка справочника при ручном вводе", () => {
