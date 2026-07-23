@@ -57,3 +57,27 @@ func TestMealManual_ГраницыКкалТеЖеЧтоУПравки(t *testin
 		t.Fatalf("статус=%d, ждали 400: 5000 ккал/100 г вне границ", resp.StatusCode)
 	}
 }
+
+// source — единственное клиентское значение с явным допуском: "scan" (backlog «Скан →
+// дневник», приём из результата сканера составов). Всё прочее отвергается ДО стора —
+// иначе в БД мог бы осесть произвольный source, ломающий аналитику по photo|scan|manual.
+func TestMealManual_НеизвестныйSourceОтвергается(t *testing.T) {
+	resp := authedPost(t, "/api/meals", `{"source":"import","dishes":[{"name":"хлеб","grams":100,"kcal_per_100":250}]}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("статус=%d, ждали 400: неизвестный source", resp.StatusCode)
+	}
+}
+
+// source="scan" — валидное значение, проходит те же проверки блюда, что и обычный
+// ручной ввод (до стора дело не должно упереться в 400/503).
+func TestMealManual_SourceScanПроходитВалидацию(t *testing.T) {
+	resp := authedPost(t, "/api/meals", `{"source":"scan","dishes":[{"name":"йогурт","grams":200,"kcal_per_100":80}]}`)
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusBadRequest {
+		t.Fatalf("валидный source=scan отвергнут как 400")
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		t.Fatalf("source=scan упёрся в meals_disabled — ветка ушла в фото-путь")
+	}
+}

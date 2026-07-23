@@ -17,12 +17,13 @@ import ProfileWizard from "./screens/ProfileWizard";
 import { dayCardData, downloadShareCard } from "./shareCard";
 import { diaryItemToResult } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
+import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history" | "scan_to_diary";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -106,7 +107,7 @@ export default function App() {
     const bb = tg()?.BackButton;
     if (!bb) return;
     const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
-    const isList = view === "history" || view === "meal_history" || view === "meal_diary" || view === "weight" || view === "meal_manual";
+    const isList = view === "history" || view === "meal_history" || view === "meal_diary" || view === "weight" || view === "meal_manual" || view === "scan_to_diary";
     if (!(isList || isOutcome)) {
       bb.hide();
       return;
@@ -119,6 +120,11 @@ export default function App() {
         setView(back);
       } else if (view === "meal_manual") {
         setView(returnTo ?? "meal_diary");
+      } else if (view === "scan_to_diary") {
+        // Открывается только с result/not_scored (returnTo проставляется там же) —
+        // фолбэк на result просто на случай прямого захода.
+        setView(returnTo ?? "result");
+        setReturnTo(null);
       } else if (view === "weight") {
         // Вес открывается из дневника — системная «назад» возвращает туда же,
         // куда и кнопка на экране, иначе два пути расходятся.
@@ -439,8 +445,45 @@ export default function App() {
           isSubscribed={me?.is_subscribed ?? false}
         />
       )}
-      {view === "not_scored" && result && <NotScoredScreen result={result} onAgain={onScan} isSubscribed={me?.is_subscribed ?? false} />}
-      {view === "result" && result && <ResultScreen result={result} isSubscribed={me?.is_subscribed ?? false} scansLeft={me?.scans_left} onAgain={onScan} />}
+      {view === "not_scored" && result && (
+        <NotScoredScreen
+          result={result}
+          onAgain={onScan}
+          isSubscribed={me?.is_subscribed ?? false}
+          onAddToDiary={() => {
+            setReturnTo("not_scored");
+            setView("scan_to_diary");
+          }}
+        />
+      )}
+      {view === "result" && result && (
+        <ResultScreen
+          result={result}
+          isSubscribed={me?.is_subscribed ?? false}
+          scansLeft={me?.scans_left}
+          onAgain={onScan}
+          onAddToDiary={() => {
+            setReturnTo("result");
+            setView("scan_to_diary");
+          }}
+        />
+      )}
+      {/* Скан → дневник (backlog): порция от нетто упаковки, которую сканер уже прочитал.
+          Источник source="scan" различает эти приёмы в аналитике от photo/manual. */}
+      {view === "scan_to_diary" && result && (
+        <ScanToDiaryScreen
+          result={result}
+          onBack={() => {
+            setView(returnTo ?? "result");
+            setReturnTo(null);
+          }}
+          onSaved={() => {
+            setTodayHasMeals(true);
+            setReturnTo(null);
+            setView("meal_diary");
+          }}
+        />
+      )}
       {view === "meal_result" && mealResult && (
         <MealResultScreen
           result={mealResult}

@@ -5,6 +5,7 @@ import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
+import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import MealStateScreen from "./screens/MealStateScreen";
 import MealLoader from "./components/MealLoader";
@@ -63,6 +64,9 @@ const mockResult: ScanResult = {
     },
     { raw: "вода", risk: 0, position: 8, matched: false },
   ],
+  // Нетто с этикетки — включает кнопку «В дневник» (backlog «Скан → дневник»)
+  // и «Вся упаковка»/«Половина» на экране порции.
+  nutrition: { basis: "100g", kcal: 210, protein_g: 6, fat_g: 9, carb_g: 27, net_amount: 180, net_unit: "g" },
 };
 
 // Алкоголь: балла нет (not_scored), но факты показываем — экран без вердикта.
@@ -165,8 +169,10 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
-  { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} /> },
-  { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} /> },
+  { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} onAddToDiary={noop} /> },
+  { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} onAddToDiary={noop} /> },
+  { title: "03 · СКАН → ДНЕВНИК · с нетто", node: <ScanToDiaryScreen result={mockResult} onBack={noop} onSaved={noop} /> },
+  { title: "03 · СКАН → ДНЕВНИК · без нетто", node: <ScanToDiaryScreen result={mockNotScored} onBack={noop} onSaved={noop} /> },
   {
     title: "04 · ОШИБКА · состав не распознан",
     node: <ErrorScreen title="Не разглядел состав" subtitle="На фото не нашлось читаемого списка ингредиентов." onAgain={noop} />,

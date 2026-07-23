@@ -23,6 +23,16 @@ import (
 	"github.com/sostav/api/internal/store"
 )
 
+// Источники приёма (meals.source). photo/manual решает сам сервер (какой путь принял
+// запрос); scan — единственное значение, которое может явно запросить клиент в JSON-
+// теле handleMealManual — приём, добавленный из результата сканера составов (backlog
+// «Скан → дневник»): пригодится аналитике различать photo/scan/manual.
+const (
+	mealSourcePhoto  = "photo"
+	mealSourceManual = "manual"
+	mealSourceScan   = "scan"
+)
+
 // mealResponse — ответ POST /api/meals. При ok несёт разбор (id, блюда, суммы); при
 // прочих статусах — только status + message (человекочитаемая подсказка).
 type mealResponse struct {
@@ -183,7 +193,7 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 	total := res.Total
 	conf := res.Confidence
 	id, err := s.store.InsertMeal(ctx, store.MealRow{
-		UserID: u.ID, Status: res.Status, Source: "photo", Items: itemsJSON,
+		UserID: u.ID, Status: res.Status, Source: mealSourcePhoto, Items: itemsJSON,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
 		LocalDate: localDate, Escalated: res.Escalated, EscalationTrigger: res.EscalationTrigger,
@@ -709,6 +719,10 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		MealType string      `json:"meal_type"`
 		EatenAt  *time.Time  `json:"eaten_at"`
 		Date     string      `json:"date"`
+		// Source — единственное клиентское значение, которое можно запросить явно:
+		// mealSourceScan (приём добавлен из результата сканера составов, backlog
+		// «Скан → дневник»). Пусто — обычный ручной ввод (mealSourceManual, как было).
+		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "ожидается JSON {dishes, meal_type, date}")
@@ -723,6 +737,14 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 			writeError(w, http.StatusBadRequest, "bad_request", "meal_type: breakfast|lunch|dinner|snack")
 			return
 		}
+	}
+	source := mealSourceManual
+	if req.Source != "" {
+		if req.Source != mealSourceScan {
+			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan" (или не указывать)`)
+			return
+		}
+		source = req.Source
 	}
 	parsed, errMsg := parseDishes(req.Dishes)
 	if errMsg != "" {
@@ -747,7 +769,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 
 	itemsJSON, _ := json.Marshal(dishes)
 	id, err := s.store.InsertMeal(ctx, store.MealRow{
-		UserID: userID, Status: meal.StatusOK, Source: "manual", Items: itemsJSON,
+		UserID: userID, Status: meal.StatusOK, Source: source, Items: itemsJSON,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		MealType: req.MealType, EatenAt: req.EatenAt, LocalDate: localDate,
 	})
@@ -756,7 +778,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
 		return
 	}
-	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes)})
+	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes), "source": source})
 
 	// meals_left не трогаем: квота не списывалась. Отдаём актуальный остаток, чтобы
 	// фронт не пересчитывал его сам.

@@ -15,9 +15,12 @@ interface Props {
   // истории не несёт scans_left (бэк его не восстанавливает), поэтому чип берём из me,
   // а не из result.scans_left — иначе «0 из 10» на любом открытом из истории результате.
   scansLeft?: number;
+  // Скан → дневник (backlog): вторым действием, «Проверить ещё» остаётся главным.
+  // Не задан (историческая витрина/старый вызов) — кнопки нет вовсе.
+  onAddToDiary?: () => void;
 }
 
-export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft }: Props) {
+export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft, onAddToDiary }: Props) {
   const verdict = scoreToVerdict(result.score);
   const count = result.ingredients.length;
   const productLine = result.scan_number
@@ -134,6 +137,18 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft 
       </div>
 
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
+        {/* Не выдумываем КБЖУ: кнопка есть только когда сканер реально прочитал числа
+            с этикетки. Второе действие — «Проверить ещё» остаётся главным CTA. */}
+        {onAddToDiary && result.nutrition?.kcal != null && (
+          <button
+            type="button"
+            onClick={onAddToDiary}
+            style={{ width: "100%", height: 44, marginBottom: 10, background: "none", border: "1px solid var(--cal-border)", color: "var(--cal-num)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+          >
+            <i className="ti ti-book-2" aria-hidden="true" style={{ fontSize: 16 }} />
+            В дневник
+          </button>
+        )}
         <PhotoStager onScan={onAgain} startLabel="Проверить ещё" startIcon="ti-scan" startHeight={52} startFontSize={15} />
         <div style={{ textAlign: "center", fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
           Справочная информация, не медицинская рекомендация

@@ -12,9 +12,12 @@ interface Props {
   result: ScanResult;
   onAgain: (files: File[]) => void;
   isSubscribed?: boolean; // у подписчика попыток нет — плашку «не списана» не показываем
+  // Скан → дневник (backlog): алкоголь тоже несёт КБЖУ (пиво, вино) — та же кнопка,
+  // что и у обычного результата. Не задан — кнопки нет.
+  onAddToDiary?: () => void;
 }
 
-export default function NotScoredScreen({ result, onAgain, isSubscribed = false }: Props) {
+export default function NotScoredScreen({ result, onAgain, isSubscribed = false, onAddToDiary }: Props) {
   const count = result.ingredients.length;
 
   return (
@@ -72,6 +75,16 @@ export default function NotScoredScreen({ result, onAgain, isSubscribed = false 
             <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 17, color: "var(--accent)" }} />
             <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
           </div>
+        )}
+        {onAddToDiary && result.nutrition?.kcal != null && (
+          <button
+            type="button"
+            onClick={onAddToDiary}
+            style={{ width: "100%", height: 44, marginBottom: 10, background: "none", border: "1px solid var(--cal-border)", color: "var(--cal-num)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+          >
+            <i className="ti ti-book-2" aria-hidden="true" style={{ fontSize: 16 }} />
+            В дневник
+          </button>
         )}
         <PhotoStager onScan={onAgain} startLabel="Проверить ещё" startIcon="ti-scan" startHeight={52} startFontSize={15} />
       </div>

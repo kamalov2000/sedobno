@@ -186,7 +186,7 @@ export interface MealDiaryItem {
   eaten_at: string; // RFC3339
   created_at: string;
   status: MealStatus;
-  source: string; // photo | manual
+  source: string; // photo | manual | scan (добавлен из результата сканера составов)
   meal_type?: MealType; // завтрак/обед/ужин/перекус — проставляется в дневник
   dishes: MealItem[];
   total?: MealMacros;
