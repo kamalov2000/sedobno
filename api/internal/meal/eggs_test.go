@@ -32,10 +32,10 @@ func TestIsEggDish(t *testing.T) {
 	}
 }
 
-// КБЖУ яичного блюда — строго из штук по константам, независимо от чисел, которые дал LLM.
+// КБЖУ яичного блюда — строго из счётчиков желтков/белков по константам, независимо от чисел
+// LLM. 3 целых яйца = 3 желтка + 3 белка.
 func TestAsEggDish_КбжуИзШтук(t *testing.T) {
-	// LLM «наврал» и по имени, и по числам — сервер должен всё пересчитать из штук.
-	in := llm.MealItem{Name: "Яичница из 3 яиц", Grams: 999, Kcal: 999, ProteinG: 1, FatG: 1, CarbG: 1, EggsWhole: 3}
+	in := llm.MealItem{Name: "Яичница из 3 яиц", Grams: 999, Kcal: 999, ProteinG: 1, FatG: 1, CarbG: 1, Yolks: 3, Whites: 3}
 	got, ok := asEggDish(in)
 	if !ok {
 		t.Fatal("asEggDish не распознал яичное блюдо")
@@ -43,39 +43,39 @@ func TestAsEggDish_КбжуИзШтук(t *testing.T) {
 	if got.DishKind != DishKindEggs {
 		t.Errorf("dish_kind=%q, ждали eggs", got.DishKind)
 	}
-	if got.EggsWhole != 3 || got.EggsWhite != 0 {
-		t.Errorf("счётчики=%d/%d, ждали 3/0", got.EggsWhole, got.EggsWhite)
+	if got.Yolks != 3 || got.Whites != 3 {
+		t.Errorf("счётчики желток/белок=%d/%d, ждали 3/3", got.Yolks, got.Whites)
 	}
-	// 3 целых: ккал 3×78=234, белок 3×6.3=18.9, жир 3×5.3=15.9, углев 3×0.6=1.8, вес 3×55=165.
+	// 3 желтка + 3 белка = 3 целых яйца: ккал 234, белок 18.9, жир 15.9, углев 1.8, вес 165.
 	if got.Kcal != 234 || got.ProteinG != 18.9 || got.FatG != 15.9 || got.CarbG != 1.8 || got.Grams != 165 {
 		t.Errorf("КБЖУ/вес=%v ккал %v/%v/%v %vг, ждали 234 18.9/15.9/1.8 165", got.Kcal, got.ProteinG, got.FatG, got.CarbG, got.Grams)
 	}
 }
 
-// Целые + белки суммируются по своим константам.
-func TestAsEggDish_ЦелыеИБелки(t *testing.T) {
-	got, _ := asEggDish(llm.MealItem{Name: "Яйца", EggsWhole: 2, EggsWhite: 4})
-	// 2 целых (156 ккал) + 4 белка (68 ккал) = 224; вес 2×55 + 4×33 = 242.
-	if got.Kcal != 224 || got.Grams != 242 {
-		t.Errorf("ккал=%v вес=%v, ждали 224 / 242", got.Kcal, got.Grams)
+// Желтки и белки в разном числе (2 желтка + 4 белка) суммируются по своим константам.
+func TestAsEggDish_ЖелткиИБелкиРазно(t *testing.T) {
+	got, _ := asEggDish(llm.MealItem{Name: "Яйца", Yolks: 2, Whites: 4})
+	// 2 желтка (2×61=122) + 4 белка (4×17=68) = 190; вес 2×22 + 4×33 = 176.
+	if got.Kcal != 190 || got.Grams != 176 {
+		t.Errorf("ккал=%v вес=%v, ждали 190 / 176", got.Kcal, got.Grams)
 	}
-	// белок: 2×6.3 + 4×3.6 = 12.6 + 14.4 = 27.
-	if got.ProteinG != 27 {
-		t.Errorf("белок=%v, ждали 27", got.ProteinG)
+	// белок: 2×2.7 + 4×3.6 = 5.4 + 14.4 = 19.8.
+	if got.ProteinG != 19.8 {
+		t.Errorf("белок=%v, ждали 19.8", got.ProteinG)
 	}
 }
 
-// Первый разбор фото: LLM счётчиков не отдаёт (0/0) — штуки оцениваются из граммовки
-// (≈50 г за штуку), минимум одна.
+// Первый разбор фото: LLM счётчиков не отдаёт (0/0) — считаем ЦЕЛЫЕ яйца из граммовки
+// (≈55 г за яйцо, минимум одно) → равное число желтков и белков.
 func TestAsEggDish_ПервичнаяДогадкаИзГраммовки(t *testing.T) {
 	got, _ := asEggDish(llm.MealItem{Name: "Яичница", Grams: 100}) // ~2 яйца
-	if got.EggsWhole != 2 {
-		t.Errorf("догадка=%d, ждали 2 (100г/55≈2)", got.EggsWhole)
+	if got.Yolks != 2 || got.Whites != 2 {
+		t.Errorf("догадка=%d/%d, ждали 2/2 (100г/55≈2 целых)", got.Yolks, got.Whites)
 	}
-	// Совсем без граммовки — минимум одно целое, а не ноль.
+	// Совсем без граммовки — минимум одно целое (1 желток + 1 белок), а не ноль.
 	got0, _ := asEggDish(llm.MealItem{Name: "Яйцо"})
-	if got0.EggsWhole != 1 {
-		t.Errorf("при grams=0 догадка=%d, ждали 1", got0.EggsWhole)
+	if got0.Yolks != 1 || got0.Whites != 1 {
+		t.Errorf("при grams=0 догадка=%d/%d, ждали 1/1", got0.Yolks, got0.Whites)
 	}
 }
 
@@ -87,10 +87,10 @@ func TestClampEggs(t *testing.T) {
 }
 
 // Интеграция через SanitizeDishes (путь и разбора, и PATCH): яичное блюдо не отбрасывается
-// по нулям и приходит с посчитанным из штук КБЖУ.
+// по нулям и приходит с посчитанным из штук КБЖУ. 2 желтка + 2 белка = 2 целых = 156 ккал.
 func TestSanitizeDishes_ЯйцаЧерезОбщийПуть(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{
-		{Name: "Яичница", EggsWhole: 2},                   // яйца — счётчик
+		{Name: "Яичница", Yolks: 2, Whites: 2},            // яйца — счётчик
 		{Name: "Хлеб", Grams: 30, ProteinG: 2, CarbG: 15}, // обычное блюдо рядом
 	})
 	if len(dishes) != 2 {

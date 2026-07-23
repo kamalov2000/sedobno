@@ -155,30 +155,30 @@ describe("diaryItemToResult — сохранённый приём в форму 
   });
 });
 
-describe("яйца — счётчик штук вместо граммовки", () => {
-  it("eggMacros считает КБЖУ детерминированно из штук", () => {
-    const m = eggMacros(3, 0); // 3 целых
-    expect(m.kcal).toBe(234); // 3×78
-    expect(m.protein_g).toBe(18.9); // 3×6.3
-    expect(m.grams).toBe(165); // 3×55
+describe("яйца — счётчик желтков/белков вместо граммовки", () => {
+  it("eggMacros: 3 желтка + 3 белка = 3 целых яйца", () => {
+    const m = eggMacros(3, 3);
+    expect(m.kcal).toBe(234); // 3×61 + 3×17
+    expect(m.protein_g).toBe(18.9); // 3×2.7 + 3×3.6
+    expect(m.grams).toBe(165); // 3×22 + 3×33
   });
 
-  it("целые + белки суммируются по своим константам", () => {
-    const m = eggMacros(2, 4); // 2 целых + 4 белка
-    expect(m.kcal).toBe(224); // 2×78 + 4×17
-    expect(m.grams).toBe(242); // 2×55 + 4×33
+  it("желтки и белки суммируются по своим константам", () => {
+    const m = eggMacros(2, 4); // 2 желтка + 4 белка
+    expect(m.kcal).toBe(190); // 2×61 + 4×17
+    expect(m.grams).toBe(176); // 2×22 + 4×33
   });
 
-  it("withEggCount проставляет kind, счётчики и пересчитанное КБЖУ, клампит в 0..30", () => {
+  it("withEggCount проставляет счётчики желтков/белков и КБЖУ, клампит в 0..30", () => {
     const base: MealItem = { name: "Яичница", grams: 0, kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1, dish_kind: "eggs" };
     const d = withEggCount(base, 2, 1);
-    expect(d.eggs_whole).toBe(2);
-    expect(d.eggs_white).toBe(1);
-    expect(d.kcal).toBe(173); // 2×78 + 1×17
+    expect(d.yolks).toBe(2);
+    expect(d.whites).toBe(1);
+    expect(d.kcal).toBe(139); // 2×61 + 1×17
     expect(d.name).toBe("Яичница"); // имя сохраняется
     // кламп
-    expect(withEggCount(base, 99, -5).eggs_whole).toBe(30);
-    expect(withEggCount(base, 99, -5).eggs_white).toBe(0);
+    expect(withEggCount(base, 99, -5).yolks).toBe(30);
+    expect(withEggCount(base, 99, -5).whites).toBe(0);
   });
 
   it("isEggDish отличает яичное блюдо по флагу", () => {
@@ -189,29 +189,30 @@ describe("яйца — счётчик штук вместо граммовки",
 
 describe("детерминированные примитивы блюда (pieces) — КБЖУ поверх базы", () => {
   it("pieceMacros суммирует по реестру, неизвестный kind игнорируется", () => {
-    const m = pieceMacros([{ kind: "egg", count: 4 }, { kind: "cutlet", count: 5 }]);
-    expect(m.kcal).toBe(312); // 4×78; «cutlet» уже не в реестре из 4 — отброшен
-    expect(m.protein_g).toBe(25.2); // 4×6.3
+    // 4 целых яйца = 4 желтка + 4 белка = 312 ккал; «cutlet» не в реестре — отброшен
+    const m = pieceMacros([{ kind: "yolk", count: 4 }, { kind: "white", count: 4 }, { kind: "cutlet", count: 5 }]);
+    expect(m.kcal).toBe(312); // 4×61 + 4×17
+    expect(m.protein_g).toBe(25.2); // 4×2.7 + 4×3.6
   });
 
-  it("egg_white — штучный примитив белка (из EGG_WHITE), лейбл «×N»", () => {
-    expect(pieceMacros([{ kind: "egg_white", count: 4 }]).kcal).toBe(68); // 4×17
-    expect(pieceMacros([{ kind: "egg_white", count: 4 }]).protein_g).toBe(14.4); // 4×3.6
-    expect(pieceCountLabel("egg_white", 4)).toBe("×4"); // штучный, не ложечный
+  it("желток и белок — штучные примитивы из EGG_YOLK/EGG_WHITE, лейбл «×N»", () => {
+    expect(pieceMacros([{ kind: "yolk", count: 4 }]).kcal).toBe(244); // 4×61
+    expect(pieceMacros([{ kind: "white", count: 4 }]).kcal).toBe(68); // 4×17
+    expect(pieceCountLabel("yolk", 4)).toBe("×4"); // штучный, не ложечный
   });
 
-  it("displayPieces достраивает пару Яйца/Белки: [egg×4] → два чипса (4 и 0)", () => {
-    const shown = displayPieces([{ kind: "egg", count: 4 }]);
-    expect(shown).toEqual([{ kind: "egg", count: 4 }, { kind: "egg_white", count: 0 }]);
-    // и наоборот: только белки → добавляется egg×0, порядок Яйца→Белки
-    expect(displayPieces([{ kind: "egg_white", count: 4 }])).toEqual([
-      { kind: "egg", count: 0 }, { kind: "egg_white", count: 4 },
+  it("displayPieces достраивает пару Желток/Белок: [yolk×4] → два чипса (4 и 0)", () => {
+    const shown = displayPieces([{ kind: "yolk", count: 4 }]);
+    expect(shown).toEqual([{ kind: "yolk", count: 4 }, { kind: "white", count: 0 }]);
+    // и наоборот: только белки → добавляется yolk×0, порядок Желток→Белок
+    expect(displayPieces([{ kind: "white", count: 4 }])).toEqual([
+      { kind: "yolk", count: 0 }, { kind: "white", count: 4 },
     ]);
     // не-яичные блюда не трогаются
     expect(displayPieces([{ kind: "oil_veg", count: 1 }])).toEqual([{ kind: "oil_veg", count: 1 }]);
     // яйца впереди, ложечные после
-    expect(displayPieces([{ kind: "oil_veg", count: 1 }, { kind: "egg", count: 2 }])).toEqual([
-      { kind: "egg", count: 2 }, { kind: "egg_white", count: 0 }, { kind: "oil_veg", count: 1 },
+    expect(displayPieces([{ kind: "oil_veg", count: 1 }, { kind: "yolk", count: 2 }])).toEqual([
+      { kind: "yolk", count: 2 }, { kind: "white", count: 0 }, { kind: "oil_veg", count: 1 },
     ]);
   });
 
@@ -228,16 +229,16 @@ describe("детерминированные примитивы блюда (piec
   });
 
   it("effectiveDishKcal = eyeball-база + вклад примитивов", () => {
-    const dish: MealItem = { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "egg", count: 4 }] };
-    expect(effectiveDishKcal(dish)).toBe(792); // 480 + 4×78
+    const dish: MealItem = { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "yolk", count: 4 }, { kind: "white", count: 4 }] };
+    expect(effectiveDishKcal(dish)).toBe(792); // 480 + 4 целых яйца (312)
   });
 
   it("totalOf прибавляет вклад примитивов каждого блюда к базе", () => {
     const t = totalOf([
-      { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "egg", count: 4 }] },
+      { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "yolk", count: 4 }, { kind: "white", count: 4 }] },
     ]);
     expect(t.kcal).toBe(792);
-    expect(t.protein_g).toBe(31.2); // 6 + 4×6.3
+    expect(t.protein_g).toBe(31.2); // 6 + 4×2.7 + 4×3.6
   });
 
   it("withPieceCount правит count, снимает assumed, клампит 0..50; count 0 оставляет чипс видимым", () => {
@@ -254,6 +255,6 @@ describe("детерминированные примитивы блюда (piec
   it("pieceCountLabel: ложечные «N ч.л.», штучные «×N»", () => {
     expect(pieceCountLabel("oil_veg", 1)).toBe("1 ч.л.");
     expect(pieceCountLabel("sugar", 2)).toBe("2 ч.л.");
-    expect(pieceCountLabel("egg", 4)).toBe("×4");
+    expect(pieceCountLabel("yolk", 4)).toBe("×4");
   });
 });

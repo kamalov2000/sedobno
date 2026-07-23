@@ -248,11 +248,11 @@ export interface DishPatch {
   protein_per_100?: number;
   fat_per_100?: number;
   carb_per_100?: number;
-  /** Яичное блюдо: dish_kind="eggs" + счётчики штук. Числа КБЖУ сервер пересчитает из
-   *  штук по константам — клиентские kcal/grams для такого блюда игнорируются. */
+  /** Яичное блюдо: dish_kind="eggs" + счётчики желтков/белков. Числа КБЖУ сервер пересчитает
+   *  из штук по константам — клиентские kcal/grams для такого блюда игнорируются. */
   dish_kind?: string;
-  eggs_whole?: number;
-  eggs_white?: number;
+  yolks?: number;
+  whites?: number;
   /** Примитивы блюда (штучные + ложечные добавки) — КБЖУ считает сервер по константам
    *  поверх базы. Флаг assumed переживает правку (модель предположила добавку). */
   pieces?: { kind: string; count: number; assumed?: boolean }[];

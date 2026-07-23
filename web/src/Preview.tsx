@@ -146,7 +146,7 @@ const mealHistoryEmpty = async (): Promise<MealHistoryPage> => ({ items: [] });
 const mockEggMeal: MealResult = {
   status: "ok", id: 2, meals_left: 6, confidence: 0.8, note: "",
   dishes: [
-    { name: "Яичница", grams: 150, kcal: 216, protein_g: 18.9, fat_g: 14.4, carb_g: 1.2, confidence: 1, dish_kind: "eggs", eggs_whole: 3, eggs_white: 0 },
+    { name: "Яичница", grams: 165, kcal: 234, protein_g: 18.9, fat_g: 15.9, carb_g: 1.8, confidence: 1, dish_kind: "eggs", yolks: 3, whites: 3 },
     { name: "Хлеб ржаной", grams: 30, kcal: 70, protein_g: 2, fat_g: 1, carb_g: 14, confidence: 0.9 },
   ],
   total: { kcal: 286, protein_g: 20.9, fat_g: 15.4, carb_g: 15.2 },

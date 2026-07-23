@@ -48,14 +48,14 @@ type dishInput struct {
 	FatPer100     *float64 `json:"fat_per_100"`
 	CarbPer100    *float64 `json:"carb_per_100"`
 
-	// Яичное блюдо: счётчики штук (целые/белки). Числа КБЖУ от клиента для такого блюда
+	// Яичное блюдо: счётчики желтков/белков. Числа КБЖУ от клиента для такого блюда
 	// игнорируются — сервер пересчитает из штук по константам (LLM/клиент к числам не
 	// подпускаем). DishKind="eggs" маркирует блюдо; санитизация делает пересчёт.
-	DishKind  string `json:"dish_kind"`
-	EggsWhole int    `json:"eggs_whole"`
-	EggsWhite int    `json:"eggs_white"`
+	DishKind string `json:"dish_kind"`
+	Yolks    int    `json:"yolks"`
+	Whites   int    `json:"whites"`
 
-	// Pieces — детерминированные примитивы блюда: штучные (egg) и ложечные добавки
+	// Pieces — детерминированные примитивы блюда: штучные (yolk/white) и ложечные добавки
 	// (oil_veg/butter/sugar). КБЖУ считает сервер по константам, клиентские числа для них
 	// игнорируются (как у dish_kind=eggs). Флаг assumed переживает правку (модель предположила).
 	Pieces []llm.MealPiece `json:"pieces"`
@@ -94,8 +94,8 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			// Яичное блюдо: несём только счётчики штук; КБЖУ клиента игнорируем — его
 			// посчитает SanitizeDishes из штук по константам. confidence не трогаем.
 			item.DishKind = meal.DishKindEggs
-			item.EggsWhole = d.EggsWhole
-			item.EggsWhite = d.EggsWhite
+			item.Yolks = d.Yolks
+			item.Whites = d.Whites
 		case d.KcalPer100 != nil:
 			converted, errMsg := manualToPortion(name, i+1, d)
 			if errMsg != "" {

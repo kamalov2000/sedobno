@@ -2,11 +2,11 @@ import type { MealItem } from "../types";
 import { EGG_MAX_PER_KIND } from "../meal";
 import { haptic } from "../telegram";
 
-// Карточка яичного блюда: яйца считают ШТУКАМИ, не граммами (никто не взвешивает
-// яичницу — говорят «три яйца»). Поэтому вместо поля-граммовки — счётчик штук с ±,
-// по образцу водного трекера (WaterCard): ряд иконок-яиц + кнопки минус/плюс. Две
-// группы: целые яйца и «только белки». КБЖУ пересчитывает родитель детерминированно
-// (meal.withEggCount), сервер — источник истины при сохранении.
+// Карточка яичного блюда: яйца считают по ЧАСТЯМ — желток и белок (как разрезанное
+// вареное яйцо), не граммами. Вместо поля-граммовки — два счётчика с ±, по образцу
+// водного трекера: ряд иконок + кнопки минус/плюс. Целое яйцо = 1 желток + 1 белок.
+// КБЖУ пересчитывает родитель детерминированно (meal.withEggCount), сервер — источник
+// истины при сохранении.
 
 const fmtInt = (v: number) => String(Math.round(v));
 const MAX_ICONS = 12; // визуальный предел ряда; дальше показываем «+N», счётчик растёт числом
@@ -14,14 +14,14 @@ const MAX_ICONS = 12; // визуальный предел ряда; дальш�
 interface Props {
   dish: MealItem;
   onName: (v: string) => void;
-  /** Новые счётчики штук (целые, белки) — родитель пересчитает КБЖУ и тотал. */
-  onCount: (whole: number, white: number) => void;
+  /** Счётчики штук (желтки, белки) — родитель пересчитает КБЖУ и тотал. Целое яйцо = 1+1. */
+  onCount: (yolks: number, whites: number) => void;
   onRemove: () => void;
 }
 
 export default function EggCounter({ dish, onName, onCount, onRemove }: Props) {
-  const whole = dish.eggs_whole ?? 0;
-  const white = dish.eggs_white ?? 0;
+  const yolks = dish.yolks ?? 0;
+  const whites = dish.whites ?? 0;
 
   return (
     <div style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
@@ -39,8 +39,8 @@ export default function EggCounter({ dish, onName, onCount, onRemove }: Props) {
         </button>
       </div>
 
-      <EggRow label="Целые яйца" icon="ti-egg" count={whole} onSet={(n) => onCount(n, white)} />
-      <EggRow label="Только белки" icon="ti-egg-cracked" count={white} onSet={(n) => onCount(whole, n)} />
+      <EggRow label="Желток" icon="ti-egg" count={yolks} onSet={(n) => onCount(n, whites)} />
+      <EggRow label="Белок" icon="ti-egg-cracked" count={whites} onSet={(n) => onCount(yolks, n)} />
     </div>
   );
 }

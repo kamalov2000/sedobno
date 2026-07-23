@@ -129,8 +129,8 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   // Яичное блюдо: тап по счётчику штук пересчитывает КБЖУ детерминированно (те же
   // константы, что на сервере), тотал приёма обновляется на лету — как вода пересчитывает
   // мл. К числам ни LLM, ни ручной ввод не подпускаются: только штуки.
-  const setEggCount = (i: number, whole: number, white: number) => {
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? withEggCount(d, whole, white) : d)));
+  const setEggCount = (i: number, yolks: number, whites: number) => {
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? withEggCount(d, yolks, whites) : d)));
   };
 
   // Счётные единицы блюда (яйца/котлеты/… внутри составного): тап ± меняет число штук,
@@ -202,7 +202,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       const pieces = d.pieces && d.pieces.length ? { pieces: d.pieces } : {};
       // Яичное блюдо: несём счётчики яиц + возможное масло; сервер пересчитает КБЖУ.
       if (isEggDish(d)) {
-        return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", eggs_whole: d.eggs_whole ?? 0, eggs_white: d.eggs_white ?? 0, ...pieces };
+        return { name: d.name.trim(), grams: d.grams, dish_kind: "eggs", yolks: d.yolks ?? 0, whites: d.whites ?? 0, ...pieces };
       }
       return d.manual
         ? {

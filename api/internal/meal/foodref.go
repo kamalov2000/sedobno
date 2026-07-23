@@ -48,6 +48,10 @@ func FoodReference() []FoodRefItem {
 				ProteinG: per100(e.WholeProtein, e.WholeGrams), FatG: per100(e.WholeFat, e.WholeGrams), CarbG: per100(e.WholeCarb, e.WholeGrams),
 			},
 			{
+				Name: "Желток яичный", KcalPer100: per100(e.YolkKcal, e.YolkGrams),
+				ProteinG: per100(e.YolkProtein, e.YolkGrams), FatG: per100(e.YolkFat, e.YolkGrams), CarbG: per100(e.YolkCarb, e.YolkGrams),
+			},
+			{
 				Name: "Белок яичный", KcalPer100: per100(e.WhiteKcal, e.WhiteGrams),
 				ProteinG: per100(e.WhiteProtein, e.WhiteGrams), FatG: per100(e.WhiteFat, e.WhiteGrams), CarbG: per100(e.WhiteCarb, e.WhiteGrams),
 			},

@@ -45,16 +45,16 @@ func TestAddons_МаслоРовно45(t *testing.T) {
 // а ложечная добавка (масло) сохраняется — её вклад не дублируется.
 func TestAddons_ЯичницаСохраняетМасло(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{
-		{Name: "Яичница", EggsWhole: 2, Pieces: []llm.MealPiece{{Kind: "egg", Count: 2}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+		{Name: "Яичница", Yolks: 2, Whites: 2, Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
 	})
 	if len(dishes) != 1 {
 		t.Fatalf("блюд=%d, ждали 1", len(dishes))
 	}
-	// egg выброшен (дубль счётчика), oil_veg остался.
+	// яичные pieces выброшены (дубль счётчика), oil_veg остался.
 	if len(dishes[0].Pieces) != 1 || dishes[0].Pieces[0].Kind != "oil_veg" {
 		t.Errorf("pieces яичницы=%+v, ждали только oil_veg", dishes[0].Pieces)
 	}
-	// 2 яйца-счётчика 2×78=156 + 1 ч.л. масла 45 = 201.
+	// 2 целых яйца-счётчика 156 + 1 ч.л. масла 45 = 201.
 	if total.Kcal != 201 {
 		t.Errorf("тотал=%v, ждали 201 (2 яйца 156 + масло 45)", total.Kcal)
 	}
@@ -85,7 +85,7 @@ func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
 				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: false}}},
 			// «куриное филе жареное»: масло с assumed=true + видимое яйцо (assumed=false).
 			{Name: "куриное филе жареное", Grams: 180, Kcal: 300, ProteinG: 35, FatG: 16, CarbG: 2,
-				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "egg", Count: 1, Assumed: false}}},
+				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "yolk", Count: 1, Assumed: false}}},
 		},
 	})
 	if res.Status != StatusOK || len(res.Dishes) != 2 {
@@ -96,51 +96,51 @@ func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
 	if oil0.Kind != "oil_veg" || !oil0.Assumed {
 		t.Errorf("масло блюда 1: %+v, ждали assumed=true", oil0)
 	}
-	// У второго блюда: масло assumed=true, яйцо (штучное, видимое) — НЕ тронуто (false).
-	var oil1, egg1 llm.MealPiece
+	// У второго блюда: масло assumed=true, желток (штучный, видимый) — НЕ тронут (false).
+	var oil1, yolk1 llm.MealPiece
 	for _, p := range res.Dishes[1].Pieces {
 		switch p.Kind {
 		case "oil_veg":
 			oil1 = p
-		case "egg":
-			egg1 = p
+		case "yolk":
+			yolk1 = p
 		}
 	}
 	if !oil1.Assumed {
 		t.Errorf("масло блюда 2: assumed=%v, ждали true", oil1.Assumed)
 	}
-	if egg1.Assumed {
-		t.Errorf("яйцо блюда 2: assumed=%v, ждали false (штучное видимое не трогаем)", egg1.Assumed)
+	if yolk1.Assumed {
+		t.Errorf("желток блюда 2: assumed=%v, ждали false (штучное видимое не трогаем)", yolk1.Assumed)
 	}
 }
 
-// egg_white — штучный примитив с константами белка из EggConsts (единый источник). Его КБЖУ
-// добавляется к тоталу, как и egg. Кейс: составное блюдо с желтками и белками через pieces.
+// Желток и белок — штучные примитивы с константами из EggConsts (единый источник). Их КБЖУ
+// добавляется к тоталу. Кейс: составное блюдо с желтками и белками через pieces.
 func TestPieces_ЖелткиИБелкиРаздельно(t *testing.T) {
 	_, total := SanitizeDishes([]llm.MealItem{
 		{Name: "яйца с гречкой", Grams: 150, Kcal: 165, ProteinG: 6, FatG: 2, CarbG: 30,
-			Pieces: []llm.MealPiece{{Kind: "egg", Count: 3}, {Kind: "egg_white", Count: 4}}},
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 3}, {Kind: "white", Count: 4}}},
 	})
 	e := EggConsts()
-	// база 165 + 3 целых + 4 белка.
-	want := round1(165 + 3*e.WholeKcal + 4*e.WhiteKcal) // 165 + 234 + 68 = 467
+	// база 165 + 3 желтка + 4 белка.
+	want := round1(165 + 3*e.YolkKcal + 4*e.WhiteKcal) // 165 + 183 + 68 = 416
 	if total.Kcal != want {
 		t.Errorf("тотал=%v, ждали %v (база 165 + 3 желтка + 4 белка)", total.Kcal, want)
 	}
 }
 
-// Двойной счёт: яичное блюдо-СЧЁТЧИК снимает из pieces ОБА яичных вида (egg и egg_white),
+// Двойной счёт: яичное блюдо-СЧЁТЧИК снимает из pieces ОБА яичных вида (yolk и white),
 // ложечные (масло) сохраняет.
 func TestPieces_ЯичноеБлюдоСнимаетОбаВидаЯиц(t *testing.T) {
 	dishes, _ := SanitizeDishes([]llm.MealItem{
-		{Name: "Яичница", EggsWhole: 2, Pieces: []llm.MealPiece{
-			{Kind: "egg", Count: 2}, {Kind: "egg_white", Count: 1}, {Kind: "oil_veg", Count: 1}}},
+		{Name: "Яичница", Yolks: 2, Whites: 2, Pieces: []llm.MealPiece{
+			{Kind: "yolk", Count: 2}, {Kind: "white", Count: 1}, {Kind: "oil_veg", Count: 1}}},
 	})
 	if len(dishes) != 1 {
 		t.Fatalf("блюд=%d, ждали 1", len(dishes))
 	}
 	for _, p := range dishes[0].Pieces {
-		if p.Kind == "egg" || p.Kind == "egg_white" {
+		if p.Kind == "yolk" || p.Kind == "white" {
 			t.Errorf("у яичного блюда остался яичный примитив %q (двойной счёт)", p.Kind)
 		}
 	}

@@ -140,59 +140,59 @@ export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealR
   };
 }
 
-// Яичное блюдо считается ШТУКАМИ, не граммовкой (см. бэкенд internal/meal/eggs.go).
-// Константы на одну штуку ДУБЛИРУЮТ серверные — фронт считает КБЖУ мгновенно для
-// предпросмотра тотала при тапе, но источник истины при сохранении — сервер (он
-// пересчитает те же числа из штук). Значения обязаны совпадать с eggs.go.
-export const EGG_WHOLE = { grams: 55, kcal: 78, protein_g: 6.3, fat_g: 5.3, carb_g: 0.6 };
+// Яичное блюдо считается ЧАСТЯМИ ЯЙЦА (желток + белок), не граммовкой (см. бэкенд eggs.go).
+// Целое яйцо = 1 желток + 1 белок; желток = целое − белок (сумма частей = целое). Константы
+// ДУБЛИРУЮТ серверные — фронт считает КБЖУ мгновенно для предпросмотра тотала при тапе, но
+// источник истины при сохранении — сервер. Значения обязаны совпадать с eggs.go.
 export const EGG_WHITE = { grams: 33, kcal: 17, protein_g: 3.6, fat_g: 0.1, carb_g: 0.2 };
+export const EGG_YOLK = { grams: 22, kcal: 61, protein_g: 2.7, fat_g: 5.2, carb_g: 0.4 }; // целое(55/78/6.3/5.3/0.6) − белок
 export const EGG_MAX_PER_KIND = 30;
 
 export const isEggDish = (d: MealItem): boolean => d.dish_kind === "eggs";
 
-/** КБЖУ и вес яичного блюда из счётчиков штук — детерминированно, как на сервере. */
-export function eggMacros(whole: number, white: number): MealItem {
-  const w = Math.max(0, whole);
-  const b = Math.max(0, white);
+/** КБЖУ и вес яичного блюда из счётчиков желтков/белков — детерминированно, как на сервере. */
+export function eggMacros(yolks: number, whites: number): MealItem {
+  const y = Math.max(0, yolks);
+  const w = Math.max(0, whites);
   return {
     name: "",
-    grams: round1(w * EGG_WHOLE.grams + b * EGG_WHITE.grams),
-    kcal: round1(w * EGG_WHOLE.kcal + b * EGG_WHITE.kcal),
-    protein_g: round1(w * EGG_WHOLE.protein_g + b * EGG_WHITE.protein_g),
-    fat_g: round1(w * EGG_WHOLE.fat_g + b * EGG_WHITE.fat_g),
-    carb_g: round1(w * EGG_WHOLE.carb_g + b * EGG_WHITE.carb_g),
+    grams: round1(y * EGG_YOLK.grams + w * EGG_WHITE.grams),
+    kcal: round1(y * EGG_YOLK.kcal + w * EGG_WHITE.kcal),
+    protein_g: round1(y * EGG_YOLK.protein_g + w * EGG_WHITE.protein_g),
+    fat_g: round1(y * EGG_YOLK.fat_g + w * EGG_WHITE.fat_g),
+    carb_g: round1(y * EGG_YOLK.carb_g + w * EGG_WHITE.carb_g),
     confidence: 1,
   };
 }
 
-/** Обновляет счётчик штук яичного блюда и пересчитывает его КБЖУ/вес (клампит в 0..MAX). */
-export function withEggCount(dish: MealItem, whole: number, white: number): MealItem {
-  const w = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(whole)));
-  const b = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(white)));
-  const m = eggMacros(w, b);
-  return { ...dish, dish_kind: "eggs", eggs_whole: w, eggs_white: b, grams: m.grams, kcal: m.kcal, protein_g: m.protein_g, fat_g: m.fat_g, carb_g: m.carb_g };
+/** Обновляет счётчики желтков/белков яичного блюда и пересчитывает КБЖУ/вес (кламп 0..MAX). */
+export function withEggCount(dish: MealItem, yolks: number, whites: number): MealItem {
+  const y = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(yolks)));
+  const w = Math.min(EGG_MAX_PER_KIND, Math.max(0, Math.round(whites)));
+  const m = eggMacros(y, w);
+  return { ...dish, dish_kind: "eggs", yolks: y, whites: w, grams: m.grams, kcal: m.kcal, protein_g: m.protein_g, fat_g: m.fat_g, carb_g: m.carb_g };
 }
 
 // Детерминированные примитивы блюда (pieces): КБЖУ считает сервер по константам, а клиент
 // дублирует их для мгновенного предпросмотра тотала при тапе (сервер — источник истины).
-// Штучные (egg/egg_white) + ложечные (oil_veg/butter/sugar). Значения ОБЯЗАНЫ совпадать с
-// реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE, egg_white = EGG_WHITE; ложечные — на 1 ч.л.
+// Штучные части яйца (yolk/white) + ложечные (oil_veg/butter/sugar). Значения ОБЯЗАНЫ совпадать
+// с реестром бэка (internal/meal/pieces.go). yolk = EGG_YOLK, white = EGG_WHITE; ложечные — на 1 ч.л.
 const SPOON_G = 5; // масса одной чайной ложки добавки, г
 export const PIECE_CONSTS: Record<string, { grams: number; kcal: number; protein_g: number; fat_g: number; carb_g: number }> = {
-  egg: EGG_WHOLE,
-  egg_white: EGG_WHITE,
+  yolk: EGG_YOLK,
+  white: EGG_WHITE,
   oil_veg: { grams: SPOON_G, kcal: 45, protein_g: 0, fat_g: 5.0, carb_g: 0 },
   butter: { grams: SPOON_G, kcal: 37, protein_g: 0, fat_g: 4.1, carb_g: 0 },
   sugar: { grams: SPOON_G, kcal: 20, protein_g: 0, fat_g: 0, carb_g: 5.0 },
 };
 
 export const PIECE_LABELS: Record<string, string> = {
-  egg: "Яйца", egg_white: "Белки", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
+  yolk: "Желток", white: "Белок", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
 };
 
-// Эмодзи чипса примитива (штучные egg/egg_white + ложечные).
+// Эмодзи чипса примитива (части яйца yolk/white + ложечные).
 export const PIECE_EMOJI: Record<string, string> = {
-  egg: "🥚", egg_white: "🥚", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
+  yolk: "🟡", white: "⚪", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
 };
 
 export const PIECE_MAX = 50;
@@ -208,14 +208,14 @@ export function pieceCountLabel(kind: string, count: number): string {
   return isAddonKind(kind) ? `${count} ${ADDON_UNIT}` : `×${count}`;
 }
 
-// Яичные примитивы (штучные): целые (с желтком) и «только белки».
-export const EGG_PIECE_KINDS = ["egg", "egg_white"] as const;
+// Яичные примитивы (штучные части яйца): желток и белок.
+export const EGG_PIECE_KINDS = ["yolk", "white"] as const;
 const isEggPiece = (kind: string): boolean => (EGG_PIECE_KINDS as readonly string[]).includes(kind);
 
-/** Чипсы для показа под блюдом. Если у блюда есть ХОТЬ ОДИН яичный примитив (egg/egg_white),
+/** Чипсы для показа под блюдом. Если у блюда есть ХОТЬ ОДИН яичный примитив (yolk/white),
  *  показываем ОБА вида ВСЕГДА: отсутствующий — как count=0 (виден снятым чипсом, «+» добавляет).
  *  Вывод модели — только стартовые числа, а не условие существования чипса: на дисциплину
- *  vision не полагаемся (тот же урок, что с assumed — модель то отдаёт egg_white, то нет).
+ *  vision не полагаемся (тот же урок, что с assumed — модель то отдаёт white, то нет).
  *  Яйца/Белки идут первыми в фиксированном порядке, затем остальные примитивы как есть. */
 export function displayPieces(pieces?: MealPiece[]): MealPiece[] {
   const list = pieces ?? [];
