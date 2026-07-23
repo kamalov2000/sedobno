@@ -342,6 +342,27 @@ describe("MealResultScreen — тип приёма у сохранённого",
   });
 });
 
+describe("MealResultScreen — разбор модели (note) на карточке", () => {
+  const withNote = (confidence: number) => ({
+    status: "ok" as const, id: 70, meals_left: -1, confidence,
+    note: "Соус посчитан на глаз — калорийность приблизительна.",
+    dishes: [{ name: "Паста", grams: 250, kcal: 400, protein_g: 12, fat_g: 14, carb_g: 55, confidence }],
+    total: { kcal: 400, protein_g: 12, fat_g: 14, carb_g: 55 },
+  });
+
+  it("note модели виден при уверенном разборе", () => {
+    render(<MealResultScreen result={withNote(0.9) as never} isSubscribed onDone={noop} onRetake={noop} />);
+    expect(screen.getByText("Соус посчитан на глаз — калорийность приблизительна.")).toBeTruthy();
+  });
+
+  it("при lowConfidence note не дублируется (только в плашке «оценка на глаз»)", () => {
+    render(<MealResultScreen result={withNote(0.4) as never} isSubscribed onDone={noop} onRetake={noop} />);
+    // note показан ровно один раз — в плашке низкой уверенности, а не ещё и тейком.
+    expect(screen.getAllByText("Соус посчитан на глаз — калорийность приблизительна.")).toHaveLength(1);
+    expect(screen.getByText("Оценка на глаз")).toBeTruthy();
+  });
+});
+
 describe("MealResultScreen — яичное блюдо как счётчик штук", () => {
   const eggResult = () => ({
     status: "ok" as const,

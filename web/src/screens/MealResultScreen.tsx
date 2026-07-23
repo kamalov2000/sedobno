@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
 import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import EggCounter from "../components/EggCounter";
+import ModelTake from "../components/ModelTake";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
@@ -406,6 +407,11 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
             </div>
           </div>
         )}
+
+        {/* Разбор модели о тарелке (note) тем же стилем, что и тейк сканера. При
+            lowConfidence note уже показан в плашке «оценка на глаз» выше — тогда здесь
+            не дублируем. У ручного приёма note модели нет. */}
+        {!lowConfidence && fromPhoto && <ModelTake text={result.note} />}
 
         <div style={{ height: 16 }} />
       </div>

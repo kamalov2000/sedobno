@@ -5,6 +5,7 @@ import FlagCard from "../components/FlagCard";
 import IngredientList from "../components/IngredientList";
 import NutritionCard from "../components/NutritionCard";
 import PhotoStager from "../components/PhotoStager";
+import ModelTake from "../components/ModelTake";
 
 // Экран 03 · Результат. Дисклеймер §11 в футере. Ценник — фолбэк «ПРОВЕРКА №N».
 interface Props {
@@ -67,6 +68,11 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
         <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text3)", marginTop: 8, paddingLeft: 2 }}>
           Оценка — ориентир по добавкам, не полная характеристика продукта
         </div>
+
+        {/* Короткий разбор модели (фаза 4 пайплайна): пересказ вердиктов добавок
+            фактическим тоном. Генерируется и оплачивается на бэке — доводим до экрана.
+            Пустой — блок не рендерится. Стоит над карточками флагов как TL;DR. */}
+        <ModelTake text={result.explanation} />
 
         {flags.length > 0 ? (
           flags.map((f, i) => (
