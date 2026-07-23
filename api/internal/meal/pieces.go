@@ -46,17 +46,20 @@ type pieceSpec struct {
 func pieceRegistry() map[string]pieceSpec {
 	e := EggConsts()
 	return map[string]pieceSpec{
-		"egg":     {Grams: e.WholeGrams, Kcal: e.WholeKcal, Protein: e.WholeProtein, Fat: e.WholeFat, Carb: e.WholeCarb},
-		"oil_veg": {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
-		"butter":  {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
-		"sugar":   {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
+		// Яйца двумя видами: целое (с желтком) и «только белок». Константы ТОЛЬКО из
+		// EggConsts — единый источник со счётчиком яичного блюда, числа не дублируем.
+		"egg":       {Grams: e.WholeGrams, Kcal: e.WholeKcal, Protein: e.WholeProtein, Fat: e.WholeFat, Carb: e.WholeCarb},
+		"egg_white": {Grams: e.WhiteGrams, Kcal: e.WhiteKcal, Protein: e.WhiteProtein, Fat: e.WhiteFat, Carb: e.WhiteCarb},
+		"oil_veg":   {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
+		"butter":    {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
+		"sugar":     {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
 	}
 }
 
 // PieceLabels — русские подписи для UI (kind → «Яйца» и т.п.). Экспортируется, чтобы фронт
 // не хардкодил названия. Порядок для UI не важен — блюдо несёт свои pieces.
 var PieceLabels = map[string]string{
-	"egg": "Яйца", "oil_veg": "Масло", "butter": "Сливочное", "sugar": "Сахар",
+	"egg": "Яйца", "egg_white": "Белки", "oil_veg": "Масло", "butter": "Сливочное", "sugar": "Сахар",
 }
 
 // isAddonKind — ложечная добавка (масло/сахар), а не штучная еда. Для egg-счётчика и

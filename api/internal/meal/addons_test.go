@@ -113,3 +113,81 @@ func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
 		t.Errorf("яйцо блюда 2: assumed=%v, ждали false (штучное видимое не трогаем)", egg1.Assumed)
 	}
 }
+
+// egg_white — штучный примитив с константами белка из EggConsts (единый источник). Его КБЖУ
+// добавляется к тоталу, как и egg. Кейс: составное блюдо с желтками и белками через pieces.
+func TestPieces_ЖелткиИБелкиРаздельно(t *testing.T) {
+	_, total := SanitizeDishes([]llm.MealItem{
+		{Name: "яйца с гречкой", Grams: 150, Kcal: 165, ProteinG: 6, FatG: 2, CarbG: 30,
+			Pieces: []llm.MealPiece{{Kind: "egg", Count: 3}, {Kind: "egg_white", Count: 4}}},
+	})
+	e := EggConsts()
+	// база 165 + 3 целых + 4 белка.
+	want := round1(165 + 3*e.WholeKcal + 4*e.WhiteKcal) // 165 + 234 + 68 = 467
+	if total.Kcal != want {
+		t.Errorf("тотал=%v, ждали %v (база 165 + 3 желтка + 4 белка)", total.Kcal, want)
+	}
+}
+
+// Двойной счёт: яичное блюдо-СЧЁТЧИК снимает из pieces ОБА яичных вида (egg и egg_white),
+// ложечные (масло) сохраняет.
+func TestPieces_ЯичноеБлюдоСнимаетОбаВидаЯиц(t *testing.T) {
+	dishes, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "Яичница", EggsWhole: 2, Pieces: []llm.MealPiece{
+			{Kind: "egg", Count: 2}, {Kind: "egg_white", Count: 1}, {Kind: "oil_veg", Count: 1}}},
+	})
+	if len(dishes) != 1 {
+		t.Fatalf("блюд=%d, ждали 1", len(dishes))
+	}
+	for _, p := range dishes[0].Pieces {
+		if p.Kind == "egg" || p.Kind == "egg_white" {
+			t.Errorf("у яичного блюда остался яичный примитив %q (двойной счёт)", p.Kind)
+		}
+	}
+	if len(dishes[0].Pieces) != 1 || dishes[0].Pieces[0].Kind != "oil_veg" {
+		t.Errorf("pieces=%+v, ждали только oil_veg", dishes[0].Pieces)
+	}
+}
+
+// Санити нулевой плотности: «соус майонезный 10 г 0 ккал» → КБЖУ восстановлены из справочной
+// плотности «Майонез», ккал > 0, на проверку НЕ помечено (число нашлось).
+func TestZeroDensity_МайонезИзСправочника(t *testing.T) {
+	dishes, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "соус майонезный", Grams: 10, Kcal: 0, Confidence: 0.9},
+	})
+	if len(dishes) != 1 {
+		t.Fatalf("блюдо отброшено: %+v", dishes)
+	}
+	d := dishes[0]
+	if d.Kcal <= 0 {
+		t.Errorf("ккал=%v, ждали >0 (восстановлено из плотности майонеза)", d.Kcal)
+	}
+	if d.NeedsReview {
+		t.Errorf("помечено на проверку, хотя плотность нашлась")
+	}
+}
+
+// Незнакомое блюдо с весом и нулём ккал → на проверку + уверенность срезана.
+func TestZeroDensity_НеизвестноеНаПроверку(t *testing.T) {
+	dishes, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "загадочное варево", Grams: 120, Kcal: 0, Confidence: 0.9},
+	})
+	d := dishes[0]
+	if !d.NeedsReview {
+		t.Errorf("не помечено на проверку при весе>0 и ккал=0 без справочной плотности")
+	}
+	if d.Confidence > reviewConfidenceCap {
+		t.Errorf("уверенность=%v не срезана до %v", d.Confidence, reviewConfidenceCap)
+	}
+}
+
+// Вода — законный ноль: не трогаем, на проверку не помечаем.
+func TestZeroDensity_ВодаЗаконныйНоль(t *testing.T) {
+	dishes, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "вода питьевая", Grams: 250, Kcal: 0, Confidence: 0.9},
+	})
+	d := dishes[0]
+	if d.Kcal != 0 || d.NeedsReview {
+		t.Errorf("вода тронута: kcal=%v needs_review=%v (ждали 0/false)", d.Kcal, d.NeedsReview)
+	}
+}

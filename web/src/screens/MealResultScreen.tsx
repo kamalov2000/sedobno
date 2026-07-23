@@ -515,6 +515,14 @@ function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; o
         </div>
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 г</span>
       </div>
+      {/* Сервер не смог достоверно оценить калорийность (вес есть, ккал вышли нулевые) —
+          зовём проверить, а не показываем ложный ноль как факт. Поправка веса пересчитает. */}
+      {dish.needs_review && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, fontSize: 11.5, color: "var(--cal-num)", lineHeight: 1.4 }}>
+          <i className="ti ti-alert-triangle" aria-hidden="true" style={{ fontSize: 13, flex: "none" }} />
+          Проверьте калорийность — оценка ненадёжна
+        </div>
+      )}
     </div>
   );
 }

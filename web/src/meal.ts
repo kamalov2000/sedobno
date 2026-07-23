@@ -175,23 +175,24 @@ export function withEggCount(dish: MealItem, whole: number, white: number): Meal
 
 // Детерминированные примитивы блюда (pieces): КБЖУ считает сервер по константам, а клиент
 // дублирует их для мгновенного предпросмотра тотала при тапе (сервер — источник истины).
-// MVP-реестр — РОВНО 4 (штучный egg + ложечные oil_veg/butter/sugar). Значения ОБЯЗАНЫ
-// совпадать с реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE; ложечные — на 1 ч.л.
+// Штучные (egg/egg_white) + ложечные (oil_veg/butter/sugar). Значения ОБЯЗАНЫ совпадать с
+// реестром бэка (internal/meal/pieces.go). egg = EGG_WHOLE, egg_white = EGG_WHITE; ложечные — на 1 ч.л.
 const SPOON_G = 5; // масса одной чайной ложки добавки, г
 export const PIECE_CONSTS: Record<string, { grams: number; kcal: number; protein_g: number; fat_g: number; carb_g: number }> = {
   egg: EGG_WHOLE,
+  egg_white: EGG_WHITE,
   oil_veg: { grams: SPOON_G, kcal: 45, protein_g: 0, fat_g: 5.0, carb_g: 0 },
   butter: { grams: SPOON_G, kcal: 37, protein_g: 0, fat_g: 4.1, carb_g: 0 },
   sugar: { grams: SPOON_G, kcal: 20, protein_g: 0, fat_g: 0, carb_g: 5.0 },
 };
 
 export const PIECE_LABELS: Record<string, string> = {
-  egg: "Яйца", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
+  egg: "Яйца", egg_white: "Белки", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
 };
 
-// Эмодзи чипса примитива (штучный egg + ложечные).
+// Эмодзи чипса примитива (штучные egg/egg_white + ложечные).
 export const PIECE_EMOJI: Record<string, string> = {
-  egg: "🥚", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
+  egg: "🥚", egg_white: "🥚", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
 };
 
 export const PIECE_MAX = 50;

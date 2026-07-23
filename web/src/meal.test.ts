@@ -194,6 +194,12 @@ describe("детерминированные примитивы блюда (piec
     expect(m.protein_g).toBe(25.2); // 4×6.3
   });
 
+  it("egg_white — штучный примитив белка (из EGG_WHITE), лейбл «×N»", () => {
+    expect(pieceMacros([{ kind: "egg_white", count: 4 }]).kcal).toBe(68); // 4×17
+    expect(pieceMacros([{ kind: "egg_white", count: 4 }]).protein_g).toBe(14.4); // 4×3.6
+    expect(pieceCountLabel("egg_white", 4)).toBe("×4"); // штучный, не ложечный
+  });
+
   it("ложечная добавка считается по константе (1 ч.л.)", () => {
     expect(pieceMacros([{ kind: "oil_veg", count: 1 }]).kcal).toBe(45);
     expect(pieceMacros([{ kind: "butter", count: 2 }]).kcal).toBe(74); // 2×37
