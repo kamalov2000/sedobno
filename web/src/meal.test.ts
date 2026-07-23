@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, withPieceCount, pieceCountLabel } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, withPieceCount, pieceCountLabel, displayPieces } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -198,6 +198,21 @@ describe("детерминированные примитивы блюда (piec
     expect(pieceMacros([{ kind: "egg_white", count: 4 }]).kcal).toBe(68); // 4×17
     expect(pieceMacros([{ kind: "egg_white", count: 4 }]).protein_g).toBe(14.4); // 4×3.6
     expect(pieceCountLabel("egg_white", 4)).toBe("×4"); // штучный, не ложечный
+  });
+
+  it("displayPieces достраивает пару Яйца/Белки: [egg×4] → два чипса (4 и 0)", () => {
+    const shown = displayPieces([{ kind: "egg", count: 4 }]);
+    expect(shown).toEqual([{ kind: "egg", count: 4 }, { kind: "egg_white", count: 0 }]);
+    // и наоборот: только белки → добавляется egg×0, порядок Яйца→Белки
+    expect(displayPieces([{ kind: "egg_white", count: 4 }])).toEqual([
+      { kind: "egg", count: 0 }, { kind: "egg_white", count: 4 },
+    ]);
+    // не-яичные блюда не трогаются
+    expect(displayPieces([{ kind: "oil_veg", count: 1 }])).toEqual([{ kind: "oil_veg", count: 1 }]);
+    // яйца впереди, ложечные после
+    expect(displayPieces([{ kind: "oil_veg", count: 1 }, { kind: "egg", count: 2 }])).toEqual([
+      { kind: "egg", count: 2 }, { kind: "egg_white", count: 0 }, { kind: "oil_veg", count: 1 },
+    ]);
   });
 
   it("ложечная добавка считается по константе (1 ч.л.)", () => {

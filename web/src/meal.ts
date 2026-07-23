@@ -208,6 +208,24 @@ export function pieceCountLabel(kind: string, count: number): string {
   return isAddonKind(kind) ? `${count} ${ADDON_UNIT}` : `×${count}`;
 }
 
+// Яичные примитивы (штучные): целые (с желтком) и «только белки».
+export const EGG_PIECE_KINDS = ["egg", "egg_white"] as const;
+const isEggPiece = (kind: string): boolean => (EGG_PIECE_KINDS as readonly string[]).includes(kind);
+
+/** Чипсы для показа под блюдом. Если у блюда есть ХОТЬ ОДИН яичный примитив (egg/egg_white),
+ *  показываем ОБА вида ВСЕГДА: отсутствующий — как count=0 (виден снятым чипсом, «+» добавляет).
+ *  Вывод модели — только стартовые числа, а не условие существования чипса: на дисциплину
+ *  vision не полагаемся (тот же урок, что с assumed — модель то отдаёт egg_white, то нет).
+ *  Яйца/Белки идут первыми в фиксированном порядке, затем остальные примитивы как есть. */
+export function displayPieces(pieces?: MealPiece[]): MealPiece[] {
+  const list = pieces ?? [];
+  if (!list.some((p) => isEggPiece(p.kind))) return list;
+  const byKind = new Map(list.map((p) => [p.kind, p] as const));
+  const eggs: MealPiece[] = EGG_PIECE_KINDS.map((k) => byKind.get(k) ?? { kind: k, count: 0 });
+  const rest = list.filter((p) => !isEggPiece(p.kind));
+  return [...eggs, ...rest];
+}
+
 /** Суммарный КБЖУ счётных единиц блюда по константам (неизвестные kind игнорируются). */
 export function pieceMacros(pieces?: MealPiece[]): MealMacros {
   const t = (pieces ?? []).reduce(

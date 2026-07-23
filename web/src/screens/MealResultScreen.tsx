@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, withPieceCount, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
 import type { DishPatch } from "../api";
@@ -646,7 +646,10 @@ function ManualDishCard({
 // Ряд чипсов примитивов под карточкой блюда: штучные (яйца ×4) и ложечные добавки
 // (масло 1 ч.л.). Прижат к низу карточки (borderTop:none). assumed-чипсы помечены пунктиром.
 function PieceChips({ dish, onCount }: { dish: MealItem; onCount: (kind: string, count: number) => void }) {
-  const pieces = dish.pieces ?? [];
+  // displayPieces достраивает пару Яйца/Белки: если есть хоть один яичный примитив, второй
+  // вид рисуется с count=0 (виден, «+» добавляет) — чтобы белки можно было выставить руками,
+  // даже когда модель их не вернула. Прочие блюда — как есть.
+  const pieces = displayPieces(dish.pieces);
   if (pieces.length === 0) return null;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "-2px 8px 0", padding: "8px 12px 10px", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-soft)" }}>
