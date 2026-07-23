@@ -14,6 +14,7 @@ import DiaryScreen from "./screens/DiaryScreen";
 import WeightScreen from "./screens/WeightScreen";
 import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
+import ProfileScreen from "./screens/ProfileScreen";
 import { dayCardData, downloadShareCard } from "./shareCard";
 import { diaryItemToResult } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
@@ -23,7 +24,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history" | "scan_to_diary";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history" | "scan_to_diary";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -68,6 +69,9 @@ export default function App() {
   // тот же — откуда пришли, туда и вернуть. Поэтому одно состояние, а не флаг на путь.
   const [returnTo, setReturnTo] = useState<View | null>(null);
   const [savedMeal, setSavedMeal] = useState<MealDiaryItem | null>(null); // приём из истории — режим правки
+  // Точечная правка одного поля профиля из экрана «Профиль и цель». null — визард
+  // открыт как полный онбординг (первое заполнение). Число — правка одного шага.
+  const [profileEditStep, setProfileEditStep] = useState<0 | 1 | 2 | 3 | 4 | null>(null);
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
@@ -388,7 +392,16 @@ export default function App() {
         <DiaryScreen
           onBack={() => setView("home")}
           profile={me?.nutrition_profile}
-          onOpenWizard={() => setView("profile_wizard")}
+          onOpenWizard={() => {
+            // Профиль заполнен — открываем экран просмотра/правки (03); пустой —
+            // полный онбординг из визарда (первое заполнение нормы).
+            if (me?.nutrition_profile.filled) {
+              setView("profile");
+            } else {
+              setProfileEditStep(null);
+              setView("profile_wizard");
+            }
+          }}
           onOpenWeight={() => setView("weight")}
           onAddManual={() => {
             setReturnTo("meal_diary");
@@ -423,14 +436,30 @@ export default function App() {
           onSaved={() => setView("weight")}
         />
       )}
+      {view === "profile" && me && (
+        <ProfileScreen
+          profile={me.nutrition_profile}
+          onBack={() => setView("meal_diary")}
+          onEditField={(step) => {
+            setProfileEditStep(step);
+            setView("profile_wizard");
+          }}
+        />
+      )}
       {view === "profile_wizard" && (
         <ProfileWizard
           initial={me?.nutrition_profile}
+          only={profileEditStep ?? undefined}
           onDone={(profile) => {
             setMe((m) => (m ? { ...m, nutrition_profile: profile } : m));
-            setView("meal_diary");
+            // Правка одного поля возвращает на экран профиля; полный онбординг — в дневник.
+            setView(profileEditStep != null ? "profile" : "meal_diary");
+            setProfileEditStep(null);
           }}
-          onCancel={() => setView("meal_diary")}
+          onCancel={() => {
+            setView(profileEditStep != null ? "profile" : "meal_diary");
+            setProfileEditStep(null);
+          }}
         />
       )}
       {view === "loading" && (mode === "meal" ? <MealLoader /> : <ScanLoader />)}

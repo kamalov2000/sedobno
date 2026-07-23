@@ -13,15 +13,20 @@ interface Props {
   initial?: NutritionProfile;
   onDone: (profile: NutritionProfile) => void;
   onCancel: () => void;
+  /** Правка ОДНОГО поля из экрана профиля: показываем только шаг с этим полем,
+   *  «Далее» становится «Сохранить» (PATCH и выход), без прогресс-точек и экрана-итога.
+   *  Не задан — обычный онбординг из 5 шагов. Шаги: 0 пол · 1 год · 2 рост/вес ·
+   *  3 активность · 4 цель. */
+  only?: 0 | 1 | 2 | 3 | 4;
 }
 
-const ACTIVITY: { key: ActivityLevel; icon: string; title: string; sub: string }[] = [
+export const ACTIVITY: { key: ActivityLevel; icon: string; title: string; sub: string }[] = [
   { key: "sedentary", icon: "ti-device-laptop", title: "Сижу за компом", sub: "Работа сидя, мало движения" },
   { key: "light", icon: "ti-walk", title: "Хожу пешком", sub: "Прогулки, лёгкие тренировки" },
   { key: "moderate", icon: "ti-run", title: "Тренируюсь регулярно", sub: "3–5 раз в неделю" },
   { key: "high", icon: "ti-barbell", title: "Тяжёлые нагрузки", sub: "Интенсивный спорт или физработа" },
 ];
-const GOALS: { key: Goal; icon: string; title: string; sub: string }[] = [
+export const GOALS: { key: Goal; icon: string; title: string; sub: string }[] = [
   { key: "lose", icon: "ti-trending-down", title: "Похудеть", sub: "дефицит ≈ 15%" },
   { key: "maintain", icon: "ti-minus", title: "Держать вес", sub: "норма поддержания" },
   { key: "gain", icon: "ti-trending-up", title: "Набрать", sub: "профицит ≈ 10%" },
@@ -29,9 +34,9 @@ const GOALS: { key: Goal; icon: string; title: string; sub: string }[] = [
 
 const STEPS = 5; // 0 пол · 1 год · 2 рост/вес · 3 активность · 4 цель · (5 итог)
 
-export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
+export default function ProfileWizard({ initial, onDone, onCancel, only }: Props) {
   const nowYear = new Date().getFullYear();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<number>(only ?? 0);
   const [sex, setSex] = useState<Sex | null>(initial?.sex ?? null);
   const [birthYear, setBirthYear] = useState<number>(initial?.birth_year ?? nowYear - 30);
   const [heightCm, setHeightCm] = useState<string>(initial?.height_cm ? String(initial.height_cm) : "");
@@ -65,10 +70,31 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
     }
   };
 
+  // Правка одного поля: все шесть значений уже есть в initial, шлём их целиком (PATCH
+  // перепишет тем же, кроме правленого) и пересчитываем норму на сервере.
+  const single = only != null;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const profile = await patchProfileNutrition({
+        sex: sex!, birth_year: birthYear, height_cm: hNum, weight_kg: wNum, activity_level: activity!, goal: goal!,
+      });
+      notify("success");
+      return profile;
+    } catch (e) {
+      notify("error");
+      setErr(e instanceof Error ? e.message : "Не удалось сохранить");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const back = () => {
     haptic("light");
     setErr("");
-    if (step === 0) onCancel();
+    if (single || step === 0) onCancel();
     else setStep((s) => s - 1);
   };
 
@@ -76,23 +102,19 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
     if (!stepValid() || busy) return;
     haptic("light");
     setErr("");
+    if (single) {
+      const profile = await save();
+      if (profile) onDone(profile);
+      return;
+    }
     if (step < 4) {
       setStep(step + 1);
       return;
     }
-    setBusy(true);
-    try {
-      const profile = await patchProfileNutrition({
-        sex: sex!, birth_year: birthYear, height_cm: hNum, weight_kg: wNum, activity_level: activity!, goal: goal!,
-      });
+    const profile = await save();
+    if (profile) {
       setComputed(profile);
-      notify("success");
       setStep(5);
-    } catch (e) {
-      notify("error");
-      setErr(e instanceof Error ? e.message : "Не удалось рассчитать норму");
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -106,10 +128,10 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
           <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.06em", color: "var(--text3)" }}>ГОТОВО</span>
         ) : (
           <>
-            <button type="button" onClick={back} aria-label={step === 0 ? "Выйти без сохранения" : "Назад"} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "var(--bg-soft)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <i className={`ti ${step === 0 ? "ti-x" : "ti-chevron-left"}`} aria-hidden="true" style={{ fontSize: 17 }} />
+            <button type="button" onClick={back} aria-label={single || step === 0 ? "Выйти без сохранения" : "Назад"} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "var(--bg-soft)", color: "var(--text2)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className={`ti ${single ? "ti-chevron-left" : step === 0 ? "ti-x" : "ti-chevron-left"}`} aria-hidden="true" style={{ fontSize: 17 }} />
             </button>
-            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.06em", color: "var(--text3)" }}>ШАГ {step + 1} ИЗ 5</span>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, letterSpacing: "0.06em", color: "var(--text3)" }}>{single ? "ПРАВКА ПРОФИЛЯ" : `ШАГ ${step + 1} ИЗ 5`}</span>
           </>
         )}
       </div>
@@ -177,7 +199,7 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
 
       {/* Футер */}
       <div style={{ flex: "none", padding: "16px 22px 40px" }}>
-        {!isResult && (
+        {!isResult && !single && (
           <div style={{ display: "flex", justifyContent: "center", gap: 7, marginBottom: 16 }}>
             {Array.from({ length: STEPS }, (_, i) => (
               <span key={i} style={{ width: i === step ? 22 : 6, height: 6, borderRadius: 99, background: i <= step ? "var(--cal)" : "var(--border)" }} />
@@ -190,8 +212,8 @@ export default function ProfileWizard({ initial, onDone, onCancel }: Props) {
           onClick={isResult ? () => onDone(computed!) : next}
           style={{ width: "100%", height: 54, background: stepValid() ? "var(--cal)" : "var(--bg-soft)", color: stepValid() ? "var(--on-cal)" : "var(--text3)", border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif", fontSize: 16, fontWeight: 600, cursor: stepValid() && !busy ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: busy ? 0.7 : 1 }}
         >
-          {isResult && <i className="ti ti-check" aria-hidden="true" style={{ fontSize: 20 }} />}
-          {isResult ? "Готово" : step === 4 ? (busy ? "Считаем…" : "Рассчитать норму") : "Далее"}
+          {(isResult || single) && <i className="ti ti-check" aria-hidden="true" style={{ fontSize: 20 }} />}
+          {single ? (busy ? "Сохраняем…" : "Сохранить") : isResult ? "Готово" : step === 4 ? (busy ? "Считаем…" : "Рассчитать норму") : "Далее"}
         </button>
         {isResult && <div style={{ textAlign: "center", fontSize: 12, color: "var(--text3)", marginTop: 10 }}>Норму можно изменить в настройках</div>}
       </div>
