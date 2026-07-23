@@ -108,6 +108,13 @@ type Result struct {
 	LatencyMs     int64     `json:"latency_ms"`
 	CostRUB       float64   `json:"cost_estimate"`
 	Usage         llm.Usage `json:"-"`
+
+	// Поля детерминированного антигаллюцинационного гейта (transcription_gate.go) —
+	// внутренние, для телеметрии (server/scan.go пишет их в events), на клиентский
+	// ответ не влияют.
+	GateMismatch          bool `json:"-"` // хоть одно несовпадение (ингредиент или КБЖУ)
+	GateEscalated         bool `json:"-"` // штрафной ингредиент не подтвердился → эскалация
+	GateNutritionMismatch bool `json:"-"` // числа КБЖУ не подтвердились → nutrition скрыт
 }
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
@@ -313,6 +320,81 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	tUsage = tUsage.Add(u2)
 	if err != nil {
 		p.log.Warn("фаза 2: добор LLM не удался, продолжаем без него", "err", err)
+	}
+
+	// Детерминированный антигаллюцинационный гейт (transcription_gate.go) — вместо
+	// доверия к self-reported confidence, которая уверенную галлюцинацию не ловит по
+	// конструкции. Гейтим только одиночный кадр без уже вызванной сильной модели:
+	// мультикадр и так идёт через неё с самого начала (strongUsed=true выставлен выше).
+	if !strongUsed && p.fallback != nil {
+		risky, unreliable := transcriptionMismatch(recs, ext.Transcription)
+		switch {
+		case len(risky) > 0:
+			res.GateMismatch = true
+			p.log.Warn("гейт transcription: штрафной ингредиент не подтверждён текстом, эскалируем",
+				"count", len(risky), "first", risky[0].raw)
+			ext2, uf, ferr := p.extractWith(ctx, p.fallback, images)
+			fbUsage = fbUsage.Add(uf)
+			if ferr != nil {
+				p.log.Warn("эскалация по гейту transcription не удалась, оставляем результат основной модели", "err", ferr)
+				break
+			}
+			if !ext2.IsLabel || len(ext2.Ingredients) == 0 {
+				p.log.Warn("эскалация по гейту transcription: сильная модель не увидела состав, оставляем основной")
+				break
+			}
+			// Результат сильной модели ПОБЕЖДАЕТ безоговорочно — эскалируем максимум один
+			// раз за скан (повторный гейт не гоняем, иначе рискуем бесконечно звать Sonnet
+			// на честно неуверенном фото).
+			res.GateEscalated = true
+			ext = ext2
+			strongUsed = true
+			res.Provider = p.fallback.Name()
+			res.Confidence = ext.Confidence
+			res.LowConfidence = p.lowConfidence(ext)
+			res.IngredientsRaw = ext.Ingredients
+			res.Nutrition = ext.Nutrition
+
+			// Пере-проверяем терминальные исходы на результате сильной модели: она могла
+			// честно не увидеть то, что дешёвая придумала (алкоголь/не еда/состава нет).
+			switch {
+			case ext.Category == CategoryAlcohol:
+				res.Status = StatusNotScored
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			case ext.NotFood():
+				res.Status = StatusNotFood
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			case !ext.IsLabel || len(ext.Ingredients) == 0:
+				res.Status = StatusLabelNotFound
+				res.Reason = labelNotFoundReason(ext)
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			}
+
+			recs2, u2b, err2 := p.normalize(ctx, ext.Ingredients)
+			tUsage = tUsage.Add(u2b)
+			if err2 != nil {
+				p.log.Warn("фаза 2 после эскалации: добор LLM не удался, продолжаем без него", "err", err2)
+			}
+			recs = recs2
+		case len(unreliable) > 0:
+			res.GateMismatch = true
+			recs = markUnreliable(recs, unreliable)
+		}
+	}
+
+	// КБЖУ-гейт: если transcription содержит блок пищевой ценности, числа nutrition
+	// обязаны в нём буквально встречаться — иначе они так же могут быть выдуманы (эталон:
+	// 48 ккал/12 У против реальных 32.48/8.0, объём 500 против 520 на «Слоне в чайном
+	// лесу»). Эскалации здесь нет (в отличие от ингредиентов) — эти числа не идут в балл,
+	// несовпадение просто прячет ненадёжные цифры, а не запускает повторный вызов.
+	if missing := nutritionMismatch(res.Nutrition, ext.Transcription); len(missing) > 0 {
+		p.log.Warn("гейт transcription: числа nutrition не подтверждены текстом, скрываем", "fields", missing)
+		res.GateMismatch = true
+		res.GateNutritionMismatch = true
+		res.Nutrition = nil
 	}
 
 	items := make([]scoring.Ingredient, 0, len(recs))

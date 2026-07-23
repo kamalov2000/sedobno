@@ -504,6 +504,140 @@ func TestPipeline_ExtractFallback_SkippedWhenConfident(t *testing.T) {
 	}
 }
 
+// Детерминированный антигаллюцинационный гейт (эталонный кейс — beta-скан #34, «Слон в
+// чайном лесу»): основная модель УВЕРЕННО (confidence=0.95, выше порога lowConfidence)
+// дописала штрафной ингредиент «сахар», которого нет в её же transcription. Confidence-гейт
+// это не ловит по конструкции — ловит наш гейт, и результат сильной модели побеждает целиком.
+func TestPipeline_TranscriptionGate_ЭскалацияНаУвереннуюГаллюцинацию(t *testing.T) {
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.95, // уверенно — старый confidence-гейт бы промолчал
+		Transcription: "вода, лимонная кислота, ароматизатор",
+		Ingredients:   []string{"вода", "лимонная кислота", "ароматизатор", "сахар"}, // «сахар» — выдумка
+	}}
+	var fbCalls int
+	fb := fakeProvider{name: "fb", calls: &fbCalls, ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9,
+		Ingredients: []string{"вода", "лимонная кислота", "ароматизатор"}, // честный состав, без сахара
+	}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 1 {
+		t.Fatalf("fallback вызван %d раз, ждали 1 (штрафной ингредиент не подтверждён transcription)", fbCalls)
+	}
+	if !res.GateMismatch || !res.GateEscalated {
+		t.Fatalf("GateMismatch=%v GateEscalated=%v, ждали true/true", res.GateMismatch, res.GateEscalated)
+	}
+	if res.Provider != "fb" {
+		t.Fatalf("provider=%q, ждали fb (результат сильной модели победил)", res.Provider)
+	}
+	for _, ing := range res.IngredientsRaw {
+		if ing == "сахар" {
+			t.Fatalf("выдуманный «сахар» дожил до результата: %v", res.IngredientsRaw)
+		}
+	}
+	if len(res.IngredientsRaw) != 3 {
+		t.Fatalf("ingredients_raw=%v, ждали 3 честных ингредиента fallback-модели", res.IngredientsRaw)
+	}
+}
+
+// Экономика: на НОРМАЛЬНОЙ этикетке (ингредиенты подтверждаются transcription) гейт
+// молчит — ни одного лишнего вызова fallback, балл как обычно.
+func TestPipeline_TranscriptionGate_НормальныйСканБезЛишнихВызовов(t *testing.T) {
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9,
+		Transcription: "сахар, глутамат натрия, вода",
+		Ingredients:   []string{"сахар", "глутамат натрия", "вода"},
+	}}
+	var fbCalls int
+	fb := fakeProvider{name: "fb", calls: &fbCalls, ext: &llm.Extraction{IsLabel: true, Confidence: 0.9}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 0 {
+		t.Fatalf("fallback вызван %d раз на нормальном скане, ждали 0", fbCalls)
+	}
+	if res.GateMismatch {
+		t.Error("GateMismatch=true на нормальном скане — ложное срабатывание")
+	}
+	// сахар в топ-3 (-15) + глутамат risk1 (-3) = -18 → 82, как в TestPipeline_HappyPath.
+	if res.Score != 82 {
+		t.Errorf("score=%d, ждали 82 (гейт не должен трогать нормальный результат)", res.Score)
+	}
+}
+
+// Регрессия: легальная ДВУХСЕКЦИОННАЯ этикетка (сканы прода #57/#29 — вафля в глазури,
+// картошка+соус-пакетик) не должна ловить эскалацию из-за повторяющихся ингредиентов —
+// обе секции «Состав» честно попадают в transcription целиком.
+func TestPipeline_TranscriptionGate_ДвухсекционныйСоставНеРегрессирует(t *testing.T) {
+	transcription := "сахар, какао-масло, сухое молоко, пшеничная мука. сахар, пшеничная мука, растительное масло"
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9,
+		Transcription: transcription,
+		Ingredients:   []string{"сахар", "какао-масло", "сухое молоко", "пшеничная мука", "сахар", "пшеничная мука", "растительное масло"},
+	}}
+	var fbCalls int
+	fb := fakeProvider{name: "fb", calls: &fbCalls, ext: &llm.Extraction{IsLabel: true, Confidence: 0.9}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 0 {
+		t.Fatalf("fallback вызван %d раз на легальном двухсекционном составе, ждали 0 (регрессия)", fbCalls)
+	}
+	if res.GateMismatch {
+		t.Error("GateMismatch=true на легальном двухсекционном составе — ложное срабатывание")
+	}
+	if len(res.IngredientsRaw) != 7 {
+		t.Fatalf("ingredients_raw=%v, ждали все 7 (обе секции сохранены)", res.IngredientsRaw)
+	}
+}
+
+// nutrition-гейт: числа КБЖУ не подтверждены в transcription (та содержит блок пищевой
+// ценности) → nutrition скрывается, эскалации при этом НЕТ — эти числа не идут в балл.
+func TestPipeline_TranscriptionGate_НутриентыНеПодтвердилисьСкрываются(t *testing.T) {
+	kcal := 48.0
+	primary := fakeProvider{name: "primary", ext: &llm.Extraction{
+		IsLabel: true, Confidence: 0.9,
+		Transcription: "вода, сахар. пищевая ценность на 100 мл: 32,48 ккал",
+		Ingredients:   []string{"вода", "сахар"},
+		Nutrition:     &llm.Nutrition{Present: true, Kcal: &kcal},
+	}}
+	var fbCalls int
+	fb := fakeProvider{name: "fb", calls: &fbCalls, ext: &llm.Extraction{IsLabel: true, Confidence: 0.9}}
+
+	p := newPipeWith(t, primary)
+	p.SetExtractFallback(fb, 0.5)
+
+	res, err := p.Run(context.Background(), []llm.Image{{Data: []byte("x"), MIME: "image/jpeg"}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fbCalls != 0 {
+		t.Fatalf("fallback вызван %d раз из-за КБЖУ, ждали 0 (КБЖУ не эскалирует)", fbCalls)
+	}
+	if res.Nutrition != nil {
+		t.Fatalf("nutrition=%+v, ждали nil (числа не подтверждены transcription)", res.Nutrition)
+	}
+	if !res.GateNutritionMismatch {
+		t.Error("GateNutritionMismatch=false, ждали true")
+	}
+}
+
 // Вложенный подсостав: сахар внутри скобки должен дойти до скоринга с позицией
 // родительской строки. Данные — реальное извлечение скана id 10 с прода (йогурт
 // с шариками в шоколаде): до фикса сахар из скобок был невидим, у шоколадки, где

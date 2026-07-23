@@ -286,7 +286,17 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 				left = 0 // гонка увела за лимит между пре-чеком и списанием
 			}
 		}
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_ok", map[string]any{"score": res.Score})
+		// Телеметрия антигаллюцинационного гейта (pipeline/transcription_gate.go): при
+		// молчании гейта ("scan_ok" в норме) поля не добавляем — событие не разбухает.
+		// Сработал — фиксируем частоту/эскалацию, чтобы через неделю посмотреть на
+		// реальном потоке, как часто модель придумывает состав/КБЖУ.
+		scanOkProps := map[string]any{"score": res.Score}
+		if res.GateMismatch {
+			scanOkProps["gate_mismatch"] = true
+			scanOkProps["gate_escalated"] = res.GateEscalated
+			scanOkProps["gate_nutrition_mismatch"] = res.GateNutritionMismatch
+		}
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_ok", scanOkProps)
 		// Порядковый номер проверки для фолбэка ценника (best-effort — 0 просто опускается).
 		num, nerr := s.store.CountUserScansOK(ctx, u.ID)
 		if nerr != nil {
