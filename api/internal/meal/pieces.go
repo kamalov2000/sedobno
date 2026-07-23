@@ -66,6 +66,20 @@ func isAddonKind(kind string) bool {
 	return ok && spec.Addon
 }
 
+// markAddonsAssumed выставляет assumed=true всем ложечным добавкам в блюдах. Вызывается
+// ТОЛЬКО на пути разбора фото (applyAnalysis): такие добавки — всегда догадка о скрытом
+// ингредиенте, а флаг модели непостоянен. Штучные примитивы (яйца) не трогаем — их видимость
+// определяет модель. Путь правки (PATCH) сюда не заходит: подтверждённые тапом остаются false.
+func markAddonsAssumed(dishes []llm.MealItem) {
+	for di := range dishes {
+		for pi := range dishes[di].Pieces {
+			if isAddonKind(dishes[di].Pieces[pi].Kind) {
+				dishes[di].Pieces[pi].Assumed = true
+			}
+		}
+	}
+}
+
 // keepAddonPieces оставляет только ложечные добавки (масло/сахар), выбрасывая штучные.
 // Нужно для яичного блюда-счётчика: яйца оно считает само, но масло «готовилось с» —
 // законная добавка, которую нельзя терять (яичница жарится на масле).

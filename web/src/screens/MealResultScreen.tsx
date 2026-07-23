@@ -363,7 +363,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
               {/* Примитивы блюда чипсами: штучные (яйца ×4) и ложечные добавки (масло 1 ч.л.).
                   Их КБЖУ считает сервер, тотал обновляется на лету. Показываем у распознанных
                   и яичных блюд (яичница жарится на масле); у ручного числа юзер вводит сам.
-                  assumed=true (модель предположила) помечается пунктиром. */}
+                  assumed=true (модель предположила скрытую добавку) помечается знаком «≈». */}
               {!d.manual && (d.pieces?.length ?? 0) > 0 && (
                 <PieceChips dish={d} onCount={(kind, count) => setPieceCount(i, kind, count)} />
               )}
@@ -650,8 +650,10 @@ function PieceChips({ dish, onCount }: { dish: MealItem; onCount: (kind: string,
 }
 
 // Один чипс примитива. Активный (count>0): [−] эмодзи·подпись·количество [+]; «−» на 1 → 0
-// снимает целиком, чипс становится неактивным. assumed=true — пунктирная рамка и «≈» (модель
-// предположила). Неактивный (count=0): остаётся видимым, один тап возвращает. Ложечные
+// снимает целиком, чипс становится неактивным. assumed=true (модель предположила скрытую
+// добавку) помечается ОДНИМ знаком «≈» перед количеством — не дублируем его рамкой: пунктир
+// оставлен только за неактивным (снятым) чипсом, где у него отдельный смысл, и плохо читается
+// на тёмной теме. Неактивный (count=0): пунктир + приглушённый, один тап возвращает. Ложечные
 // подписываются «N ч.л.», штучные «×N» (никаких мл/грамм в лейбле).
 function PieceChip({ kind, count, assumed, onSet }: { kind: string; count: number; assumed: boolean; onSet: (n: number) => void }) {
   const emoji = PIECE_EMOJI[kind] ?? "";
@@ -682,7 +684,7 @@ function PieceChip({ kind, count, assumed, onSet }: { kind: string; count: numbe
   return (
     <div
       aria-label={`${assumed ? "предположено: " : ""}${label} ${pieceCountLabel(kind, count)}`}
-      style={{ display: "inline-flex", alignItems: "center", height: 30, borderRadius: 15, overflow: "hidden", border: `1px ${assumed ? "dashed" : "solid"} var(--cal-border)`, background: "var(--cal-soft)" }}
+      style={{ display: "inline-flex", alignItems: "center", height: 30, borderRadius: 15, overflow: "hidden", border: "1px solid var(--cal-border)", background: "var(--cal-soft)" }}
     >
       <button type="button" onClick={() => step(-1)} aria-label={`${label}: меньше`} style={{ width: 28, height: "100%", background: "none", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 12 }} />

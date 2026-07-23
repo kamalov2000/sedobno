@@ -71,3 +71,45 @@ func TestAddons_AssumedСохраняется(t *testing.T) {
 		t.Errorf("assumed не сохранился: %+v", dishes[0].Pieces)
 	}
 }
+
+// На пути разбора фото ложечные добавки получают assumed=true детерминированно, даже если
+// модель вернула флаг непостоянно (одну добавку с assumed, другую — без). Это чинит разнобой
+// чипсов: одинаковые скрытые добавки рисуются одинаково. Штучные (яйца) не трогаются.
+func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
+	res := &Result{}
+	applyAnalysis(res, &llm.MealAnalysis{
+		IsFood: true,
+		Dishes: []llm.MealItem{
+			// «рис с чечевицей»: модель вернула масло БЕЗ assumed (по факту тоже догадка).
+			{Name: "рис с чечевицей", Grams: 200, Kcal: 260, ProteinG: 9, FatG: 5, CarbG: 45,
+				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: false}}},
+			// «куриное филе жареное»: масло с assumed=true + видимое яйцо (assumed=false).
+			{Name: "куриное филе жареное", Grams: 180, Kcal: 300, ProteinG: 35, FatG: 16, CarbG: 2,
+				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "egg", Count: 1, Assumed: false}}},
+		},
+	})
+	if res.Status != StatusOK || len(res.Dishes) != 2 {
+		t.Fatalf("status=%q блюд=%d, ждали ok/2", res.Status, len(res.Dishes))
+	}
+	// Оба масла — assumed=true (единообразно), несмотря на разный вход.
+	oil0 := res.Dishes[0].Pieces[0]
+	if oil0.Kind != "oil_veg" || !oil0.Assumed {
+		t.Errorf("масло блюда 1: %+v, ждали assumed=true", oil0)
+	}
+	// У второго блюда: масло assumed=true, яйцо (штучное, видимое) — НЕ тронуто (false).
+	var oil1, egg1 llm.MealPiece
+	for _, p := range res.Dishes[1].Pieces {
+		switch p.Kind {
+		case "oil_veg":
+			oil1 = p
+		case "egg":
+			egg1 = p
+		}
+	}
+	if !oil1.Assumed {
+		t.Errorf("масло блюда 2: assumed=%v, ждали true", oil1.Assumed)
+	}
+	if egg1.Assumed {
+		t.Errorf("яйцо блюда 2: assumed=%v, ждали false (штучное видимое не трогаем)", egg1.Assumed)
+	}
+}
