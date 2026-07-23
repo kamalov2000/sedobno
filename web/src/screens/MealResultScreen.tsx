@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
 import type { DishPatch } from "../api";
@@ -482,7 +482,13 @@ function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; o
   };
   useEffect(() => stop, []);
 
-  const p100 = per100(dish.kcal, dish.grams);
+  // Вес и плотность на карточке — от ПОЛНОГО блюда (база + штуки), согласованно с ккал в
+  // шапке. ± и ручной ввод правят БАЗУ: поле показывает полный вес, а под капотом меняется
+  // eyeball-часть (штуки правятся своими чипсами). piecesG фиксирован, поэтому полный вес
+  // двигается 1:1 с базой.
+  const piecesG = pieceGrams(dish.pieces);
+  const fullGrams = effectiveDishGrams(dish);
+  const p100 = per100(effectiveDishKcal(dish), fullGrams);
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
@@ -502,8 +508,8 @@ function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; o
             <input
               className="cal-g"
               type="number"
-              value={Math.round(dish.grams)}
-              onChange={(e) => onSet(parseInt(e.target.value, 10))}
+              value={Math.round(fullGrams)}
+              onChange={(e) => onSet(parseInt(e.target.value, 10) - piecesG)}
               aria-label="Граммовка"
               style={{ width: 40, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />

@@ -245,6 +245,21 @@ export function effectiveDishKcal(dish: MealItem): number {
   return round1(dish.kcal + pieceMacros(dish.pieces).kcal);
 }
 
+/** Суммарный ВЕС счётных единиц блюда (граммы; pieceMacros вес не считает). */
+export function pieceGrams(pieces?: MealPiece[]): number {
+  const g = (pieces ?? []).reduce((a, p) => {
+    const c = PIECE_CONSTS[p.kind];
+    return c ? a + c.grams * Math.max(0, p.count) : a;
+  }, 0);
+  return round1(g);
+}
+
+/** Полный вес блюда для отображения: eyeball-база + вес его счётных единиц. Так карточка не
+ *  показывает 40 г рядом с 528 ккал (база+штуки) — согласованно с итогом. */
+export function effectiveDishGrams(dish: MealItem): number {
+  return round1(dish.grams + pieceGrams(dish.pieces));
+}
+
 /** Обновляет счётчик одного примитива блюда (kind), клампит в 0..PIECE_MAX. Любая правка
  *  пользователя снимает assumed (он подтвердил/изменил число — это уже не догадка модели).
  *  count 0 НЕ убирает чипс из массива: он остаётся видимым неактивным, чтобы вернуть одним

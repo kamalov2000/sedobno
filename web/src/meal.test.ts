@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, withPieceCount, pieceCountLabel, displayPieces } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, dayRingLine, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -231,6 +231,15 @@ describe("детерминированные примитивы блюда (piec
   it("effectiveDishKcal = eyeball-база + вклад примитивов", () => {
     const dish: MealItem = { name: "авокадо", grams: 300, kcal: 480, protein_g: 6, fat_g: 45, carb_g: 27, confidence: 1, pieces: [{ kind: "yolk", count: 4 }, { kind: "white", count: 4 }] };
     expect(effectiveDishKcal(dish)).toBe(792); // 480 + 4 целых яйца (312)
+  });
+
+  it("effectiveDishGrams = вес базы + вес штук (карточка согласована с ккал)", () => {
+    // база 40 г + 6 желтков (6×22) + 6 белков (6×33) = 40 + 132 + 198 = 370.
+    const dish: MealItem = { name: "омлет", grams: 40, kcal: 150, protein_g: 5, fat_g: 12, carb_g: 3, confidence: 1, pieces: [{ kind: "yolk", count: 6 }, { kind: "white", count: 6 }] };
+    expect(effectiveDishGrams(dish)).toBe(370);
+    expect(pieceGrams(dish.pieces)).toBe(330);
+    // без штук — полный вес = базе
+    expect(effectiveDishGrams({ ...dish, pieces: undefined })).toBe(40);
   });
 
   it("totalOf прибавляет вклад примитивов каждого блюда к базе", () => {
