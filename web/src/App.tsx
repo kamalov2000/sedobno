@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
-import type { Me, ScanResult, MealResult, MealDiaryItem } from "./types";
+import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
+import SubscriptionScreen from "./screens/SubscriptionScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import MealHistoryScreen from "./screens/MealHistoryScreen";
 import ScanLoader from "./components/ScanLoader";
@@ -25,7 +26,8 @@ import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary";
+// Подписки v2: экран управления подпиской (тариф, следующее списание, отмена).
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -282,8 +284,11 @@ export default function App() {
     });
   }, []);
 
-  const onSbpPay = useCallback(async () => {
-    const out = await sbpPay();
+  // Оплата картой/СБП: создаём платёж и открываем ПРЯМУЮ ссылку ЮKassa (openLink) —
+  // без промежуточного лендинга. Подписка активируется вебхуком ЮKassa на бэке; при
+  // возврате в mini-app обновляем профиль. plan — месяц | год (подписки v2).
+  const onSbpPay = useCallback(async (plan: SubPlan = "monthly") => {
+    const out = await sbpPay(plan);
     if (out.kind === "error") {
       notify("error");
       return;
@@ -364,6 +369,8 @@ export default function App() {
           }}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
+          // Тап по бейджу подписки — экран управления (тариф, следующее списание, отмена).
+          onManageSub={() => setView("subscription")}
         />
       )}
       {view === "history" && (
@@ -610,6 +617,32 @@ export default function App() {
       )}
       {view === "paywall" && (
         <PaywallScreen onPay={onPay} onDismiss={() => setView("home")} sbpAvailable={me?.sbp_available ?? false} onSbpPay={onSbpPay} />
+      )}
+      {view === "subscription" && me && (
+        <SubscriptionScreen
+          me={me}
+          onBack={() => setView("home")}
+          onChanged={async () => {
+            try {
+              setMe(await getMe());
+            } catch {
+              /* обновим при следующем действии */
+            }
+          }}
+        />
+      )}
+      {view === "subscription" && me && (
+        <SubscriptionScreen
+          me={me}
+          onBack={() => setView("home")}
+          onChanged={async () => {
+            try {
+              setMe(await getMe());
+            } catch {
+              /* обновим при следующем действии */
+            }
+          }}
+        />
       )}
     </Shell>
   );

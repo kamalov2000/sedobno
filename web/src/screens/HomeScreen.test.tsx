@@ -20,6 +20,7 @@ function renderHome(mode: "scan" | "meal", opts: { mealsLeft?: number; onAddManu
       onModeChange={noop}
       onScan={noop}
       onSubscribe={noop}
+      onManageSub={noop}
       onHistory={noop}
       onDiary={noop}
       onAddManual={opts.onAddManual ?? noop}

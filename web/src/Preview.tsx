@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult, MealResult, MealsByDay, MealDays, MealDiaryItem, MealHistoryPage } from "./types";
 import HomeScreen from "./screens/HomeScreen";
+import SubscriptionScreen from "./screens/SubscriptionScreen";
 import HistoryScreen from "./screens/HistoryScreen";
 import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
@@ -25,7 +26,8 @@ const asyncNoop = async () => {};
 const emptyProfile = { filled: false };
 const filledProfile = { filled: true, sex: "male" as const, birth_year: 1994, height_cm: 180, weight_kg: 80, activity_level: "moderate" as const, goal: "lose" as const, daily_kcal_target: 2345, daily_protein_g: 144, daily_fat_g: 65, daily_carb_g: 296 };
 const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true, nutrition_profile: emptyProfile };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile, subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
+const meSubCancelled: Me = { ...meSub, subscription: { provider: "sbp", plan: "annual", status: "cancelled", expires_at: "2027-07-22T10:00:00Z", auto_renew: false } };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
@@ -179,11 +181,11 @@ const mockTextMeal: MealResult = {
 };
 
 const SCREENS: { title: string; node: ReactNode }[] = [
-  { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
   { title: "03 · РЕЗУЛЬТАТ", node: <ResultScreen result={mockResult} isSubscribed={false} onAgain={noop} onAddToDiary={noop} /> },
   { title: "03 · НЕ ОЦЕНИВАЕМ · алкоголь", node: <NotScoredScreen result={mockNotScored} onAgain={noop} onAddToDiary={noop} /> },
@@ -203,6 +205,8 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   },
   { title: "05 · ПЕЙВОЛЛ · Stars + СБП", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable onSbpPay={asyncNoop} /> },
   { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} /> },
+  { title: "06 · ПОДПИСКА · активна (автопродление)", node: <SubscriptionScreen me={meSub} onBack={noop} onChanged={asyncNoop} /> },
+  { title: "06 · ПОДПИСКА · отменена (год)", node: <SubscriptionScreen me={meSubCancelled} onBack={noop} onChanged={asyncNoop} /> },
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },

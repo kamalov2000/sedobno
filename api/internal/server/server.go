@@ -127,6 +127,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/water", s.handleWaterAdd)
 			r.Post("/pay/create", s.handlePayCreate)
 			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa
+			r.Post("/sub/cancel", s.handleSubCancel)       // отмена автопродления (доступ до конца периода)
 		})
 	})
 

@@ -18,6 +18,8 @@ interface Props {
   onSubscribe: () => void;
   onHistory: () => void;
   onDiary: () => void;
+  /** Тап по бейджу активной подписки → экран управления (тариф, списание, отмена). */
+  onManageSub: () => void;
   /** Добавить приём без фото: описанием словами (модель оценит) или цифрами руками.
    *  Только в режиме «Калории»: у сканера состава аналога нет — состав придумать нельзя,
    *  его читают с упаковки. */
@@ -29,7 +31,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 
 const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals, onManageSub }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -125,16 +127,21 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
       {/* Счётчик / бейдж подписки + CTA (или стейджинг при наборе кадров) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {me.is_subscribed ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+          <button
+            type="button"
+            onClick={onManageSub}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          >
             <span style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 14px", border: "1px solid var(--border)", borderRadius: 99, fontSize: 12.5, fontWeight: 500, color: "var(--text2)" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent }} />
               Подписка активна
+              <i className="ti ti-chevron-right" aria-hidden="true" style={{ fontSize: 14, color: "var(--text3)" }} />
             </span>
             {me.subscription_expires_at && <span style={{ fontSize: 12, color: "var(--text3)" }}>до {fmtExpiry(me.subscription_expires_at)}</span>}
-          </div>
+          </button>
         ) : outOfActive ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-            Бесплатные {leftWord} закончились (0&nbsp;из&nbsp;10). 249&nbsp;₽ за 30&nbsp;дней, без автопродления — {meal ? "разборы и составы" : "проверки"} без ограничений.
+            Бесплатные {leftWord} закончились (0&nbsp;из&nbsp;10). 249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
           </div>
         ) : (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>
