@@ -140,11 +140,19 @@ func (s *Server) chargeOneSubscription(ctx context.Context, d store.DueSubscript
 	}
 	_ = s.store.InsertEvent(ctx, &uid, "pay_renewal_failed", map[string]any{"plan": plan, "attempts": attempts})
 	if expired {
-		_ = s.store.InsertEvent(ctx, &uid, "sub_expired", map[string]any{"reason": "renewal_failed"})
+		// НЕ sub_expired: безлимит у этого пользователя сняли раньше — в тот же тик, когда
+		// списание впервые не прошло и подписка ушла в past_due (свип увидел, что
+		// действующего периода нет). Второе sub_expired на том же оттоке двоило метрику
+		// churn: один уход считался дважды. Здесь событие про ДРУГОЕ — мы перестали
+		// пытаться списывать после N неудач.
+		_ = s.store.InsertEvent(ctx, &uid, "sub_renewal_gave_up", map[string]any{"plan": plan, "attempts": attempts})
 	}
 }
 
 // sweepExpiredSubs снимает безлимит у истёкших подписчиков и пишет sub_expired на каждого.
+// Это ЕДИНСТВЕННОЕ место, где рождается sub_expired: событие означает «пользователь потерял
+// безлимит», и таких моментов у одного оттока ровно один. Исчерпание ретраев автосписания —
+// отдельное событие (sub_renewal_gave_up), потому что доступ к тому моменту уже снят здесь.
 func (s *Server) sweepExpiredSubs(ctx context.Context) {
 	ids, err := s.store.LapseExpiredSubscriptions(ctx)
 	if err != nil {

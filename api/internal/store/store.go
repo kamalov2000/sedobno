@@ -504,7 +504,7 @@ func (s *Store) LapseExpiredSubscriptions(ctx context.Context) ([]int64, error) 
 }
 
 // maxChargeAttempts — сколько подряд неудачных автосписаний терпим, прежде чем погасить
-// подписку (§подписки v2, Этап 3.2: «после 3 неудач — sub_expired»).
+// подписку (§подписки v2, Этап 3.2: «после 3 неудач — гасим», событие sub_renewal_gave_up).
 const maxChargeAttempts = 3
 
 // DueSubscription — автопродляемая подписка, которой пора списать следующий период.
