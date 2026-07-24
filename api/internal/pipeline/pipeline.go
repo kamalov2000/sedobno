@@ -527,7 +527,10 @@ func (p *Pipeline) normalize(ctx context.Context, raw []string) ([]rec, llm.Usag
 	for i, s := range raw {
 		pos := i + 1
 		seen := make(map[string]struct{}) // коды, уже учтённые для ЭТОЙ строки
-		if as := p.matcher.MatchAll(s); len(as) > 0 {
+		// MatchAllOrSuffix: точное имя/E-код, а если их нет — хвост строки. Функциональный
+		// класс впереди («краситель бета-каротин», «подсластитель сахарин») иначе уводит
+		// строку на LLM-добор, а тот путает близкие коды (E160a → E160e, −3 из ниоткуда).
+		if as := p.matcher.MatchAllOrSuffix(s); len(as) > 0 {
 			for _, a := range as {
 				r := rec{raw: s, pos: pos}
 				p.fill(&r, *a)
