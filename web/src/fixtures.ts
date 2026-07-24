@@ -195,6 +195,9 @@ export function makeMealHistory(nextCursor?: string): MealHistoryPage {
  * Именно эта ячейка чаще всего остаётся несвёрстанной, потому что «нормальный» день
  * выглядит достаточно убедительно.
  */
+// Доли бюджетов приёмов — как их отдаёт бэк (config/meal_budgets.yaml).
+const MEAL_BUDGETS = { breakfast: 0.25, lunch: 0.35, dinner: 0.25, snack: 0.15 };
+
 export function makeDiary(
   dayState: DayState = "under",
   opts: { waterMl?: number; streakDays?: number; todayLogged?: boolean } = {},
@@ -233,6 +236,7 @@ export function makeDiary(
       // Прощающий стрик: серия жива, но сегодня ещё не отмечено — огонёк тусклый.
       today_logged: opts.todayLogged ?? true,
     },
+    meal_budgets: MEAL_BUDGETS,
   };
 }
 
@@ -245,6 +249,7 @@ export function makeEmptyDiary(): MealsByDay {
     water_ml: 0,
     water_goal_ml: 2000,
     streak: { days: 4, today_logged: false },
+    meal_budgets: MEAL_BUDGETS,
   };
 }
 

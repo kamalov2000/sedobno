@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	appconfig "github.com/sostav/api/config"
 	"github.com/sostav/api/internal/imaging"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
@@ -84,6 +86,11 @@ type mealsByDayResponse struct {
 	WaterML     int             `json:"water_ml"`
 	WaterGoalML int             `json:"water_goal_ml"`
 	Streak      store.Streak    `json:"streak"`
+	// MealBudgets — доли дневной нормы по типам приёма (бэклог п.3): breakfast 0.25 и т.д.
+	// Отдаём доли, а не готовые ккал: норма живёт в профиле, который у клиента уже есть,
+	// и присылать её производную вторым числом значило бы завести второй источник истины.
+	// Доли — из конфига (config/meal_budgets.yaml), фронт их не хардкодит.
+	MealBudgets map[string]float64 `json:"meal_budgets"`
 }
 
 // mealDaysResponse — дневные агрегаты за период (недельный экран).
@@ -384,6 +391,7 @@ func (s *Server) handleMealsByDay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, mealsByDayResponse{
 		Day: day, Total: agg, Items: items,
 		WaterML: waterML, WaterGoalML: store.WaterGoalML, Streak: streak,
+		MealBudgets: s.mealBudgetShares(),
 	})
 }
 
@@ -549,6 +557,28 @@ func (s *Server) handleMealDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- вспомогательное ---
+
+// mealBudgetShares — доли дневной нормы по приёмам из встроенного конфига. Читаются один
+// раз на процесс: файл вшит в бинарник, перечитывать нечего.
+//
+// Битый конфиг НЕ роняет дневник: берём значения по умолчанию и один раз пишем warn.
+// Развалить экран дня из-за опечатки в долях — худший из возможных обменов.
+var (
+	budgetOnce   sync.Once
+	budgetShares map[string]float64
+)
+
+func (s *Server) mealBudgetShares() map[string]float64 {
+	budgetOnce.Do(func() {
+		shares, err := meal.LoadBudgetShares(appconfig.MealBudgetsYAML)
+		if err != nil {
+			s.log.Warn("meal: конфиг бюджетов приёмов непригоден, беру значения по умолчанию", "err", err)
+			shares = meal.DefaultBudgetShares()
+		}
+		budgetShares = shares
+	})
+	return budgetShares
+}
 
 // readMealImages читает и нормализует 1–3 кадра приёма из multipart-поля photo. При
 // ошибке сам пишет ответ и возвращает ok=false. Повторяет контракт загрузки сканера

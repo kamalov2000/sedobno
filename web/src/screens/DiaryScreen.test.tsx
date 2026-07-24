@@ -40,10 +40,12 @@ describe("DiaryScreen — рендер с профилем и без", () => {
     expect(screen.queryByText(/^\d+%$/)).toBeNull();
   });
 
-  it("с профилем: показывает кольцо с процентом к норме", async () => {
+  it("с профилем: главная цифра — остаток до нормы, съедено и норма вторым планом", async () => {
     render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={dayData} loadWeek={weekData} />);
-    // 1450 / 2100 = 69%.
-    expect(await screen.findByText("69%")).toBeTruthy();
+    // 2100 − 1450 = 650 осталось.
+    expect(await screen.findByText("Осталось до нормы")).toBeTruthy();
+    expect(screen.getByText("650")).toBeTruthy();
+    expect(screen.getByText(/съедено.*1450.*норма.*2100/)).toBeTruthy();
     // Вход в расчёт нормы не показываем, когда профиль заполнен.
     expect(screen.queryByText("Рассчитать мою норму")).toBeNull();
   });
@@ -100,28 +102,30 @@ describe("DiaryScreen — вода и серия", () => {
 });
 
 describe("DiaryScreen — перебор дневной нормы", () => {
-  it("день сверх нормы: подпись «перебор», кольцо не акцентного цвета", async () => {
+  it("день сверх нормы: подпись «Перебор нормы», цифра не акцентная", async () => {
     render(
       <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
         loadDay={async () => makeDiary("over")}
         loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
     );
-    expect(await screen.findByText(/перебор/)).toBeTruthy();
-    // Кольцо перебора серое (--text2), а не акцентное (--cal): переесть — не ошибка,
-    // алармовый цвет тут врал бы.
-    const ring = document.querySelector('circle[stroke="var(--text2)"]');
-    expect(ring).toBeTruthy();
+    // Перебор подписан словом и показан положительным числом: «−180 осталось» не читается.
+    const title = await screen.findByText("Перебор нормы");
+    // Серым (--text2), а не красным: переесть — не ошибка, алармовый цвет тут врал бы.
+    const num = title.parentElement?.querySelector("span") as HTMLElement;
+    expect(num.style.color).toBe("var(--text2)");
+    expect(screen.queryByText("Осталось до нормы")).toBeNull();
   });
 
-  it("день в пределах нормы: кольцо акцентное", async () => {
+  it("день в пределах нормы: остаток акцентным цветом", async () => {
     render(
       <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
         loadDay={async () => makeDiary("under")}
         loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
     );
-    await screen.findByText(/осталось.*ккал/);
-    expect(document.querySelector('circle[stroke="var(--cal)"]')).toBeTruthy();
-    expect(document.querySelector('circle[stroke="var(--text2)"]')).toBeNull();
+    const title = await screen.findByText("Осталось до нормы");
+    const num = title.parentElement?.querySelector("span") as HTMLElement;
+    expect(num.style.color).toBe("var(--cal-num)");
+    expect(screen.queryByText("Перебор нормы")).toBeNull();
   });
 
   it("показывает остаток Б/Ж/У до нормы, как остаток ккал", async () => {
@@ -189,5 +193,65 @@ describe("DiaryScreen — ряд «Серия / Вес»", () => {
     );
     expect(await screen.findByText("72,4")).toBeTruthy();
     expect(screen.queryByTitle(/Серия/)).toBeNull();
+  });
+});
+
+// --- Дневник v2 (бэклог п.3): бюджеты приёмов ---
+
+describe("DiaryScreen — бюджеты приёмов", () => {
+  const props = {
+    onBack: noop, onOpenWizard: noop,
+    loadWeek: weekData, loadWeight: noWeight, saveWater: noWater,
+  };
+
+  it("у приёма показывает «съедено / бюджет» долей нормы с сервера", async () => {
+    // Норма 2100 (makeProfile), доли 25/35/25/15 → 525 / 735 / 525 / 315.
+    render(<DiaryScreen {...props} profile={makeProfile()} loadDay={async () => makeDiary("under")} />);
+    expect(await screen.findByText("320 / 525")).toBeTruthy(); // завтрак
+    expect(screen.getByText("571 / 735")).toBeTruthy(); // обед
+    expect(screen.getByText("369 / 525")).toBeTruthy(); // ужин
+    expect(screen.getByText("190 / 315")).toBeTruthy(); // перекусы
+  });
+
+  it("пустой бюджет виден как план на день: «— / N»", async () => {
+    const oneMeal = async () => {
+      const d = makeDiary("under");
+      return { ...d, items: d.items.filter((i) => i.meal_type === "breakfast") };
+    };
+    render(<DiaryScreen {...props} profile={makeProfile()} loadDay={oneMeal} />);
+    expect(await screen.findByText("320 / 525")).toBeTruthy();
+    expect(screen.getByText("— / 735")).toBeTruthy(); // обеда ещё не было
+    expect(screen.getByText("— / 525")).toBeTruthy();
+  });
+
+  it("несколько приёмов одного типа складываются в один бюджет", async () => {
+    const twoSnacks = async () => {
+      const d = makeDiary("under");
+      const snack = d.items.find((i) => i.meal_type === "snack")!;
+      return {
+        ...d,
+        items: [...d.items, { ...snack, id: 99, total: { ...snack.total!, kcal: 110 } }],
+      };
+    };
+    render(<DiaryScreen {...props} profile={makeProfile()} loadDay={twoSnacks} />);
+    expect(await screen.findByText("300 / 315")).toBeTruthy(); // 190 + 110
+  });
+
+  it("без нормы бюджетов нет — прежний плоский список приёмов", async () => {
+    render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} />);
+    await screen.findByText("ПРИЁМЫ ПИЩИ");
+    expect(screen.queryByText(/\/ 735/)).toBeNull();
+    // Плоский список подписывает тип у каждой строки.
+    expect(screen.getAllByText("Обед").length).toBe(1);
+  });
+
+  it("без долей с сервера (старый бэк) бюджеты не выдумываем", async () => {
+    const noBudgets = async () => {
+      const d = makeDiary("under");
+      return { ...d, meal_budgets: undefined };
+    };
+    render(<DiaryScreen {...props} profile={makeProfile()} loadDay={noBudgets} />);
+    await screen.findByText("ПРИЁМЫ ПИЩИ");
+    expect(screen.queryByText(/\/ 735/)).toBeNull();
   });
 });

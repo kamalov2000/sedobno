@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MealsByDay, MealDaily, MealDiaryItem, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
+import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
-import { MEAL_TYPE_ICONS, emptyMealWord, dayRingLine } from "../meal";
+import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal } from "../meal";
 import { haptic } from "../telegram";
 import MacroSegments from "../components/MacroSegments";
 import WaterCard from "../components/WaterCard";
@@ -245,6 +245,7 @@ export default function DiaryScreen({
             onWater={onWater}
             weightSummary={weight?.summary}
             onOpenWeight={onOpenWeight}
+            budgets={data?.meal_budgets}
           />
         )}
         {mode === "week" && phase !== "error" && <WeekView week={week} target={hasNorm ? profile?.daily_kcal_target : undefined} loading={phase === "loading"} onPick={(d) => { setMode("day"); void fetchDay(d); }} />}
@@ -286,6 +287,7 @@ function DayView({
   onWater,
   weightSummary,
   onOpenWeight,
+  budgets,
 }: {
   day: string | null;
   today: string;
@@ -298,6 +300,8 @@ function DayView({
   onWater: (deltaMl: number) => void | Promise<void>;
   weightSummary?: WeightSummary;
   onOpenWeight?: () => void;
+  /** Доли дневной нормы по типам приёма (с сервера). Нет — бюджеты не показываем. */
+  budgets?: Partial<Record<MealType, number>>;
   onPrev: () => void;
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
@@ -318,7 +322,12 @@ function DayView({
         <NavBtn icon="ti-chevron-right" onClick={onNext} disabled={atToday} />
       </div>
 
-      {total && !empty && (profile ? <RingCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} onOpenWizard={onOpenWizard} />)}
+      {/* Главная цифра дня — ОСТАТОК до нормы (дневник v2): «сколько мне ещё можно»
+          отвечает на вопрос, с которым в дневник и заходят, а «сколько я съел» — нет.
+          Съеденное и норма остаются, но вторым планом. Без нормы остатка не существует —
+          там прежняя карточка сумм со входом в расчёт. Пустой день тоже показывает
+          остаток: он равен всей норме, и это самая полезная цифра утром. */}
+      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : !empty && <SumsCard total={total} onOpenWizard={onOpenWizard} />)}
 
       {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
           поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
@@ -352,15 +361,22 @@ function DayView({
         )
       )}
 
-      {/* Приёмы */}
+      {/* Приёмы. С нормой — четыре бюджета (завтрак/обед/ужин/перекусы), каждый со своей
+          долей дня: приём получает рамку «съедено из бюджета», без которой одинокие
+          «540 ккал» ни о чём не говорят. Пустые бюджеты видны тоже — это план на день,
+          а не только отчёт. Без нормы делить нечего: показываем плоский список, как было. */}
       {!empty && (
         <>
           <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)", margin: "18px 0 4px" }}>ПРИЁМЫ ПИЩИ</div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {items.map((it) => (
-              <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} />
-            ))}
-          </div>
+          {profile && budgets ? (
+            <MealBudgetList items={items} target={profile.daily_kcal_target} budgets={budgets} onTrash={onTrash} />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {items.map((it) => (
+                <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} />
+              ))}
+            </div>
+          )}
           {/* Резерв, чтобы undo-снекбар не перекрывал последний приём. */}
           <div style={{ height: 104 }} />
         </>
@@ -399,49 +415,58 @@ function AddMealFooter({ onClick }: { onClick: () => void }) {
   );
 }
 
-// Карточка с кольцом (профиль заполнен). Тап по карточке — пересчёт нормы.
-function RingCard({ total, profile, onOpenWizard }: { total: MealDaily; profile: NutritionProfile; onOpenWizard: () => void }) {
+// Карточка остатка (профиль заполнен) — главный экран дневника v2 по макету.
+//
+// Крупно — ОСТАТОК до нормы: в дневник заходят с вопросом «сколько мне ещё можно», и
+// отвечать на него суммой съеденного значит заставлять человека вычитать в уме. Съеденное
+// и норма остаются строкой ниже, прогресс — линейной полоской (кольцо ушло: при остатке
+// как главной цифре процент съеденного — уже третий по важности показатель).
+//
+// Перебор: «Перебор нормы» и серый, а не красный. Съесть больше — не ошибка, алармовый
+// цвет тут врал бы. Полоска в переборе заполнена целиком.
+//
+// Тап по карточке — пересчёт нормы (как было у кольца).
+function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; profile: NutritionProfile; onOpenWizard: () => void }) {
   const target = profile.daily_kcal_target ?? 0;
   const eaten = Math.round(total.kcal);
+  const left = kcalLeft(eaten, target);
+  const over = left < 0;
   const pct = target > 0 ? Math.min(1, eaten / target) : 0;
-  // Перебор нормы: кольцо становится серым, а не красным. Съесть больше — не ошибка,
-  // и алармовый цвет тут врал бы. Прототип использует ту же логику (--text2).
-  const over = target > 0 && eaten > target;
-  const ringColor = over ? "var(--text2)" : "var(--cal)";
-  const ringC = 2 * Math.PI * 52;
-  const off = ringC * (1 - pct);
-  const rightLine = dayRingLine(eaten, target);
   const macros = `Б${NBSP}${fmtInt(total.protein_g)}${NBSP}г · Ж${NBSP}${fmtInt(total.fat_g)}${NBSP}г · У${NBSP}${fmtInt(total.carb_g)}${NBSP}г`;
-  // Остаток Б/Ж/У до нормы — как остаток ккал в rightLine. Показываем, только если у
-  // профиля есть таргеты макросов; перебор макроса — «осталось 0» (кольцо ккал и так
-  // сигналит перебор, дублировать красным в этой строке незачем).
+  // Остаток Б/Ж/У до нормы — та же логика, что у ккал. Показываем, только если у профиля
+  // есть таргеты макросов; перебор макроса — «осталось 0».
   const macroTargets = profile.daily_protein_g != null || profile.daily_fat_g != null || profile.daily_carb_g != null;
-  const left = (t: number | undefined, e: number) => Math.max(0, Math.round((t ?? 0) - e));
-  const macrosLeft = `осталось Б${NBSP}${left(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${left(profile.daily_fat_g, total.fat_g)} · У${NBSP}${left(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
+  const leftMacro = (t: number | undefined, e: number) => Math.max(0, Math.round((t ?? 0) - e));
+  const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
 
   return (
-    <div onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: 20, display: "flex", alignItems: "center", gap: 20, marginBottom: 16, cursor: "pointer" }}>
-      <div style={{ position: "relative", width: 112, height: 112, flex: "none" }}>
-        <svg width="112" height="112" viewBox="0 0 120 120" style={{ display: "block" }}>
-          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--bg)" strokeWidth="11" />
-          <circle cx="60" cy="60" r="52" fill="none" stroke={ringColor} strokeWidth="11" strokeLinecap="round" strokeDasharray={ringC.toFixed(1)} strokeDashoffset={off.toFixed(1)} transform="rotate(-90 60 60)" />
-        </svg>
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-          <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 27, lineHeight: 1, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{eaten}</span>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 9.5, color: "var(--text3)", marginTop: 2 }}>ккал</span>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: over ? "var(--text2)" : "var(--cal-num)", marginTop: 1 }}>{Math.round(pct * 100)}%</span>
+    <div onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "20px 20px 18px", marginBottom: 16, cursor: "pointer" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 13, color: "var(--text2)" }}>{over ? "Перебор нормы" : "Осталось до нормы"}</div>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 7, marginTop: 4 }}>
+          <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 1, color: over ? "var(--text2)" : "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>
+            {Math.abs(left)}
+          </span>
+          <span style={{ fontSize: 16, color: "var(--text2)" }}>ккал</span>
+        </div>
+        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 12, color: "var(--text3)", marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
+          съедено{NBSP}{eaten} · норма{NBSP}{target}
         </div>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 12.5, color: "var(--text3)", fontVariantNumeric: "tabular-nums", lineHeight: 1.5 }}>{rightLine}</div>
-        <div style={{ marginTop: 14 }}>
-          <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
-        </div>
-        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8 }}>{macros}</div>
-        {macroTargets && (
-          <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3 }}>{macrosLeft}</div>
-        )}
+
+      {/* Прогресс дня. Перебор — серым: полоска говорит «норма закрыта», а не «ошибка». */}
+      <div style={{ height: 8, borderRadius: 99, background: "var(--bg)", overflow: "hidden", marginTop: 14 }}>
+        <div style={{ height: "100%", borderRadius: 99, background: over ? "var(--text2)" : "var(--cal)", width: `${Math.round(pct * 100)}%` }} />
       </div>
+
+      {/* Б/Ж/У — как были: полоска долей плюс строка остатка. */}
+      <div style={{ marginTop: 14 }}>
+        <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
+      </div>
+      <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
+      {macroTargets && (
+        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3, textAlign: "center" }}>{macrosLeft}</div>
+      )}
     </div>
   );
 }
@@ -466,10 +491,25 @@ function SumsCard({ total, onOpenWizard }: { total: MealDaily; onOpenWizard: () 
   );
 }
 
-function MealRow({ item, onTrash }: { item: MealDiaryItem; onTrash: () => void }) {
+// Строка приёма. Внутри группы бюджета (inGroup) тип не подписываем — его назвал
+// заголовок группы, и повторять «Обед» под «Обедом» значит тратить строку впустую;
+// вместо этого крупнее время и состав, по которым приём и узнают.
+function MealRow({ item, onTrash, inGroup = false }: { item: MealDiaryItem; onTrash: () => void; inGroup?: boolean }) {
   const names = item.dishes.map((d) => d.name).join(", ");
   const kcal = item.total ? fmtInt(item.total.kcal) : "—";
   const icon = item.meal_type ? MEAL_TYPE_ICONS[item.meal_type] : "ti-tools-kitchen-2";
+  if (inGroup) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0 9px 2px", borderTop: "1px solid var(--border)" }}>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", flex: "none", width: 38 }}>{fmtTime(item.eaten_at)}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names || "—"}</span>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 12.5, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{kcal}</span>
+        <button type="button" onClick={onTrash} aria-label="Удалить приём" style={{ width: 28, height: 28, flex: "none", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 15 }} />
+        </button>
+      </div>
+    );
+  }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 2px", borderBottom: "1px solid var(--border)" }}>
       <span style={{ width: 38, height: 38, borderRadius: 11, background: "var(--cal-soft)", color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
@@ -486,6 +526,104 @@ function MealRow({ item, onTrash }: { item: MealDiaryItem; onTrash: () => void }
       <button type="button" onClick={onTrash} aria-label="Удалить приём" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 16 }} />
       </button>
+    </div>
+  );
+}
+
+// Приёмы по бюджетам (дневник v2). День делится на четыре доли нормы — завтрак, обед,
+// ужин, перекусы, — и каждый приём попадает в свою. Так «540 ккал за обедом» превращается
+// в «540 из 770»: цифра получает рамку, без которой она ничего не значит.
+//
+// Пустые бюджеты показываем тоже: дневник v2 — это план на день, а не только отчёт о
+// съеденном, и «ужин — 550» с утра полезнее пустоты. Приёмы без типа (их проставляют
+// не всегда) идут отдельной группой без бюджета — терять их нельзя, но и приписывать
+// к чужой доле не за что.
+const BUDGET_ORDER: MealType[] = ["breakfast", "lunch", "dinner", "snack"];
+const BUDGET_LABELS: Record<MealType, string> = {
+  breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин",
+  // Множественное число: это доля на ВСЕ перекусы дня, а не на один.
+  snack: "Перекусы",
+};
+
+function MealBudgetList({
+  items, target, budgets, onTrash,
+}: {
+  items: MealDiaryItem[];
+  target?: number;
+  budgets: Partial<Record<MealType, number>>;
+  onTrash: (item: MealDiaryItem) => void;
+}) {
+  const byType = new Map<string, MealDiaryItem[]>();
+  for (const it of items) {
+    const key = it.meal_type ?? "none";
+    const list = byType.get(key);
+    if (list) list.push(it);
+    else byType.set(key, [it]);
+  }
+  const untyped = byType.get("none") ?? [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
+      {BUDGET_ORDER.map((t) => (
+        <MealTypeGroup
+          key={t}
+          label={BUDGET_LABELS[t]}
+          icon={MEAL_TYPE_ICONS[t]}
+          items={byType.get(t) ?? []}
+          budget={mealBudgetKcal(target, budgets[t])}
+          onTrash={onTrash}
+        />
+      ))}
+      {untyped.length > 0 && (
+        <MealTypeGroup label="Без типа" icon="ti-tools-kitchen-2" items={untyped} budget={null} onTrash={onTrash} />
+      )}
+    </div>
+  );
+}
+
+// Группа одного бюджета: заголовок «съедено / бюджет» с полоской заполнения и приёмы
+// под ним. Перебор бюджета — серым, как и перебор дневной нормы: съесть за обедом больше
+// доли не ошибка, красный тут читался бы как запрет.
+function MealTypeGroup({
+  label, icon, items, budget, onTrash,
+}: {
+  label: string;
+  icon: string;
+  items: MealDiaryItem[];
+  budget: number | null;
+  onTrash: (item: MealDiaryItem) => void;
+}) {
+  const eaten = Math.round(items.reduce((a, m) => a + (m.total?.kcal ?? 0), 0));
+  const empty = items.length === 0;
+  const over = budget != null && eaten > budget;
+  const pct = budget && budget > 0 ? Math.min(1, eaten / budget) : 0;
+  const value = budget != null ? `${empty ? "—" : eaten} / ${budget}` : `${eaten}`;
+
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 13, padding: "12px 14px", opacity: empty ? 0.75 : 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ width: 38, height: 38, borderRadius: 10, background: empty ? "var(--bg-soft)" : "var(--cal-soft)", color: empty ? "var(--text3)" : "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+          <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 18 }} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ fontSize: 14.5, fontWeight: 500, color: empty ? "var(--text2)" : "var(--text)" }}>{label}</span>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 12, color: empty ? "var(--text3)" : over ? "var(--text2)" : "var(--text2)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{value}</span>
+          </div>
+          {budget != null && (
+            <div style={{ height: 4, borderRadius: 99, background: "var(--bg-soft)", marginTop: 8, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 99, background: empty ? "var(--border)" : over ? "var(--text2)" : "var(--cal)", width: `${Math.round(pct * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      </div>
+      {!empty && (
+        <div style={{ display: "flex", flexDirection: "column", marginTop: 10 }}>
+          {items.map((it) => (
+            <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} inGroup />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

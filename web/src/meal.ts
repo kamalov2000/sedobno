@@ -105,13 +105,20 @@ export function emptyMealWord(hours: number): "завтрак" | "обед" | "�
   return hours < 11 ? "завтрак" : hours < 16 ? "обед" : "ужин";
 }
 
-/** Правая строка кольца дня: «из N ккал · осталось M ккал» (перебор — при превышении).
- *  Неразрывные пробелы держат «число ккал» вместе; перенос допускается только по « · ». */
-export function dayRingLine(eaten: number, target: number): string {
-  const NB = " ";
-  const diff = target - eaten;
-  const right = diff >= 0 ? `осталось${NB}${diff}${NB}ккал` : `перебор${NB}${-diff}${NB}ккал`;
-  return `из${NB}${target}${NB}ккал · ${right}`;
+// Дневник v2 (бэклог п.3): главная цифра дня — ОСТАТОК до нормы, а у каждого приёма свой
+// бюджет (доля нормы). Доли приходят с сервера — здесь только арифметика.
+
+/** Остаток до нормы. Отрицательный — перебор (экран показывает его отдельной подписью,
+ *  а не минусом: «перебор 180» читается, «−180 осталось» — нет). */
+export function kcalLeft(eaten: number, target: number): number {
+  return Math.round(target - Math.round(eaten));
+}
+
+/** Бюджет приёма в ккал = доля дневной нормы. null — считать не из чего (нет нормы или
+ *  сервер не прислал долю для этого типа); тогда экран показывает просто съеденное. */
+export function mealBudgetKcal(target: number | undefined, share: number | undefined): number | null {
+  if (!target || target <= 0 || !share || share <= 0) return null;
+  return Math.round(target * share);
 }
 
 /** Краткий состав приёма для карточки истории: имена блюд через запятую, хвост —
