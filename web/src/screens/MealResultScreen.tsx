@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE } from "../meal";
+import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
 import EggCounter from "../components/EggCounter";
 import ModelTake from "../components/ModelTake";
-import { patchMeal, deleteMeal, createManualMeal, getFoodReference } from "../api";
+import DishTextInput from "../components/DishTextInput";
+import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify } from "../telegram";
 import { useRolledNumber } from "../useRoll";
@@ -36,6 +37,11 @@ interface Props {
   /** Справочник для автоподсказки — инъекция для витрины/тестов (офлайн). Не задан —
    *  грузим сами через getFoodReference (кеш в api). */
   foodReference?: FoodRefItem[];
+  /** Откуда взялись числа НОВОГО приёма (при manual): "text" — их оценила модель по
+   *  текстовому описанию (backlog п.2). Тогда экран ведёт себя как после разбора фото —
+   *  показывает строку «AI оценил», ремарку модели и плашку «на глаз», — а сохраняет
+   *  приём с source="text". По умолчанию у ручного приёма чисел от модели нет. */
+  origin?: "text";
 }
 
 const GRAM_STEP = 10;
@@ -76,16 +82,33 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference, origin }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
-  // Строка распознавания и плашка уверенности — про РАЗБОР ФОТО. Ни у ручного приёма,
-  // ни у сохранённого ручного разбора его не было, и говорить об уверенности не о чем.
-  const fromPhoto = !manual && (saved?.source ?? "photo") === "photo";
+  // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
+  // строка «AI …», ремарка модели и плашка уверенности: у приёма, вписанного цифрами,
+  // никакого распознавания не было, и говорить об уверенности не о чем.
+  const source = manual ? (origin ?? "manual") : (saved?.source ?? "photo");
+  const fromPhoto = source === "photo";
+  const fromText = source === "text";
+  const fromModel = fromPhoto || fromText;
 
-  const [dishes, setDishes] = useState<Draft[]>(() => (manual ? [blankManual()] : (result.dishes ?? [])));
+  // Ручной приём стартует пустым блюдом — КРОМЕ случая, когда блюда уже оценены по
+  // текстовому описанию (backlog п.2): тогда экран открывается на них, и вписывать
+  // ничего не нужно, только проверить и поправить.
+  const [dishes, setDishes] = useState<Draft[]>(() => {
+    const given = result.dishes ?? [];
+    if (!manual) return given;
+    return given.length ? given : [blankManual()];
+  });
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   const [busy, setBusy] = useState(false);
+
+  // Панель текстового добавления блюда: открыта / текст / запрос / ошибка.
+  const [adding, setAdding] = useState(false);
+  const [addText, setAddText] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState("");
 
   // Справочник для автоподсказки ручного ввода: инъекция (витрина/тесты) или ленивая
   // загрузка (кеш в api), молча — без него ручной ввод просто работает как раньше.
@@ -100,7 +123,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
   const id = result.id;
   // Плашка «на глаз» — про уверенность РАСПОЗНАВАНИЯ. У ручного приёма распознавания
   // не было, поэтому и говорить об уверенности не о чем.
-  const lowConfidence = fromPhoto && (result.confidence ?? 1) < LOW_CONFIDENCE;
+  const lowConfidence = fromModel && (result.confidence ?? 1) < LOW_CONFIDENCE;
   const emptied = dishes.length === 0;
 
   const setGrams = (i: number, grams: number) => {
@@ -117,6 +140,44 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     haptic("light");
     // Ручное блюдо не догадка модели: единица в confidence здесь тот же смысл, что и на бэке.
     setDishes((ds) => [...ds, blankManual()]);
+    setAdding(false);
+    setAddError("");
+  };
+
+  // Текстовое добавление блюда: описание уходит в тот же meal-пайплайн, и распознанные
+  // блюда дописываются в список — дальше они ничем не отличаются от снятых на фото
+  // (степперы, чипсы, «≈», needs_review работают как обычно).
+  const addByText = async () => {
+    if (addBusy) return;
+    setAddBusy(true);
+    setAddError("");
+    try {
+      const out = await analyzeMealText(addText);
+      if (out.kind === "paywall") {
+        // Пейволл посреди правки не показываем: уход на другой экран стёр бы всё, что
+        // человек уже поправил в этом приёме. Подсказываем запасной путь — он бесплатный.
+        setAddError("Бесплатные разборы закончились. Можно вписать блюдо цифрами — это без лимита.");
+        return;
+      }
+      if (out.kind === "error") {
+        setAddError(out.message || "Не получилось оценить. Попробуйте ещё раз.");
+        return;
+      }
+      const data = out.data;
+      const got = data.status === "ok" ? (data.dishes ?? []) : [];
+      if (got.length === 0) {
+        setAddError(data.message || "Не понял, что это за блюдо. Напишите проще: что съели и сколько.");
+        return;
+      }
+      notify("success");
+      setDishes((ds) => [...ds, ...got]);
+      setAddText("");
+      setAdding(false);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Не получилось оценить. Попробуйте ещё раз.");
+    } finally {
+      setAddBusy(false);
+    }
   };
 
   // Переименование РАСПОЗНАННОГО блюда — правка ярлыка, и только его. Модель назвала
@@ -224,7 +285,13 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
     setBusy(true);
     try {
       if (manual) {
-        await createManualMeal({ dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
+        await createManualMeal({
+          dishes: toPatch(dishes),
+          ...(mealType ? { meal_type: mealType } : {}),
+          // source различает в аналитике «вписал цифрами» и «описал словами»: второе —
+          // платный вызов модели, и доля таких приёмов решает, нужен ли ему отдельный вход.
+          ...(fromText ? { source: "text" as const } : {}),
+        });
       } else {
         // Правка сохранённого приёма: PATCH идёт ВСЕГДА при нажатии кнопки, без гейта по
         // dirty. Раньше `else if (dirty)` пропускал сохранение, когда сравнение состояний
@@ -332,11 +399,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
           })}
         </div>
 
-        {/* Строка распознавания */}
-        {fromPhoto && (
+        {/* Строка распознавания. У текстового приёма формулировка другая: модель ничего
+            не «распознавала» — она оценила то, что человек написал сам. */}
+        {fromModel && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 16, fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", textTransform: "uppercase" }}>
           <i className="ti ti-sparkles" aria-hidden="true" style={{ fontSize: 13, color: "var(--cal-num)" }} />
-          AI распознал: {n} {pluralDishes(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
+          {fromText ? "AI оценил по описанию" : "AI распознал"}: {n} {pluralDishes(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
         </div>
         )}
 
@@ -371,22 +439,45 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
             </div>
           ))}
           {/* Добавить блюдо можно всегда, пока приём не опустошён: докинуть хлеб к
-              распознанной тарелке — самый частый сценарий правки. */}
-          {!emptied && (
+              распознанной тарелке — самый частый сценарий правки. Основной способ —
+              СЛОВАМИ («котлета из щуки, 2 штуки»): оценку считает та же модель, что и по
+              фото. Цифры руками остаются запасным путём внутри панели. */}
+          {!emptied && !adding && (
             <button
               type="button"
-              onClick={addManual}
+              onClick={() => {
+                haptic("light");
+                setAdding(true);
+                setAddError("");
+              }}
               style={{ width: "100%", height: 44, background: "none", border: "1px dashed var(--border)", color: "var(--text2)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
             >
-              <i className="ti ti-camera-plus" aria-hidden="true" style={{ fontSize: 16 }} />
+              <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
               Добавить блюдо
             </button>
           )}
-          {/* Подпись под кнопкой объясняет, зачем она: без неё «Добавить блюдо» читается
-              как «начать сначала». У ручного приёма объяснять нечего — там фото не было. */}
-          {!emptied && fromPhoto && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 11.5, color: "var(--text3)", marginTop: -2 }}>
-              AI не заметил что-то на фото? Добавьте вручную
+          {/* Подпись под кнопкой объясняет, зачем она и что в неё писать: без примера
+              «добавьте словами» читается как «впишите цифры». */}
+          {!emptied && !adding && (
+            <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text3)", marginTop: -2, lineHeight: 1.4 }}>
+              {fromPhoto ? "AI не заметил что-то на фото? " : ""}Добавьте словами — «{MEAL_TEXT_EXAMPLES[0]}»
+            </div>
+          )}
+          {!emptied && adding && (
+            <div style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: 12 }}>
+              <DishTextInput
+                value={addText}
+                onChange={setAddText}
+                onSubmit={() => void addByText()}
+                busy={addBusy}
+                error={addError}
+                onManual={addManual}
+                onCancel={() => {
+                  setAdding(false);
+                  setAddError("");
+                }}
+                autoFocus
+              />
             </div>
           )}
           {emptied && (
@@ -402,7 +493,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
             <div>
               <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>Оценка на глаз</div>
               <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.45, marginTop: 2 }}>
-                {result.note || "Вес блюд прикинут по фото. Поправьте граммовки, если знаете точнее — итог пересчитается."}
+                {result.note || (fromText
+                  ? "Порция взята стандартной — вы не указали размер. Поправьте граммовки, если знаете точнее."
+                  : "Вес блюд прикинут по фото. Поправьте граммовки, если знаете точнее — итог пересчитается.")}
               </div>
             </div>
           </div>
@@ -411,7 +504,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         {/* Разбор модели о тарелке (note) тем же стилем, что и тейк сканера. При
             lowConfidence note уже показан в плашке «оценка на глаз» выше — тогда здесь
             не дублируем. У ручного приёма note модели нет. */}
-        {!lowConfidence && fromPhoto && <ModelTake text={result.note} />}
+        {!lowConfidence && fromModel && <ModelTake text={result.note} />}
 
         <div style={{ height: 16 }} />
       </div>

@@ -11,6 +11,7 @@ import ResultScreen from "./screens/ResultScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import MealStateScreen from "./screens/MealStateScreen";
 import DiaryScreen from "./screens/DiaryScreen";
+import AddMealTextScreen from "./screens/AddMealTextScreen";
 import WeightScreen from "./screens/WeightScreen";
 import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
@@ -24,7 +25,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_history" | "scan_to_diary";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -73,6 +74,10 @@ export default function App() {
   // открыт как полный онбординг (первое заполнение). Число — правка одного шага.
   const [profileEditStep, setProfileEditStep] = useState<0 | 1 | 2 | 3 | 4 | null>(null);
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
+  // Приём, оценённый по ТЕКСТОВОМУ описанию (backlog п.2): открывается тем же редактором,
+  // что и ручной, но с числами от модели и source="text" при сохранении. null — обычный
+  // ручной ввод цифрами.
+  const [textMeal, setTextMeal] = useState<MealResult | null>(null);
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
   useEffect(() => {
@@ -111,7 +116,7 @@ export default function App() {
     const bb = tg()?.BackButton;
     if (!bb) return;
     const isOutcome = view === "result" || view === "not_scored" || view === "error" || view === "meal_result" || view === "meal_state";
-    const isList = view === "history" || view === "meal_history" || view === "meal_diary" || view === "weight" || view === "meal_manual" || view === "scan_to_diary";
+    const isList = view === "history" || view === "meal_history" || view === "meal_diary" || view === "weight" || view === "meal_manual" || view === "meal_text" || view === "scan_to_diary";
     if (!(isList || isOutcome)) {
       bb.hide();
       return;
@@ -122,7 +127,8 @@ export default function App() {
         setReturnTo(null);
         setSavedMeal(null);
         setView(back);
-      } else if (view === "meal_manual") {
+      } else if (view === "meal_manual" || view === "meal_text") {
+        setTextMeal(null);
         setView(returnTo ?? "meal_diary");
       } else if (view === "scan_to_diary") {
         // Открывается только с result/not_scored (returnTo проставляется там же) —
@@ -353,7 +359,8 @@ export default function App() {
           onHistory={() => setView(mode === "meal" ? "meal_history" : "history")}
           onAddManual={() => {
             setReturnTo("home");
-            setView("meal_manual");
+            setTextMeal(null);
+            setView("meal_text");
           }}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
@@ -375,7 +382,8 @@ export default function App() {
           onScan={onScan}
           onAddManual={() => {
             setReturnTo("meal_history");
-            setView("meal_manual");
+            setTextMeal(null);
+            setView("meal_text");
           }}
           onOpen={(item) => {
             // Приём уже сохранён — экран открывается в режиме правки. Данные берём из
@@ -405,7 +413,8 @@ export default function App() {
           onOpenWeight={() => setView("weight")}
           onAddManual={() => {
             setReturnTo("meal_diary");
-            setView("meal_manual");
+            setTextMeal(null);
+            setView("meal_text");
           }}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
@@ -536,24 +545,55 @@ export default function App() {
           }}
         />
       )}
+      {/* Текстовое добавление приёма (backlog п.2): описание → оценка модели → тот же
+          редактор, что и у фото. Приём сохраняется уже оттуда, кнопкой «В дневник». */}
+      {view === "meal_text" && (
+        <AddMealTextScreen
+          onBack={() => {
+            const back = returnTo ?? "meal_diary";
+            setReturnTo(null);
+            setView(back);
+          }}
+          onAnalyzed={(data) => {
+            // Квота за текстовый разбор списана так же, как за фото — обновляем остаток.
+            setMe((m) => (m ? { ...m, meals_left: data.meals_left } : m));
+            setTextMeal(data);
+            setView("meal_manual");
+          }}
+          onPaywall={() => {
+            setMe((m) => (m ? { ...m, meals_left: 0 } : m));
+            setView("paywall");
+          }}
+          onManual={() => {
+            setTextMeal(null);
+            setView("meal_manual");
+          }}
+        />
+      )}
       {/* Ручной приём — тот же экран разбора, стартующий пустым. Отдельного экрана нет
           намеренно: правка блюд, чипы приёма и пересчёт итога у обоих путей одни и те же,
           и второй их экземпляр разъехался бы с первым на первой же правке. */}
       {view === "meal_manual" && (
         <MealResultScreen
-          result={{ status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
+          result={textMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
           manual
+          origin={textMeal ? "text" : undefined}
           // Сохранил — показываем дневник, куда приём и лёг: это подтверждение
           // результата, а не «возврат». Отменил — возвращаем ровно туда, откуда
           // пришёл, иначе отмена работала бы как переход.
           onDone={() => {
             setReturnTo(null);
+            setTextMeal(null);
+            setTodayHasMeals(true);
             setView("meal_diary");
           }}
           onRetake={() => {
-            const back = returnTo ?? "meal_diary";
-            setReturnTo(null);
+            // Отмена текстового приёма возвращает на ввод описания, а не в дневник:
+            // человек уже написал фразу — вероятнее всего он хочет её поправить.
+            const back = textMeal ? "meal_text" : (returnTo ?? "meal_diary");
+            setTextMeal(null);
+            if (!textMeal) setReturnTo(null);
             setView(back);
           }}
         />

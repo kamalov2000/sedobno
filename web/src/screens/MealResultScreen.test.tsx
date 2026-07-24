@@ -14,12 +14,14 @@ const FOOD_REF = [
   { name: "Творог 9%", kcal_per_100: 159, protein_g: 16.7, fat_g: 9, carb_g: 2 },
   { name: "Молоко 2.5%", kcal_per_100: 52, protein_g: 2.8, fat_g: 2.5, carb_g: 4.7 },
 ];
+const analyzeMealText = vi.fn(async (_text: string) => ({ kind: "error", message: "мок не настроен" }) as never);
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   patchMeal: (id: number, body: unknown) => patchMeal(id, body),
   createManualMeal: (body: unknown) => createManualMeal(body),
   deleteMeal: (id: number) => deleteMeal(id),
   getFoodReference: async () => FOOD_REF,
+  analyzeMealText: (text: string) => analyzeMealText(text),
 }));
 
 afterEach(() => {
@@ -27,6 +29,7 @@ afterEach(() => {
   patchMeal.mockClear();
   createManualMeal.mockClear();
   deleteMeal.mockClear();
+  analyzeMealText.mockClear();
 });
 
 const noop = () => {};
@@ -34,6 +37,13 @@ const noop = () => {};
 // Поле названия теперь есть у КАЖДОГО блюда — переименовать можно и распознанное.
 // Добавленное вручную блюдо всегда последнее в списке, поэтому тесты ручного ввода
 // целятся в последнее поле, а не в единственное.
+// «Добавить блюдо» открывает ТЕКСТОВЫЙ ввод (backlog п.2) — карточка с цифрами живёт
+// за запасным путём внутри панели. Тесты ручного ввода идут этим путём.
+const addManualDish = () => {
+  fireEvent.click(screen.getByText("Добавить блюдо"));
+  fireEvent.click(screen.getByText("Знаю калорийность — ввести цифрами"));
+};
+
 const lastNameInput = () => screen.getAllByLabelText("Название блюда").at(-1) as HTMLInputElement;
 // Граммовка тоже подписана у каждого блюда (доступность распознанных выровняли
 // с ручными), поэтому и здесь целимся в последнее поле.
@@ -48,14 +58,14 @@ function renderScreen(lowConfidence = false) {
 describe("MealResultScreen — добавление блюда вручную", () => {
   it("кнопка добавляет карточку с двумя полями ввода", () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     expect(lastNameInput()).toBeTruthy();
     expect(screen.getByLabelText("Калорийность на 100 грамм")).toBeTruthy();
   });
 
   it("пустое имя блокирует сохранение — до 400 с бэка не доходит", () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     expect(screen.getByText("Впишите название")).toBeTruthy();
@@ -63,7 +73,7 @@ describe("MealResultScreen — добавление блюда вручную", 
 
   it("ккал вне 1…900 блокирует сохранение и подсказывает границы", () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     fireEvent.change(lastNameInput(), { target: { value: "Хлеб" } });
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "1200" } });
 
@@ -74,7 +84,7 @@ describe("MealResultScreen — добавление блюда вручную", 
 
   it("заполненное блюдо пересчитывает ккал на лету и уходит на 100 г", async () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     fireEvent.change(lastNameInput(), { target: { value: "Хлеб" } });
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "333" } });
 
@@ -96,7 +106,7 @@ describe("MealResultScreen — добавление блюда вручную", 
 
   it("запятая в калорийности принимается как десятичный разделитель", () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     fireEvent.change(lastNameInput(), { target: { value: "Кефир" } });
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "52,5" } });
     const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
@@ -105,7 +115,7 @@ describe("MealResultScreen — добавление блюда вручную", 
 
   it("граммовка ручного блюда пересчитывает калории пропорционально", () => {
     renderScreen();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     fireEvent.change(lastNameInput(), { target: { value: "Хлеб" } });
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "200" } });
     expect(screen.getByText("200 ккал")).toBeTruthy();
@@ -124,7 +134,7 @@ describe("MealResultScreen — плашка «на глаз»", () => {
   it("ручное блюдо плашку НЕ поднимает: она про уверенность распознавания приёма", () => {
     renderScreen(false);
     expect(screen.queryByText("Оценка на глаз")).toBeNull();
-    fireEvent.click(screen.getByText("Добавить блюдо"));
+    addManualDish();
     fireEvent.change(lastNameInput(), { target: { value: "Хлеб" } });
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "333" } });
     // Плашка так и не появилась — у неё нет своего условия по блюдам.
@@ -485,7 +495,7 @@ describe("MealResultScreen — автоподсказка справочника
     };
     render(<MealResultScreen result={{ status: "ok", id: 90, dishes: [dish], meals_left: -1 }} saved={savedMeal as never} isSubscribed onDone={noop} onRetake={noop} />);
 
-    fireEvent.click(screen.getByText("Добавить блюдо")); // пустое ручное блюдо
+    addManualDish(); // пустое ручное блюдо
     const name = lastNameInput();
     fireEvent.focus(name);
     fireEvent.change(name, { target: { value: "Творог 5" } });
@@ -510,5 +520,98 @@ describe("MealResultScreen — автоподсказка справочника
     fireEvent.change(screen.getByLabelText("Калорийность на 100 грамм"), { target: { value: "200" } });
     const save = screen.getByText("В дневник").closest("button") as HTMLButtonElement;
     expect(save.disabled).toBe(false);
+  });
+});
+
+
+// --- Текстовое добавление блюда (backlog п.2) ---
+
+describe("MealResultScreen — добавление блюда словами", () => {
+  it("описание уходит в модель, а оценённые блюда дописываются в приём", async () => {
+    analyzeMealText.mockImplementation(async () => ({
+      kind: "result",
+      data: {
+        status: "ok",
+        dishes: [{ name: "котлета из щуки", grams: 200, kcal: 320, protein_g: 34, fat_g: 18, carb_g: 6, confidence: 0.6 }],
+        total: { kcal: 320, protein_g: 34, fat_g: 18, carb_g: 6 },
+        meals_left: -1,
+      },
+    }) as never);
+
+    renderScreen();
+    const before = screen.getAllByLabelText("Название блюда").length;
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    fireEvent.change(screen.getByLabelText("Описание блюда"), { target: { value: "котлета из щуки, 2 штуки" } });
+    fireEvent.click(screen.getByText("Оценить"));
+
+    await waitFor(() => expect(screen.getAllByLabelText("Название блюда").length).toBe(before + 1));
+    expect(analyzeMealText).toHaveBeenCalledWith("котлета из щуки, 2 штуки");
+    // Блюдо пришло РАСПОЗНАННЫМ (со своими ккал), а не пустой ручной карточкой.
+    expect((screen.getAllByLabelText("Название блюда").at(-1) as HTMLInputElement).value).toBe("котлета из щуки");
+    expect(screen.getByText("320 ккал")).toBeTruthy();
+  });
+
+  it("«не еда» показывает подсказку и НЕ добавляет блюдо", async () => {
+    analyzeMealText.mockImplementation(async () => ({
+      kind: "result",
+      data: { status: "not_food", message: "Не понял, что это за блюдо.", meals_left: 5 },
+    }) as never);
+
+    renderScreen();
+    const before = screen.getAllByLabelText("Название блюда").length;
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    fireEvent.change(screen.getByLabelText("Описание блюда"), { target: { value: "asdfgh" } });
+    fireEvent.click(screen.getByText("Оценить"));
+
+    expect(await screen.findByText("Не понял, что это за блюдо.")).toBeTruthy();
+    expect(screen.getAllByLabelText("Название блюда").length).toBe(before);
+  });
+
+  it("исчерпанная квота не выкидывает с экрана — предлагает вписать цифрами", async () => {
+    analyzeMealText.mockImplementation(async () => ({ kind: "paywall" }) as never);
+
+    renderScreen();
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    fireEvent.change(screen.getByLabelText("Описание блюда"), { target: { value: "борщ тарелка" } });
+    fireEvent.click(screen.getByText("Оценить"));
+
+    expect(await screen.findByText(/цифрами/)).toBeTruthy();
+    // Экран разбора на месте: правки пользователя не потеряны.
+    expect(screen.getByText("В дневник")).toBeTruthy();
+  });
+
+  it("пустое описание не отправляется в модель", () => {
+    renderScreen();
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    const submit = screen.getByText("Оценить").closest("button") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(submit);
+    expect(analyzeMealText).not.toHaveBeenCalled();
+  });
+});
+
+describe("MealResultScreen — приём, оценённый по описанию", () => {
+  const textResult = {
+    status: "ok" as const,
+    dishes: [{ name: "гречка", grams: 150, kcal: 180, protein_g: 6, fat_g: 2, carb_g: 33, confidence: 0.5 }],
+    total: { kcal: 180, protein_g: 6, fat_g: 2, carb_g: 33 },
+    confidence: 0.5,
+    note: "Порция взята стандартная",
+    meals_left: 4,
+  };
+
+  it("открывается на оценённых блюдах и говорит, что их оценил AI", () => {
+    render(<MealResultScreen result={textResult} isSubscribed manual origin="text" onDone={noop} onRetake={noop} />);
+    expect((screen.getByLabelText("Название блюда") as HTMLInputElement).value).toBe("гречка");
+    expect(screen.getByText(/AI оценил по описанию/)).toBeTruthy();
+    // Низкая уверенность → плашка «на глаз» с ремаркой модели.
+    expect(screen.getByText("Порция взята стандартная")).toBeTruthy();
+  });
+
+  it("сохраняется как приём с source=text", async () => {
+    render(<MealResultScreen result={textResult} isSubscribed manual origin="text" onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByText("В дневник"));
+    await waitFor(() => expect(createManualMeal).toHaveBeenCalled());
+    expect((createManualMeal.mock.calls[0][0] as { source?: string }).source).toBe("text");
   });
 });

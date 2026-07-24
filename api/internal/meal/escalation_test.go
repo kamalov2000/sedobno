@@ -27,6 +27,15 @@ func (f *namedAnalyzer) AnalyzeMeal(_ context.Context, _ []llm.Image) (*llm.Meal
 	}
 	return f.res, llm.Usage{}, f.err
 }
+
+// Текстовый вход считаем тем же счётчиком вызовов: тестам эскалации важно, КТО отработал,
+// а не каким входом.
+func (f *namedAnalyzer) AnalyzeMealText(_ context.Context, _ string) (*llm.MealAnalysis, llm.Usage, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	return f.res, llm.Usage{}, f.err
+}
 func (f *namedAnalyzer) Name() string                   { return f.name }
 func (f *namedAnalyzer) CostRUB(_, _ llm.Usage) float64 { return f.cost }
 

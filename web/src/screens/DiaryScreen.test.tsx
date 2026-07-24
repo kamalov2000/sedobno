@@ -147,35 +147,36 @@ describe("DiaryScreen — карточка веса", () => {
   });
 });
 
-// --- Ручной приём: фото было единственным входом в дневник, и забытый снимок ломал
-// и дневную норму, и серию. Тесты закрепляют, что оба входа на месте.
+// --- Вход в добавление приёма без фото. Фото было единственным входом в дневник, и
+// забытый снимок ломал и дневную норму, и серию. Теперь вход постоянный — кнопка футера
+// (backlog п.2), ведущая в текстовое добавление приёма.
 
-describe("DiaryScreen — вход в ручной приём", () => {
+describe("DiaryScreen — вход в добавление приёма", () => {
   const props = {
     onBack: noop, onOpenWizard: noop, profile: makeProfile(),
     loadWeek: weekData, loadWeight: noWeight, saveWater: noWater,
   };
 
-  it("под списком приёмов есть вход, и он ведёт в ручной разбор", async () => {
+  it("футер дня даёт добавить приём", async () => {
     const onAddManual = vi.fn();
     render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} onAddManual={onAddManual} />);
-    fireEvent.click(await screen.findByText(/Забыли сфотографировать/));
+    fireEvent.click(await screen.findByText("Добавить приём"));
     expect(onAddManual).toHaveBeenCalled();
   });
 
-  it("пустой день тоже даёт вписать руками — иначе вечерний ужин без фото не спасти", async () => {
+  it("в пустой день кнопка тоже на месте — иначе вечерний ужин без фото не спасти", async () => {
     const onAddManual = vi.fn();
     render(<DiaryScreen {...props} loadDay={async () => makeEmptyDiary()} onAddManual={onAddManual} />);
-    // Пустое состояние зовёт сфоткать — и рядом даёт запасной путь.
+    // Пустое состояние зовёт сфоткать — и футер даёт путь без фото.
     expect(await screen.findByText(/Сфоткай/)).toBeTruthy();
-    fireEvent.click(screen.getByText(/Забыли сфотографировать/));
+    fireEvent.click(screen.getByText("Добавить приём"));
     expect(onAddManual).toHaveBeenCalled();
   });
 
   it("без обработчика вход не рисуется вовсе", async () => {
     render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} />);
     await screen.findByText("ПРИЁМЫ ПИЩИ");
-    expect(screen.queryByText(/Забыли сфотографировать/)).toBeNull();
+    expect(screen.queryByText("Добавить приём")).toBeNull();
   });
 });
 

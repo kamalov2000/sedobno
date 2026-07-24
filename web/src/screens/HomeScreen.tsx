@@ -18,8 +18,9 @@ interface Props {
   onSubscribe: () => void;
   onHistory: () => void;
   onDiary: () => void;
-  /** Вписать приём руками, без фото. Только в режиме «Калории»: у сканера состава
-   *  ручного аналога нет — состав придумать нельзя, его читают с упаковки. */
+  /** Добавить приём без фото: описанием словами (модель оценит) или цифрами руками.
+   *  Только в режиме «Калории»: у сканера состава аналога нет — состав придумать нельзя,
+   *  его читают с упаковки. */
   onAddManual?: () => void;
   todayHasMeals?: boolean;
 }
@@ -156,8 +157,8 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             было найти, лишь догадавшись зайти в дневник: экран съёмки обещал, что
             единственный способ добавить еду — сфотографировать её.
             Кнопка вторичная: фото остаётся основным путём, руками — запасной.
-            Показываем и при исчерпанной квоте: ручной приём её не списывает, и в этот
-            момент он ценнее всего — иначе пейволл читается как «дневник закрыт». */}
+            Показываем и при исчерпанной квоте: вписать приём цифрами она не списывает,
+            и в этот момент это ценнее всего — иначе пейволл читается как «дневник закрыт». */}
         {meal && onAddManual && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, marginTop: -4 }}>
             <button
@@ -169,7 +170,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
               style={{ height: 40, padding: "0 14px", background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
             >
               <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 17 }} />
-              Вписать еду руками
+              Добавить без фото
             </button>
             {outOfActive && (
               <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45 }}>

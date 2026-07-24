@@ -182,6 +182,39 @@ func (m mockProvider) AnalyzeMeal(ctx context.Context, images []Image) (*MealAna
 	return out, usage, nil
 }
 
+// AnalyzeMealText: JSON-фикстура во ВХОДНОМ ТЕКСТЕ возвращается как есть (тесты подают
+// готовый MealAnalysis строкой), прочий текст → встроенная фикстура из трёх блюд. Пустой
+// вход — «не еда»: он и на живой модели даёт is_food=false, и тест на пустой ввод не
+// должен зависеть от сети.
+func (m mockProvider) AnalyzeMealText(ctx context.Context, text string) (*MealAnalysis, Usage, error) {
+	var out *MealAnalysis
+	_, usage, err := doWithRetry(ctx, "mock", func() (string, Usage, error) {
+		if serr := m.simulate(ctx); serr != nil {
+			return "", Usage{}, serr
+		}
+		out = mealFromText(text)
+		return "", Usage{}, nil
+	})
+	if err != nil {
+		return nil, usage, err
+	}
+	return out, usage, nil
+}
+
+// mealFromText: JSON-фикстура → она сама; непустой текст → встроенная фикстура; пусто →
+// «не еда».
+func mealFromText(text string) *MealAnalysis {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return &MealAnalysis{IsFood: false}
+	}
+	var ma MealAnalysis
+	if err := json.Unmarshal([]byte(extractJSON(t)), &ma); err == nil {
+		return &ma
+	}
+	return mockMealAnalysis()
+}
+
 // mealFrom выбирает источник ответа: текстовая JSON-фикстура или встроенная.
 func (mockProvider) mealFrom(images []Image) *MealAnalysis {
 	if len(images) == 0 {

@@ -101,19 +101,19 @@ describe("MealHistoryScreen — пустое состояние: два вход
     expect(screen.getByText("Сфотографировать еду")).toBeTruthy();
     // Один путь там, где на главном и в пустом дне их два, читался бы как
     // «в историю попадают только фото».
-    expect(screen.getByText("Вписать руками")).toBeTruthy();
+    expect(screen.getByText("Добавить без фото")).toBeTruthy();
   });
 
-  it("тап по «Вписать руками» зовёт обработчик", async () => {
+  it("тап по «Добавить без фото» зовёт обработчик", async () => {
     const onAddManual = vi.fn();
     renderScreen(async () => ({ items: [] }), { onAddManual });
-    fireEvent.click(await screen.findByText("Вписать руками"));
+    fireEvent.click(await screen.findByText("Добавить без фото"));
     expect(onAddManual).toHaveBeenCalledTimes(1);
   });
 
   it("в непустой истории второго входа нет — он только для пустого экрана", async () => {
     renderScreen(async () => makeMealHistory());
     await screen.findByText("Творог 5%");
-    expect(screen.queryByText("Вписать руками")).toBeNull();
+    expect(screen.queryByText("Добавить без фото")).toBeNull();
   });
 });

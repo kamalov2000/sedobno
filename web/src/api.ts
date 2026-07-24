@@ -191,6 +191,34 @@ export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
   }
 }
 
+/** POST /api/meals/text — оценка блюда по ТЕКСТОВОМУ описанию («котлета из щуки, 2 штуки»).
+ *
+ *  Тот же LLM-разбор, что и фото (те же квоты, те же 402/429), и тот же формат ответа —
+ *  но приём НЕ сохраняется: результат уходит в редактор, а в дневник его кладёт уже
+ *  существующий путь (createManualMeal с source="text" или patchMeal). */
+export async function analyzeMealText(text: string): Promise<MealOutcome> {
+  const maxBusyRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    const res = await apiFetch("/api/meals/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (res.status === 402) return { kind: "paywall" };
+
+    if (res.status === 429 && attempt < maxBusyRetries) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || 3;
+      await sleep(retryAfter * 1000 * (attempt + 1));
+      continue;
+    }
+
+    if (!res.ok) return { kind: "error", message: await readMessage(res) };
+
+    return { kind: "result", data: (await res.json()) as MealResult };
+  }
+}
+
 /** GET /api/meals?day=YYYY-MM-DD — приёмы за день + агрегат. Без day — сегодня (МСК). */
 export async function getMeals(day?: string): Promise<MealsByDay> {
   const q = day ? `?day=${day}` : "";
@@ -280,7 +308,7 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
  *  Тот же эндпоинт, что и у фото: сущность одна, различается только Content-Type.
  *  Квота НЕ списывается — vision не вызывается, платить не за что.
  *  date — локальный день клиента: без него вечерний приём уехал бы во вчера. */
-export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" }): Promise<MealResult> {
+export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" }): Promise<MealResult> {
   const res = await apiFetch("/api/meals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -105,7 +105,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.LatencyMs = time.Since(start).Milliseconds()
 		return res, err // ErrBusy или ошибка модели — решает хендлер
 	}
-	applyAnalysis(res, ma)
+	applyAnalysis(res, ma, true)
 	if alwaysStrong {
 		res.Escalated = true
 		res.EscalationTrigger = "always"
@@ -123,7 +123,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 					"err", fbErr, "trigger", trigger)
 			} else {
 				strong := &Result{Provider: p.fallback.Name(), Status: StatusError}
-				applyAnalysis(strong, fbMa)
+				applyAnalysis(strong, fbMa, true)
 				strong.Usage = fbUsage
 				// Стоимость — за ОБА вызова: заплатили и Haiku, и Sonnet.
 				strong.CostRUB = res.CostRUB + p.fallback.CostRUB(fbUsage, llm.Usage{})
@@ -139,6 +139,46 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	return res, nil
 }
 
+// RunText — разбор приёма по ТЕКСТОВОМУ описанию («котлета из щуки, 2 штуки»). Один
+// вызов той же модели с текстовым промптом; дальше — та же санитизация и маппинг статуса,
+// что у фото, поэтому дневник, правка и pieces работают с результатом одинаково.
+//
+// Эскалации по рисковому классу здесь НЕТ намеренно: она лечит визуальный прайор (белое
+// мясо кусочками → «креветки»), а в тексте класс блюда назвал сам человек — перепутать
+// его модели не на чем. Режим always уважаем: он означает «весь модуль на сильной модели».
+//
+// looks_like_label в текстовой схеме нет: этикетку нельзя «описать словами» так, чтобы это
+// был не приём пищи, — а если модель всё же вернёт флаг, applyAnalysis отдаст тот же
+// label_detected, и хендлер ответит понятной подсказкой. Ветку не дублируем.
+func (p *Pipeline) RunText(ctx context.Context, text string) (*Result, error) {
+	start := time.Now()
+
+	primary := p.analyzer
+	alwaysStrong := p.mode == "always" && p.fallback != nil
+	if alwaysStrong {
+		primary = p.fallback
+	}
+
+	res := &Result{Provider: primary.Name(), Status: StatusError}
+	ma, usage, err := p.callTextGated(ctx, primary, text)
+	res.Usage = usage
+	res.CostRUB = primary.CostRUB(usage, llm.Usage{})
+	if err != nil {
+		res.LatencyMs = time.Since(start).Milliseconds()
+		return res, err
+	}
+	// assumeAddons=false: в тексте флаг модели осмыслен — «жареная картошка» она пометит
+	// как предположение (assumed=true), а названное человеком («с ложкой масла») — как
+	// факт. На фото различать нечего, там ложечные добавки — всегда догадка.
+	applyAnalysis(res, ma, false)
+	if alwaysStrong {
+		res.Escalated = true
+		res.EscalationTrigger = "always"
+	}
+	res.LatencyMs = time.Since(start).Milliseconds()
+	return res, nil
+}
+
 // callGated делает один vision-вызов под шлюзом допуска (§15): нет свободного слота →
 // ErrBusy, работа не начиналась. Общий семафор на основной и эскалационный проходы.
 func (p *Pipeline) callGated(ctx context.Context, a llm.MealAnalyzer, images []llm.Image) (*llm.MealAnalysis, llm.Usage, error) {
@@ -149,13 +189,27 @@ func (p *Pipeline) callGated(ctx context.Context, a llm.MealAnalyzer, images []l
 	return a.AnalyzeMeal(ctx, images)
 }
 
+// callTextGated — то же для текстового разбора: общий с фото семафор, потому что общий
+// у них и лимит на стороне провайдера.
+func (p *Pipeline) callTextGated(ctx context.Context, a llm.MealAnalyzer, text string) (*llm.MealAnalysis, llm.Usage, error) {
+	if !p.tryAcquire() {
+		return nil, llm.Usage{}, ErrBusy
+	}
+	defer p.release()
+	return a.AnalyzeMealText(ctx, text)
+}
+
 // applyAnalysis переносит vision-ответ в Result: confidence/note, маппинг статуса и
 // серверную санитизацию блюд. Общий код основного и эскалационного проходов.
 //
 // Проверка этикетки — ПЕРВОЙ: это самый действенный редирект («переключитесь на сканер
 // составов»), и он важнее вопроса is_food (у упаковки еды is_food может быть любым).
 // Затем — «не еда»; затем — валидные блюда → ok.
-func applyAnalysis(res *Result, ma *llm.MealAnalysis) {
+//
+// assumeAddons — детерминированно пометить ложечные добавки как предположенные (путь фото,
+// см. markAddonsAssumed). Для текстового входа false: там флаг модели различает названное
+// человеком и додуманное ею.
+func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
 	res.Confidence = clamp01(ma.Confidence)
 	res.Note = strings.TrimSpace(ma.Note)
 	switch {
@@ -177,7 +231,9 @@ func applyAnalysis(res *Result, ma *llm.MealAnalysis) {
 		// непостоянно (одну и ту же скрытую добавку то с assumed, то без), отчего одинаковые
 		// чипсы рисовались по-разному. Путь правки (PATCH) сюда не заходит — подтверждённые
 		// тапом добавки остаются assumed=false.
-		markAddonsAssumed(dishes)
+		if assumeAddons {
+			markAddonsAssumed(dishes)
+		}
 		res.Dishes = dishes
 		res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
 		res.Status = StatusOK

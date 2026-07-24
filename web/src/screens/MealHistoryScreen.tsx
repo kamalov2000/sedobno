@@ -127,7 +127,7 @@ export default function MealHistoryScreen({ onBack, onOpen, onScan, onAddManual,
                 style={{ width: "100%", height: 40, marginTop: 4, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
               >
                 <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 17 }} />
-                Вписать руками
+                Добавить без фото
               </button>
             </div>
           </div>

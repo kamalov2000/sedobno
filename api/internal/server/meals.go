@@ -31,6 +31,10 @@ const (
 	mealSourcePhoto  = "photo"
 	mealSourceManual = "manual"
 	mealSourceScan   = "scan"
+	// mealSourceText — приём, собранный из ТЕКСТОВОГО описания («котлета из щуки, 2 штуки»):
+	// числа посчитала модель, но фото не было. Отличать от manual важно и аналитике (сколько
+	// людей пишут вместо фото), и экрану разбора (у текстового приёма есть уверенность и note).
+	mealSourceText = "text"
 )
 
 // mealResponse — ответ POST /api/meals. При ok несёт разбор (id, блюда, суммы); при
@@ -719,9 +723,9 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		MealType string      `json:"meal_type"`
 		EatenAt  *time.Time  `json:"eaten_at"`
 		Date     string      `json:"date"`
-		// Source — единственное клиентское значение, которое можно запросить явно:
-		// mealSourceScan (приём добавлен из результата сканера составов, backlog
-		// «Скан → дневник»). Пусто — обычный ручной ввод (mealSourceManual, как было).
+		// Source — клиентские значения с явным допуском: mealSourceScan (приём из результата
+		// сканера составов) и mealSourceText (числа посчитала модель по текстовому описанию,
+		// POST /meals/text). Пусто — обычный ручной ввод (mealSourceManual, как было).
 		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
@@ -740,8 +744,8 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 	}
 	source := mealSourceManual
 	if req.Source != "" {
-		if req.Source != mealSourceScan {
-			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan" (или не указывать)`)
+		if req.Source != mealSourceScan && req.Source != mealSourceText {
+			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan" или "text" (или не указывать)`)
 			return
 		}
 		source = req.Source

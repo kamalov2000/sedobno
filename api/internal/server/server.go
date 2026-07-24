@@ -103,6 +103,10 @@ func (s *Server) Router() http.Handler {
 			// Модуль калорий по фото (feature/calories). /meals/days — до /meals/{id},
 			// иначе chi сматчит «days» как id; GET /meals (без id) — свой обработчик.
 			r.With(s.rateLimitMeals).Post("/meals", s.handleMealCreate)
+			// Текстовый разбор блюда (backlog п.2): тот же LLM-вызов, что и фото, поэтому
+			// тот же рейт-лимит. Роут отдельный, а не ветка в POST /meals: этот путь ничего
+			// не сохраняет и списывает квоту — смешивать его с «сохрани приём» нельзя.
+			r.With(s.rateLimitMeals).Post("/meals/text", s.handleMealText)
 			r.Get("/meals", s.handleMealsByDay)
 			r.Get("/meals/days", s.handleMealDays)
 			r.Get("/meals/history", s.handleMealsHistory)

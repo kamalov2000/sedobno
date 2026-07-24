@@ -13,6 +13,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 import MealResultScreen from "./screens/MealResultScreen";
 import MealHistoryScreen from "./screens/MealHistoryScreen";
 import DiaryScreen from "./screens/DiaryScreen";
+import AddMealTextScreen from "./screens/AddMealTextScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 
 // Офлайн-витрина экранов для визуального прохода (обе темы рядом, мок-данные).
@@ -162,6 +163,21 @@ const FOOD_REF_DEMO = [
   { name: "Творог обезжиренный", kcal_per_100: 71, protein_g: 18, fat_g: 0.6, carb_g: 1.8 },
 ];
 
+// Приём, оценённый по текстовому описанию «гречка с котлетой»: низкая уверенность и
+// ремарка модели — обычный исход, когда размер порции не назван.
+const mockTextMeal: MealResult = {
+  status: "ok",
+  dishes: [
+    { name: "гречка отварная", grams: 150, kcal: 165, protein_g: 6, fat_g: 2, carb_g: 31, confidence: 0.5 },
+    { name: "котлета из щуки", grams: 100, kcal: 160, protein_g: 17, fat_g: 9, carb_g: 3, confidence: 0.55,
+      pieces: [{ kind: "oil_veg", count: 1, assumed: true }] },
+  ],
+  total: { kcal: 370, protein_g: 23, fat_g: 16, carb_g: 34 },
+  confidence: 0.52,
+  note: "Порции взяты стандартные — размер не указан",
+  meals_left: 6,
+};
+
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} /> },
@@ -191,6 +207,8 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · яйца (счётчик штук)", node: <MealResultScreen result={mockEggMeal} isSubscribed onDone={noop} onRetake={noop} /> },
+  { title: "07 · КАЛОРИИ · добавить приём словами", node: <AddMealTextScreen onBack={noop} onAnalyzed={noop} onPaywall={noop} onManual={noop} analyze={async () => ({ kind: "result", data: mockTextMeal })} /> },
+  { title: "07 · КАЛОРИИ · оценка по описанию", node: <MealResultScreen result={mockTextMeal} manual origin="text" isSubscribed={false} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · ручной ввод + справочник", node: <MealResultScreen result={{ status: "ok", dishes: [], meals_left: 7 }} manual isSubscribed={false} foodReference={FOOD_REF_DEMO} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · не еда", node: <MealStateScreen kind="not_food" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },
   { title: "07 · КАЛОРИИ · это упаковка", node: <MealStateScreen kind="label" onScan={noop} onOpenScanner={noop} isSubscribed={false} /> },

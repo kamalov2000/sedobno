@@ -245,15 +245,18 @@ export default function DiaryScreen({
             onWater={onWater}
             weightSummary={weight?.summary}
             onOpenWeight={onOpenWeight}
-            onAddManual={onAddManual}
           />
         )}
         {mode === "week" && phase !== "error" && <WeekView week={week} target={hasNorm ? profile?.daily_kcal_target : undefined} loading={phase === "loading"} onPick={(d) => { setMode("day"); void fetchDay(d); }} />}
       </div>
 
-      {/* Undo-снекбар */}
+      {/* Футер с «Добавить приём» — только в режиме дня: в недельном обзоре добавлять
+          нечего, там смотрят на столбики. */}
+      {mode === "day" && onAddManual && <AddMealFooter onClick={onAddManual} />}
+
+      {/* Undo-снекбар — над футером, иначе кнопка «Вернуть» ушла бы под кнопку добавления. */}
       {pending && (
-        <div style={{ position: "absolute", left: 16, right: 16, bottom: 26, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#2A2A2C", borderRadius: 13, padding: "12px 16px", boxShadow: "0 12px 30px -10px rgba(0,0,0,0.4)" }}>
+        <div style={{ position: "absolute", left: 16, right: 16, bottom: 84, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#2A2A2C", borderRadius: 13, padding: "12px 16px", boxShadow: "0 12px 30px -10px rgba(0,0,0,0.4)" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, color: "#F2F1ED" }}>
             <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 16, color: "#A6A5A0" }} />
             Приём удалён
@@ -283,7 +286,6 @@ function DayView({
   onWater,
   weightSummary,
   onOpenWeight,
-  onAddManual,
 }: {
   day: string | null;
   today: string;
@@ -296,7 +298,6 @@ function DayView({
   onWater: (deltaMl: number) => void | Promise<void>;
   weightSummary?: WeightSummary;
   onOpenWeight?: () => void;
-  onAddManual?: () => void;
   onPrev: () => void;
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
@@ -345,11 +346,6 @@ function DayView({
             <div style={{ fontSize: 14.5, color: "var(--text2)", lineHeight: 1.5, marginTop: 8, textWrap: "pretty" }}>
               Сфоткай {emptyMealWord(new Date().getHours())} — и он появится здесь. Дневник считает калории за день сам.
             </div>
-            {onAddManual && (
-              <div style={{ width: "100%", marginTop: 18 }}>
-                <ManualEntry onClick={onAddManual} />
-              </div>
-            )}
           </div>
         ) : (
           <div style={{ marginTop: 44, textAlign: "center", fontSize: 14.5, color: "var(--text2)" }}>В этот день записей нет</div>
@@ -365,7 +361,6 @@ function DayView({
               <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} />
             ))}
           </div>
-          {onAddManual && <ManualEntry onClick={onAddManual} />}
           {/* Резерв, чтобы undo-снекбар не перекрывал последний приём. */}
           <div style={{ height: 104 }} />
         </>
@@ -374,30 +369,33 @@ function DayView({
   );
 }
 
-// Вход в ручной приём. Стоит в двух местах, и оба нужны: под списком — для «забыл
-// сфоткать обед», в пустом дне — потому что там иначе вообще нет способа завести
-// приём, кроме камеры, и вечерний ужин без фото не спасти.
+// Футер дневника: «Добавить приём» (по макету — сплошная кнопка на всю ширину, прижатая
+// к низу). Ведёт в текстовое добавление приёма (backlog п.2): человек пишет, что съел, а
+// калории считает модель. Раньше на этом месте была пунктирная «вписать вручную» внутри
+// списка — её не находили, и день без фото оставался пустым.
 //
-// Пунктирная рамка, а не сплошная кнопка: ручной ввод — запасной путь, а не равный
-// камере. Фото остаётся главным сценарием.
-function ManualEntry({ onClick }: { onClick: () => void }) {
+// Кнопка постоянная, а не элемент списка: добавить приём нужно и в пустой день, и после
+// десятого — искать её в конце прокрутки незачем.
+function AddMealFooter({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={() => {
-        haptic("light");
-        onClick();
-      }}
-      style={{
-        width: "100%", height: 44, marginTop: 12, background: "none",
-        border: "1px dashed var(--border)", borderRadius: 12, color: "var(--text2)",
-        fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500,
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer",
-      }}
-    >
-      <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 16 }} />
-      Забыли сфотографировать? Добавить вручную
-    </button>
+    <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
+      <button
+        type="button"
+        onClick={() => {
+          haptic("light");
+          onClick();
+        }}
+        style={{
+          width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)",
+          border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif",
+          fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center",
+          justifyContent: "center", gap: 8, cursor: "pointer",
+        }}
+      >
+        <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 19 }} />
+        Добавить приём
+      </button>
+    </div>
   );
 }
 

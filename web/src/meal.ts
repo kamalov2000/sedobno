@@ -273,6 +273,21 @@ export function withPieceCount(dish: MealItem, kind: string, count: number): Mea
   return { ...dish, pieces };
 }
 
+// Текстовое добавление блюда (backlog п.2): описание словами вместо фото. Ограничение
+// длины дублирует серверное (api/internal/server/meal_text.go) — до 400 доводить незачем.
+export const MEAL_TEXT_MAX = 300;
+export const MEAL_TEXT_MIN = 2;
+
+/** Примеры для плейсхолдера и подсказок — те же формулировки, что в дизайне и промпте:
+ *  блюдо + мера. Показывают, что ждём обычную человеческую фразу, а не «продукт из базы». */
+export const MEAL_TEXT_EXAMPLES = ["котлета из щуки, 2 штуки", "капучино, стакан", "борщ, тарелка"];
+
+/** Готов ли текст к отправке (не режем пробелы за пользователя — только проверяем). */
+export function mealTextReady(text: string): boolean {
+  const t = text.trim();
+  return t.length >= MEAL_TEXT_MIN && t.length <= MEAL_TEXT_MAX;
+}
+
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
 export function pluralDishes(n: number): string {
   const a = Math.abs(n) % 100;

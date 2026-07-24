@@ -17,9 +17,23 @@ type fakeAnalyzer struct {
 	err     error
 	entered chan struct{} // сигнал «вошёл в AnalyzeMeal» (слот уже занят)
 	block   chan struct{} // держит вызов, пока не закроют
+	gotText string        // последнее описание, пришедшее в AnalyzeMealText
 }
 
 func (f *fakeAnalyzer) AnalyzeMeal(_ context.Context, _ []llm.Image) (*llm.MealAnalysis, llm.Usage, error) {
+	if f.entered != nil {
+		f.entered <- struct{}{}
+	}
+	if f.block != nil {
+		<-f.block
+	}
+	return f.res, llm.Usage{}, f.err
+}
+
+// AnalyzeMealText — тот же управляемый ответ, но для текстового входа; запоминает,
+// что именно ушло в модель (проверяем, что хендлер не режет описание).
+func (f *fakeAnalyzer) AnalyzeMealText(_ context.Context, text string) (*llm.MealAnalysis, llm.Usage, error) {
+	f.gotText = text
 	if f.entered != nil {
 		f.entered <- struct{}{}
 	}
@@ -192,4 +206,95 @@ func TestRun_Busy(t *testing.T) {
 
 	close(block) // отпускаем первый разбор
 	<-done
+}
+
+// --- Текстовый разбор (backlog п.2): RunText ---
+
+// Текст доходит до модели как есть, а результат проходит ТУ ЖЕ санитизацию, что и фото:
+// ккал согласуются с макросами, total считается серверно из блюд.
+func TestRunText_ОКИТаЖеСанитизация(t *testing.T) {
+	f := &fakeAnalyzer{res: &llm.MealAnalysis{
+		IsFood:     true,
+		Confidence: 0.5,
+		Note:       "порция стандартная",
+		Dishes: []llm.MealItem{
+			// ккал заведомо расходятся с 4Б+4У+9Ж (200 против 322) — сервер пересчитает.
+			{Name: "котлета из щуки", Grams: 200, Kcal: 200, ProteinG: 34, FatG: 18, CarbG: 6, Confidence: 0.6},
+		},
+		Total: llm.MealMacros{Kcal: 999}, // мусорный тотал модели — сервер считает свой
+	}}
+	p := New(f, nil, "off", 4, slog.Default())
+	res, err := p.RunText(context.Background(), "котлета из щуки, 2 штуки")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusOK || len(res.Dishes) != 1 {
+		t.Fatalf("status=%q блюд=%d, ждали ok/1", res.Status, len(res.Dishes))
+	}
+	if f.gotText != "котлета из щуки, 2 штуки" {
+		t.Errorf("в модель ушло %q — описание не должно резаться по пути", f.gotText)
+	}
+	want := 4*34.0 + 4*6.0 + 9*18.0 // 322
+	if math.Abs(res.Dishes[0].Kcal-want) > 0.5 {
+		t.Errorf("ккал блюда=%v, ждали пересчёт из макросов ≈%v", res.Dishes[0].Kcal, want)
+	}
+	if math.Abs(res.Total.Kcal-res.Dishes[0].Kcal) > 0.5 {
+		t.Errorf("total=%v, ждали серверную сумму блюд %v (а не 999 от модели)", res.Total.Kcal, res.Dishes[0].Kcal)
+	}
+	if res.Note != "порция стандартная" || res.Confidence != 0.5 {
+		t.Errorf("note=%q confidence=%v — допущение модели должно доходить до экрана", res.Note, res.Confidence)
+	}
+}
+
+// Бессмысленный ввод → not_food: тот же статус, что у фото без еды, и квоту хендлер за
+// него не списывает.
+func TestRunText_НеЕда(t *testing.T) {
+	p := New(&fakeAnalyzer{res: &llm.MealAnalysis{IsFood: false}}, nil, "off", 4, slog.Default())
+	res, err := p.RunText(context.Background(), "asdfgh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusNotFood {
+		t.Fatalf("status=%q, ждали not_food", res.Status)
+	}
+}
+
+// Ложечные добавки в тексте НЕ перебиваются на assumed=true скопом (в отличие от фото):
+// названное человеком масло — факт, а не догадка модели. Иначе «с ложкой масла» рисовалось
+// бы с «≈», то есть сервер спорил бы с пользователем о том, что тот сам написал.
+func TestRunText_AssumedБерётсяОтМодели(t *testing.T) {
+	p := New(&fakeAnalyzer{res: &llm.MealAnalysis{
+		IsFood: true, Confidence: 0.8,
+		Dishes: []llm.MealItem{
+			{Name: "гречка с маслом", Grams: 150, ProteinG: 6, FatG: 2, CarbG: 30,
+				Pieces: []llm.MealPiece{{Kind: "butter", Count: 1, Assumed: false}}},
+		},
+	}}, nil, "off", 4, slog.Default())
+	res, err := p.RunText(context.Background(), "гречка 150 г с ложкой сливочного масла")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Dishes) != 1 || len(res.Dishes[0].Pieces) != 1 {
+		t.Fatalf("блюд=%d, примитивов=%d", len(res.Dishes), len(res.Dishes[0].Pieces))
+	}
+	if res.Dishes[0].Pieces[0].Assumed {
+		t.Error("assumed=true у названной человеком добавки — текстовый путь не должен её додумывать")
+	}
+}
+
+// Шлюз допуска общий с фото: занятый семафор отдаёт ErrBusy, работа не начинается.
+func TestRunText_BusyНаЗанятомСемафоре(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	block := make(chan struct{})
+	f := &fakeAnalyzer{res: &llm.MealAnalysis{IsFood: true}, entered: entered, block: block}
+	p := New(f, nil, "off", 1, slog.Default())
+
+	go func() { _, _ = p.RunText(context.Background(), "гречка") }()
+	<-entered // слот занят
+
+	_, err := p.RunText(context.Background(), "борщ")
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("err=%v, ждали ErrBusy", err)
+	}
+	close(block)
 }
