@@ -87,6 +87,11 @@ func main() {
 	// префикс не дотянул до минимума модели (у Haiku 4.5 — 4096 токенов) и кэш
 	// молча не включился — это ответ на вопрос «стоит ли вообще кэшировать».
 	var totCacheWrite, totCacheRead int64
+	// gateCount/gateEscCount/gateNutrCount — сколько кейсов ЗАЦЕПИЛ антигаллюцинационный
+	// гейт, сколько из них дошло до эскалации и у скольких скрыт КБЖУ. Доля срабатываний
+	// на нормальных этикетках — прямой критерий «гейт не ложно-срабатывает», и без
+	// счётчика он ненаблюдаем: ветка «ингредиент ненадёжен» ничего не меняет в статусе.
+	var gateCount, gateEscCount, gateNutrCount int
 
 	for i, grp := range cases {
 		if i > 0 && *delay > 0 {
@@ -119,6 +124,15 @@ func main() {
 			name, res.Status, model, len(res.IngredientsRaw), matched, res.Score, flags,
 			res.CostRUB, res.Usage.InputTokens+res.Usage.OutputTokens, res.LatencyMs)
 
+		if res.GateMismatch {
+			gateCount++
+		}
+		if res.GateEscalated {
+			gateEscCount++
+		}
+		if res.GateNutritionMismatch {
+			gateNutrCount++
+		}
 		totCost += res.CostRUB
 		totLatency += res.LatencyMs
 		totTokens += int64(res.Usage.InputTokens + res.Usage.OutputTokens)
@@ -129,6 +143,12 @@ func main() {
 		}
 		if *raw {
 			fmt.Fprintf(tw, "  └─ состав[%d]: %s\t\t\t\t\t\t\t\t\n", len(res.IngredientsRaw), strings.Join(res.IngredientsRaw, " | "))
+			// Дословная переписка состава — то, с чем гейт сверяет каждый ингредиент.
+			// Без неё срабатывание (или его отсутствие) разобрать нечем: фото в проде
+			// не хранятся, и второй источник правды тут только этот текст.
+			if res.Transcription != "" {
+				fmt.Fprintf(tw, "  └─ transcription: %s\t\t\t\t\t\t\t\t\n", res.Transcription)
+			}
 		}
 	}
 	tw.Flush()
@@ -138,6 +158,8 @@ func main() {
 	fmt.Printf("Стоимость: сумма=%.4f ₽, средняя=%.4f ₽/скан (цель < 1 ₽)\n", totCost, avgF(totCost, len(cases)))
 	fmt.Printf("Эскалации на сильную модель: %d из %d (%.0f%%)\n",
 		escCount, len(cases), 100*float64(escCount)/float64(max(1, len(cases))))
+	fmt.Printf("Гейт transcription: сработал на %d из %d (%.0f%%), из них эскалаций=%d, скрытых КБЖУ=%d\n",
+		gateCount, len(cases), 100*float64(gateCount)/float64(max(1, len(cases))), gateEscCount, gateNutrCount)
 	fmt.Printf("Латентность: средняя=%d ms\n", avgI(totLatency, n))
 	fmt.Printf("Токены: сумма=%d, средние=%d/скан\n", totTokens, avgI(totTokens, n))
 	fmt.Printf("Кэш промпта: запись=%d, чтение=%d (нули = префикс ниже порога модели)\n",

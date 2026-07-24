@@ -115,6 +115,10 @@ type Result struct {
 	GateMismatch          bool `json:"-"` // хоть одно несовпадение (ингредиент или КБЖУ)
 	GateEscalated         bool `json:"-"` // штрафной ингредиент не подтвердился → эскалация
 	GateNutritionMismatch bool `json:"-"` // числа КБЖУ не подтвердились → nutrition скрыт
+	// Transcription — дословная переписка состава, с которой гейт сверяет ингредиенты.
+	// Нужна для разбора срабатываний: без неё «гейт сработал» нечем объяснить, а по
+	// прод-логам фото уже не поднять (мы их не храним).
+	Transcription string `json:"-"`
 }
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
@@ -251,6 +255,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// используется только для отображения.
 	res.LowConfidence = p.lowConfidence(ext)
 	res.IngredientsRaw = ext.Ingredients
+	res.Transcription = ext.Transcription
 	// Пищевая ценность независима от состава: сохраняем, даже если ниже уйдём в
 	// label_not_found. Показывается на любом продукте (хорошем/плохом), §дополнение.
 	res.Nutrition = ext.Nutrition
@@ -353,6 +358,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			res.Confidence = ext.Confidence
 			res.LowConfidence = p.lowConfidence(ext)
 			res.IngredientsRaw = ext.Ingredients
+			res.Transcription = ext.Transcription
 			res.Nutrition = ext.Nutrition
 
 			// Пере-проверяем терминальные исходы на результате сильной модели: она могла
@@ -381,6 +387,10 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			recs = recs2
 		case len(unreliable) > 0:
 			res.GateMismatch = true
+			// Пишем в лог, а не только в поле: доля срабатываний гейта — это метрика,
+			// за которой следим на бете, и молчащая ветка делала её невидимой.
+			p.log.Warn("гейт transcription: ингредиент не подтверждён текстом, помечен ненадёжным",
+				"count", len(unreliable), "first", recs[unreliable[0]].raw)
 			recs = markUnreliable(recs, unreliable)
 		}
 	}
