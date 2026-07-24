@@ -100,13 +100,34 @@ func (s *Server) chargeDueSubscriptions(ctx context.Context) {
 	}
 }
 
+// renewalIdempotenceKey — ключ идемпотентности запроса к ЮKassa для продления подписки.
+//
+// ИНВАРИАНТ, НА КОТОРОМ ДЕРЖИТСЯ ЗАЩИТА ОТ ДВОЙНОГО СПИСАНИЯ: periodEnd — это конец
+// ОПЛАЧЕННОГО ПЕРИОДА, каким он был ДО списания (subscriptions.expires_at на момент
+// выборки). Пока период не продлён, все повторы (ретрай тика, перезапуск процесса,
+// параллельный тик) обязаны дать ОДИН И ТОТ ЖЕ ключ — тогда ЮKassa вернёт тот же платёж
+// вместо второго списания. Продление меняет expires_at, ключ становится другим — и
+// следующий период списывается как новый платёж. Именно это нам и нужно.
+//
+// Отсюда правило для будущих правок: НЕЛЬЗЯ менять expires_at (и вообще двигать состояние
+// подписки) до того, как платёж применён. Сдвинули раньше — ключ разъедется, и повтор
+// спишет деньги второй раз, причём молча: оба платежа успешны, жалоба придёт от
+// пользователя. Проверено живьём на бете 24.07: откат expires_at на другую СЕКУНДУ до
+// повтора дал второй платёж в магазине.
+//
+// Секунды достаточно: два разных периода одной подписки не могут закончиться в одну и ту
+// же секунду (период — 30 или 365 дней).
+func renewalIdempotenceKey(subID int64, periodEnd time.Time) string {
+	return fmt.Sprintf("subrenew-%d-%d", subID, periodEnd.Unix())
+}
+
 // chargeOneSubscription списывает одну подписку по сохранённому способу и применяет исход.
 // Идемпотентность: ключ = подписка + период (повторный тик того же периода не создаст
 // второй платёж). Неуспех уводит в past_due с ретраем; после порога — гашение.
 func (s *Server) chargeOneSubscription(ctx context.Context, d store.DueSubscription) {
 	uid := d.UserID
 	amountRub, periodSec, plan := s.planParams(d.Plan)
-	key := fmt.Sprintf("subrenew-%d-%d", d.ID, d.ExpiresAt.Unix())
+	key := renewalIdempotenceKey(d.ID, d.ExpiresAt)
 	p, err := s.yk.CreateAutoPayment(ctx, yookassa.AutoChargeInput{
 		AmountRub:       amountRub,
 		Description:     "Съедобно — продление подписки",
@@ -118,10 +139,17 @@ func (s *Server) chargeOneSubscription(ctx context.Context, d store.DueSubscript
 	})
 	if err == nil && p.Status == "succeeded" && p.Paid {
 		raw, _ := json.Marshal(p)
-		if e := s.store.RenewSubscriptionSuccess(ctx, d.ID, uid, periodSec, p.ID, rubFromValue(p.Amount.Value), raw); e != nil {
+		applied, e := s.store.RenewSubscriptionSuccess(ctx, d.ID, uid, periodSec, p.ID, rubFromValue(p.Amount.Value), raw)
+		if e != nil {
 			// Не продвинули состояние: next_charge_at не сдвинут — следующий тик повторит
 			// тем же ключом (ЮKassa вернёт тот же платёж), применение идемпотентно.
 			s.log.Error("автосписание: применение успеха", "err", e, "sub", d.ID)
+			return
+		}
+		if !applied {
+			// Этот платёж уже применяли (параллельный тик успел раньше): период сдвинут,
+			// событие записано. Второй раз ни то, ни другое делать нельзя.
+			s.log.Info("автосписание: платёж уже применён, пропускаем", "sub", d.ID, "payment", p.ID)
 			return
 		}
 		_ = s.store.InsertEvent(ctx, &uid, "pay_renewal_ok", map[string]any{"plan": plan, "channel": "sbp"})

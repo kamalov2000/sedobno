@@ -108,8 +108,12 @@ func TestRenewSuccess_ПродлеваетСбрасываетСчётчик(t *
 	execT(t, ctx, `UPDATE users SET is_subscribed=false WHERE id=$1`, uid)
 
 	raw, _ := json.Marshal(map[string]any{"id": "pay-renew-ok"})
-	if err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-renew-ok", 249, raw); err != nil {
+	applied, err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-renew-ok", 249, raw)
+	if err != nil {
 		t.Fatalf("RenewSubscriptionSuccess: %v", err)
+	}
+	if !applied {
+		t.Fatal("applied=false на первом применении платежа")
 	}
 	n := countRows(t, ctx, `
 SELECT count(*) FROM subscriptions
@@ -155,5 +159,47 @@ func TestRenewFailure_PastDueПотомExpirePosle3(t *testing.T) {
 	}
 	if isSubscribed(t, ctx, uid) {
 		t.Fatal("безлимит не снят после гашения")
+	}
+}
+
+// ПОВТОРНОЕ применение ТОГО ЖЕ платежа не должно продлевать период второй раз.
+//
+// Так бывает штатно: ключ идемпотентности ЮKassa возвращает один и тот же платёж двум
+// параллельным тикам (или тику после перезапуска процесса). Деньги списаны один раз —
+// значит и доступ должен вырасти один раз. Раньше вторая попытка молча удваивала период:
+// вставка платежа гасилась ON CONFLICT, а продление выполнялось всё равно.
+func TestRenewSuccess_ПовторТогоЖеПлатежаНеПродлеваетДважды(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 5209)
+	mustRecordAuto(t, s, ctx, uid, "pay-dup-1", "pm-dup")
+	subID := subIDOf(t, ctx, uid)
+
+	raw, _ := json.Marshal(map[string]any{"id": "pay-dup-renew"})
+	applied, err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-dup-renew", 249, raw)
+	if err != nil || !applied {
+		t.Fatalf("первое применение: applied=%v err=%v", applied, err)
+	}
+	var afterFirst time.Time
+	if err := testPool.QueryRow(ctx, `SELECT expires_at FROM subscriptions WHERE id=$1`, subID).Scan(&afterFirst); err != nil {
+		t.Fatal(err)
+	}
+
+	// Тот же платёж приходит второй раз.
+	applied2, err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-dup-renew", 249, raw)
+	if err != nil {
+		t.Fatalf("повторное применение вернуло ошибку: %v", err)
+	}
+	if applied2 {
+		t.Error("applied=true на повторе — вызывающий запишет второе событие продления")
+	}
+	var afterSecond time.Time
+	if err := testPool.QueryRow(ctx, `SELECT expires_at FROM subscriptions WHERE id=$1`, subID).Scan(&afterSecond); err != nil {
+		t.Fatal(err)
+	}
+	if !afterSecond.Equal(afterFirst) {
+		t.Fatalf("период продлился дважды за один платёж: было %s, стало %s", afterFirst, afterSecond)
+	}
+	if countRows(t, ctx, `SELECT count(*) FROM sbp_payments WHERE provider_payment_id='pay-dup-renew'`) != 1 {
+		t.Fatal("платёж записан дважды")
 	}
 }

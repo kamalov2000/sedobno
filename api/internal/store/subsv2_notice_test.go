@@ -52,7 +52,7 @@ func TestDueForNotice_ПометкаГаситПовторПродлениеСб
 
 	// Продление сбрасывает renewal_notified_at → перед следующим периодом уведомим снова.
 	raw := []byte(`{"id":"pay-n1-renew"}`)
-	if err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-n1-renew", 249, raw); err != nil {
+	if _, err := s.RenewSubscriptionSuccess(ctx, subID, uid, int(sbpPeriod/time.Second), "pay-n1-renew", 249, raw); err != nil {
 		t.Fatalf("RenewSubscriptionSuccess: %v", err)
 	}
 	execT(t, ctx, `UPDATE subscriptions SET next_charge_at = now() + interval '30 hours' WHERE id=$1`, subID)

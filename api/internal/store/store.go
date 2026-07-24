@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -548,35 +549,49 @@ func (s *Store) SubscriptionsDueForCharge(ctx context.Context, now time.Time, li
 // RenewSubscriptionSuccess применяет успешное автосписание: продлевает ТУ ЖЕ подписку
 // (новый срок = остаток + период через общий periodExpiry под FOR UPDATE), переносит
 // next_charge_at на новый конец периода, сбрасывает счётчик неудач и снова помечает
-// пользователя подписчиком (на случай, если он проседал в past_due). Платёж пишется в
-// sbp_payments (аудит + идемпотентность по provider_payment_id). Продлеваем существующую
-// строку, а НЕ вставляем новую: иначе у пользователя было бы несколько next_charge_at.
-func (s *Store) RenewSubscriptionSuccess(ctx context.Context, subID, userID int64, periodSec int, providerPaymentID string, amountRub int, raw []byte) error {
+// пользователя подписчиком (на случай, если он проседал в past_due). Продлеваем
+// существующую строку, а НЕ вставляем новую: иначе у пользователя было бы несколько
+// next_charge_at.
+//
+// ИДЕМПОТЕНТНОСТЬ ДЕРЖИТСЯ ЗДЕСЬ, а не на ключе идемпотентности ЮKassa. Ключ
+// (renewalIdempotenceKey) защищает от повторного СПИСАНИЯ денег, но не от повторного
+// ПРИМЕНЕНИЯ уже списанного платежа: два параллельных тика получили бы от ЮKassa один и
+// тот же платёж, и оба продлили бы период — деньги сняты один раз, доступ выдан на два.
+// Поэтому решает вставка в sbp_payments: она первая в транзакции, и если платёж с таким
+// provider_payment_id уже применён (ON CONFLICT ничего не вставил), мы выходим НЕ ТРОГАЯ
+// подписку. applied=false означает «ничего не сделали, состояние уже продвинуто» — вызывающий
+// по нему решает, писать ли событие продления (иначе оно тоже задвоится).
+func (s *Store) RenewSubscriptionSuccess(ctx context.Context, subID, userID int64, periodSec int, providerPaymentID string, amountRub int, raw []byte) (applied bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op после успешного Commit
 
 	if _, err = tx.Exec(ctx, namedQuery("sub_lock_user"), userID); err != nil {
-		return err
+		return false, err
+	}
+	// Платёж пишем ПЕРВЫМ и смотрим, вставилась ли строка: ON CONFLICT DO NOTHING вернёт
+	// пусто, если этот платёж уже применяли. Тогда выходим до продления — период не должен
+	// сдвинуться второй раз за те же деньги.
+	var payID int64
+	switch err = tx.QueryRow(ctx, namedQuery("sub_sbp_insert_payment"), userID, providerPaymentID, amountRub, raw).Scan(&payID); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return false, tx.Commit(ctx) // уже применён — ничего не меняем
+	case err != nil:
+		return false, err
 	}
 	exp, err := periodExpiry(ctx, tx, userID, periodSec)
 	if err != nil {
-		return err
-	}
-	// Тот же INSERT платежа, что и у покупки (RETURNING id игнорируем через Exec):
-	// ON CONFLICT DO NOTHING делает повтор безопасным.
-	if _, err = tx.Exec(ctx, namedQuery("sub_sbp_insert_payment"), userID, providerPaymentID, amountRub, raw); err != nil {
-		return err
+		return false, err
 	}
 	if _, err = tx.Exec(ctx, namedQuery("sub_renew_update"), subID, exp, raw); err != nil {
-		return err
+		return false, err
 	}
 	if _, err = tx.Exec(ctx, namedQuery("sub_mark_user_subscribed"), userID); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	return true, tx.Commit(ctx)
 }
 
 // RenewSubscriptionFailure применяет неудачное автосписание: инкремент счётчика; при
