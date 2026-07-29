@@ -46,6 +46,22 @@ func (s *Server) tickSubscriptions(ctx context.Context) {
 	s.notifyUpcomingRenewals(ctx)
 	s.chargeDueSubscriptions(ctx)
 	s.sweepExpiredSubs(ctx)
+	s.purgeAnalysisCache(ctx)
+}
+
+// purgeAnalysisCache чистит протухшие записи кэша разбора (TTL 90 дней). Ездит на
+// том же часовом тикере, что и подписки: отдельный демон под удаление десятка строк
+// в сутки — лишняя движущаяся часть. На корректность не влияет (чтение кэша и так
+// отсекает записи старше TTL) — это только про размер таблицы.
+func (s *Server) purgeAnalysisCache(ctx context.Context) {
+	n, err := s.store.PurgeAnalysisCache(ctx)
+	if err != nil {
+		s.log.Warn("кэш разбора: чистка", "err", err)
+		return
+	}
+	if n > 0 {
+		s.log.Info("кэш разбора: удалены протухшие записи", "n", n)
+	}
 }
 
 // notifyUpcomingRenewals шлёт предупреждение «скоро продлится» за ~24–48ч до автосписания

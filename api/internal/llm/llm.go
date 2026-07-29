@@ -49,7 +49,13 @@ type Extraction struct {
 	// модель не прочитала его с фото, а придумала (см. TranscriptionGate).
 	Transcription string   `json:"transcription,omitempty"`
 	Ingredients   []string `json:"ingredients"`
-	Confidence    float64  `json:"confidence"`
+	// ProductName — название продукта с лицевой стороны упаковки («Онигири «Снежный
+	// краб» с соусом «Спайси»»). Может быть пустым — это НОРМА, а не сбой: названия
+	// не видно на кадре с оборотом, а выдумывать его промпт запрещает. Ни на состав,
+	// ни на балл не влияет: нужно, чтобы подписать результат и предзаполнить имя,
+	// когда со скана уходят в дневник.
+	ProductName string  `json:"product_name,omitempty"`
+	Confidence  float64 `json:"confidence"`
 	IsLabel       bool     `json:"is_label"`
 	// IsFood — продукт съедобен (еда/напиток). Указатель: nil (поле не пришло / mock)
 	// трактуем как «еда» — permissive, чтобы не блокировать реальную еду. Скан-гейт

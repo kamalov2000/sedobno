@@ -96,6 +96,9 @@ type Result struct {
 	Breakdown      []scoring.Deduction `json:"breakdown"`
 	IngredientsRaw []string            `json:"ingredients_raw"`
 	Matched        []MatchedIngredient `json:"ingredients_matched"`
+	// ProductName — название с упаковки (фаза 1). Пусто — не прочиталось; интерфейс
+	// в этом случае падает на фолбэк «ПРОВЕРКА №N», как и раньше.
+	ProductName string `json:"product_name,omitempty"`
 	Explanation    string              `json:"explanation"`
 	Nutrition      *llm.Nutrition      `json:"nutrition,omitempty"`
 	Provider       string              `json:"provider"`
@@ -256,6 +259,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	res.LowConfidence = p.lowConfidence(ext)
 	res.IngredientsRaw = ext.Ingredients
 	res.Transcription = ext.Transcription
+	res.ProductName = ext.ProductName
 	// Пищевая ценность независима от состава: сохраняем, даже если ниже уйдём в
 	// label_not_found. Показывается на любом продукте (хорошем/плохом), §дополнение.
 	res.Nutrition = ext.Nutrition
@@ -359,6 +363,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			res.LowConfidence = p.lowConfidence(ext)
 			res.IngredientsRaw = ext.Ingredients
 			res.Transcription = ext.Transcription
+			res.ProductName = ext.ProductName
 			res.Nutrition = ext.Nutrition
 
 			// Пере-проверяем терминальные исходы на результате сильной модели: она могла

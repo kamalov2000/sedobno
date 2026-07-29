@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100 } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100, scanDiaryPrefill } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -264,5 +264,23 @@ describe("детерминированные примитивы блюда (piec
     expect(pieceCountLabel("oil_veg", 1)).toBe("1 ч.л.");
     expect(pieceCountLabel("sugar", 2)).toBe("2 ч.л.");
     expect(pieceCountLabel("yolk", 4)).toBe("×4");
+  });
+});
+
+describe("scanDiaryPrefill — заготовка для «скан без КБЖУ → дневник»", () => {
+  it("название с упаковки подставляется вместе с мерой", () => {
+    expect(scanDiaryPrefill("Онигири «Снежный краб» с соусом «Спайси»")).toBe(
+      "Онигири «Снежный краб» с соусом «Спайси», 1 шт",
+    );
+  });
+
+  it("названия нет — пустая строка: экран откроется обычным пустым вводом, а не тупиком", () => {
+    expect(scanDiaryPrefill(undefined)).toBe("");
+    expect(scanDiaryPrefill("")).toBe("");
+    expect(scanDiaryPrefill("   ")).toBe("");
+  });
+
+  it("хвостовые пробелы не уезжают в подставленный текст", () => {
+    expect(scanDiaryPrefill("  Творожок глазированный  ")).toBe("Творожок глазированный, 1 шт");
   });
 });

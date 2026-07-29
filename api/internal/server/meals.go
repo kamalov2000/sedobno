@@ -146,17 +146,32 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
+	images, okImg := s.readMealImages(w, r)
+	if !okImg {
+		return // readMealImages уже ответил ошибкой
+	}
+
+	// Кэш разбора (analysis_cache.go): тот же файл — тот же разбор, без вызова модели
+	// и без списания квоты. В отличие от сканера составов, приём В ДНЕВНИК всё равно
+	// добавляется: повторно отправленное фото ужина — это по-прежнему «запиши мне
+	// ужин», просто считать его заново незачем.
+	sha := imagesSHA(images)
+	if cached, hit := s.cachedMealResult(ctx, u.ID, sha); hit {
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", map[string]any{"status": cached.Status})
+		s.log.Info("meal: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
+		s.finishMealFromCache(ctx, w, u, cached, localDateFromForm(r))
+		return
+	}
+
+	// Пре-чек квоты: неподписчик, исчерпавший бесплатные разборы, упирается в paywall.
+	// Ниже кэша — как и у сканера составов: за уже разобранное фото квота списана,
+	// и гасить его пейволлом значило бы отобрать оплаченное.
 	if !u.IsSubscribed && u.FreeMealsUsed >= freeMealLimit {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", nil)
 		writeJSON(w, http.StatusPaymentRequired, map[string]any{
 			"error": "limit_reached", "message": "бесплатные разборы еды закончились", "meals_left": 0,
 		})
 		return
-	}
-
-	images, okImg := s.readMealImages(w, r)
-	if !okImg {
-		return // readMealImages уже ответил ошибкой
 	}
 
 	_ = s.store.InsertEvent(ctx, &u.ID, "meal_started", nil)
@@ -181,12 +196,14 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		// В событие кладём confidence/note модели — по ним оцениваем точность промпта на
 		// не-ok исходах (приём в meals не пишем — дневник только про еду).
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", mealDiagProps(res))
+		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealLabelMessage, MealsLeft: remainingMeals(u),
 		})
 
 	case res.Status == meal.StatusNotFood:
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", mealDiagProps(res))
+		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: remainingMeals(u),
 		})
@@ -194,8 +211,48 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	default: // ok — сохраняем приём и списываем одну попытку
 		// Локальный день клиента (опционально): без него день выводится из eaten_at по
 		// Europe/Moscow, как до спринта 2 — старые клиенты не ломаются.
+		s.cacheMealResult(ctx, u.ID, sha, res)
 		s.finishMealOK(ctx, w, u, res, localDateFromForm(r))
 	}
+}
+
+// finishMealFromCache — путь «разбор взят из кэша». Отличий от finishMealOK ровно
+// два: не списывается квота (модель не вызывалась — платить нечем) и не пишется
+// meal_ok (иначе воронка разборов считала бы одно фото дважды). Приём в дневнике
+// создаётся как обычный — это по-прежнему добавление еды, а не просмотр старого.
+func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, localDate string) {
+	// Не-ok разбор из кэша (упаковка/не еда) приёма не создаёт — как и в живом прогоне.
+	switch res.Status {
+	case meal.StatusLabelDetected:
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, Message: mealLabelMessage, MealsLeft: remainingMeals(u),
+		})
+		return
+	case meal.StatusNotFood:
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: remainingMeals(u),
+		})
+		return
+	}
+
+	itemsJSON, _ := json.Marshal(res.Dishes)
+	total := res.Total
+	conf := res.Confidence
+	id, err := s.store.InsertMeal(ctx, store.MealRow{
+		UserID: u.ID, Status: res.Status, Source: mealSourcePhoto, Items: itemsJSON,
+		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
+		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: 0,
+		LocalDate: localDate, Escalated: res.Escalated, EscalationTrigger: res.EscalationTrigger,
+	})
+	if err != nil {
+		s.log.Error("meal: сохранение приёма из кэша", "err", err, "user", u.ID)
+		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
+		return
+	}
+	writeJSON(w, http.StatusOK, mealResponse{
+		Status: res.Status, ID: id, Dishes: res.Dishes, Total: &res.Total,
+		Confidence: res.Confidence, Note: res.Note, MealsLeft: remainingMeals(u),
+	})
 }
 
 // finishMealOK сохраняет успешный разбор в meals и атомарно списывает попытку.

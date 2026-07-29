@@ -105,6 +105,10 @@ type scanResponse struct {
 	Nutrition     *scanNutritionView `json:"nutrition,omitempty"`
 	Explanation   string             `json:"explanation,omitempty"`
 	Message       string             `json:"message,omitempty"`
+	// ProductName — название продукта с упаковки. Пусто — не прочиталось (нормальный
+	// исход: на кадре мог быть только оборот). Интерфейс подписывает им результат, а
+	// при уходе в дневник — предзаполняет им название приёма.
+	ProductName string `json:"product_name,omitempty"`
 	// ScanNumber — порядковый номер успешной проверки пользователя (для фолбэка
 	// ценника «ПРОВЕРКА №N», когда имя товара не извлекается). Только при status=ok.
 	ScanNumber int `json:"scan_number,omitempty"`
@@ -129,9 +133,14 @@ func labelNotFoundMessage(reason string) string {
 }
 
 // handleScan — POST /api/scan (multipart, поле photo). Порядок (§8, §3):
-// пре-чек лимита → нормализация фото → пайплайн → списание ТОЛЬКО при status=ok.
+// нормализация фото → кэш → пре-чек лимита → пайплайн → списание ТОЛЬКО при status=ok.
 // label_not_found и error не списывают бесплатную попытку (в т.ч. когда сработал
 // платный Sonnet-fallback, но состав так и не распознан — платит бизнес, не юзер).
+//
+// Кэш стоит ПЕРЕД пейволлом намеренно. Попадание в кэш — это фото, за которое
+// пользователь уже заплатил попыткой; упереться на нём в «проверки кончились» значило
+// бы отобрать оплаченное. Стоит это лишней нормализации кадров у того, кто и так за
+// лимитом, — против vision-вызова цена пренебрежима, а потолки тела (≤32 МБ) на месте.
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
@@ -140,18 +149,10 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil {
 		s.log.Error("scan: чтение пользователя", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
-		return
-	}
-	if !u.IsSubscribed && u.FreeScansUsed >= freeScanLimit {
-		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", nil)
-		writeJSON(w, http.StatusPaymentRequired, map[string]any{
-			"error": "limit_reached", "message": "бесплатные сканы закончились", "scans_left": 0,
-		})
 		return
 	}
 
@@ -216,6 +217,31 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		s.debugSaveScanImages(u.ID, images)
 	}
 
+	// Кэш разбора (analysis_cache.go): тот же файл — тот же ответ, без вызова модели
+	// и без списания попытки. Проверяем ДО scan_started: попадание в кэш — это не
+	// новая проверка, а показ уже сделанной, и в воронке сканов ему делать нечего.
+	sha := imagesSHA(images)
+	if cached, hit := s.cachedScanResponse(ctx, u.ID, sha); hit {
+		// Остаток проверок — из АКТУАЛЬНОГО состояния пользователя, а не из кэша:
+		// за время между прогонами он мог потратить попытки на другие сканы или
+		// оформить подписку.
+		cached.ScansLeft = remainingScans(u)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", map[string]any{"status": cached.Status})
+		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
+	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
+	if !u.IsSubscribed && u.FreeScansUsed >= freeScanLimit {
+		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", nil)
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"error": "limit_reached", "message": "бесплатные сканы закончились", "scans_left": 0,
+		})
+		return
+	}
+
 	_ = s.store.InsertEvent(ctx, &u.ID, "scan_started", nil)
 
 	// Пайплайн (§4). res непустой даже при ошибке — пишем его в scans для диагностики.
@@ -240,7 +266,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusMixedFrames:
 		// Кадры от разных продуктов — попытку не списываем, просим снимать по одному.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_mixed_frames", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
 			Status:    res.Status,
 			Message:   "Кадры от разных продуктов. Проверяйте по одному продукту за раз — несколько кадров нужны, только если состав одного продукта не влез в один снимок.",
 			ScansLeft: remainingScans(u), // не списано
@@ -255,10 +281,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		for i, raw := range res.IngredientsRaw {
 			ings = append(ings, scanIngredientView{Raw: raw, Position: i + 1})
 		}
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
 			Status:      res.Status,
 			Ingredients: ings,
 			Nutrition:   nutritionView(res.Nutrition),
+			ProductName: res.ProductName,
 			Message:     "Наша методология оценивает пищевые добавки, а у алкоголя главный фактор — сам спирт, который она не учитывает. Балл был бы обманчив, поэтому мы его не ставим.",
 			ScansLeft:   remainingScans(u), // не списано
 		})
@@ -266,7 +293,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusNotFood:
 		// Косметика/химия/лекарство — оценку съедобности не считаем, попытку не списываем.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
 			Status:    res.Status,
 			Message:   "Похоже, это не еда — косметика, бытовая химия или другое несъедобное. Оценку состава для таких продуктов не считаем.",
 			ScansLeft: remainingScans(u), // не списано
@@ -274,7 +301,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == pipeline.StatusLabelNotFound:
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
 			Status:    res.Status,
 			Reason:    res.Reason,
 			Message:   labelNotFoundMessage(res.Reason),
@@ -310,7 +337,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		if nerr != nil {
 			s.log.Warn("scan: подсчёт номера проверки", "err", nerr, "user", u.ID)
 		}
-		writeJSON(w, http.StatusOK, buildScanResponse(res, left, num))
+		s.writeAndCacheScan(ctx, w, u.ID, sha, buildScanResponse(res, left, num))
 	}
 }
 
@@ -336,6 +363,7 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 		Deductions:    deds,
 		LowConfidence: res.LowConfidence,
 		Nutrition:     nutritionView(res.Nutrition),
+		ProductName:   res.ProductName,
 		Explanation:   res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
 }

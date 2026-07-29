@@ -24,12 +24,16 @@ interface Props {
   onPaywall: () => void;
   /** Запасной путь — вписать калорийность цифрами (без модели и без квоты). */
   onManual: () => void;
+  /** Заготовка описания. Приходит со скана, у которого не прочиталось КБЖУ: название
+   *  продукта уже известно с упаковки, и заставлять перепечатывать его руками незачем.
+   *  Поле остаётся обычным вводом — заготовка правится и стирается. */
+  initialText?: string;
   /** Инъекция для витрины и тестов (офлайн). */
   analyze?: typeof analyzeMealTextApi;
 }
 
-export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onManual, analyze = analyzeMealTextApi }: Props) {
-  const [text, setText] = useState("");
+export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onManual, initialText = "", analyze = analyzeMealTextApi }: Props) {
+  const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 

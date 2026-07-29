@@ -133,6 +133,7 @@ export interface ScanResult {
   nutrition?: ScanNutrition;
   explanation?: string;
   message?: string;
+  product_name?: string; // название с упаковки; пусто — не прочиталось (норма)
   scan_number?: number; // порядковый номер проверки (фолбэк ценника)
   scans_left: number; // -1 == безлимит (подписчик)
 }

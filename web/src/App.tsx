@@ -18,7 +18,7 @@ import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 import ProfileScreen from "./screens/ProfileScreen";
 import { dayCardData, downloadShareCard } from "./shareCard";
-import { diaryItemToResult } from "./meal";
+import { diaryItemToResult, scanDiaryPrefill } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
@@ -80,6 +80,9 @@ export default function App() {
   // что и ручной, но с числами от модели и source="text" при сохранении. null — обычный
   // ручной ввод цифрами.
   const [textMeal, setTextMeal] = useState<MealResult | null>(null);
+  // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
+  // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
+  const [mealTextPrefill, setMealTextPrefill] = useState("");
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
   useEffect(() => {
@@ -365,6 +368,7 @@ export default function App() {
           onAddManual={() => {
             setReturnTo("home");
             setTextMeal(null);
+            setMealTextPrefill(""); // обычный вход из дневника — поле пустое
             setView("meal_text");
           }}
           onDiary={() => setView("meal_diary")}
@@ -390,6 +394,7 @@ export default function App() {
           onAddManual={() => {
             setReturnTo("meal_history");
             setTextMeal(null);
+            setMealTextPrefill(""); // обычный вход из дневника — поле пустое
             setView("meal_text");
           }}
           onOpen={(item) => {
@@ -421,6 +426,7 @@ export default function App() {
           onAddManual={() => {
             setReturnTo("meal_diary");
             setTextMeal(null);
+            setMealTextPrefill(""); // обычный вход из дневника — поле пустое
             setView("meal_text");
           }}
           onShare={(data, profile) => {
@@ -497,7 +503,14 @@ export default function App() {
           isSubscribed={me?.is_subscribed ?? false}
           onAddToDiary={() => {
             setReturnTo("not_scored");
-            setView("scan_to_diary");
+            // Та же развилка, что и на обычном результате: алкоголь балла не получает,
+            // но в дневник его кладут так же — по нетто, если КБЖУ прочиталось.
+            if (result.nutrition?.kcal != null) {
+              setView("scan_to_diary");
+            } else {
+              setMealTextPrefill(scanDiaryPrefill(result.product_name));
+              setView("meal_text");
+            }
           }}
         />
       )}
@@ -509,7 +522,17 @@ export default function App() {
           onAgain={onScan}
           onAddToDiary={() => {
             setReturnTo("result");
-            setView("scan_to_diary");
+            // Развилка «есть ли КБЖУ на этикетке» живёт здесь, а не в кнопке: экран
+            // результата про неё знать не должен, для него это одно действие «в дневник».
+            // Числа прочитаны — считаем порцию от нетто (ScanToDiaryScreen, ничего не
+            // выдумываем). Не прочитаны — уводим в текстовое добавление с подставленным
+            // названием, там порцию оценит meal-пайплайн.
+            if (result.nutrition?.kcal != null) {
+              setView("scan_to_diary");
+            } else {
+              setMealTextPrefill(scanDiaryPrefill(result.product_name));
+              setView("meal_text");
+            }
           }}
         />
       )}
@@ -556,9 +579,15 @@ export default function App() {
           редактор, что и у фото. Приём сохраняется уже оттуда, кнопкой «В дневник». */}
       {view === "meal_text" && (
         <AddMealTextScreen
+          // key — чтобы заготовка попала в поле при КАЖДОМ заходе со скана: без него
+          // useState(initialText) отработает один раз за жизнь экрана, и второй продукт
+          // открылся бы с названием первого.
+          key={mealTextPrefill}
+          initialText={mealTextPrefill}
           onBack={() => {
             const back = returnTo ?? "meal_diary";
             setReturnTo(null);
+            setMealTextPrefill("");
             setView(back);
           }}
           onAnalyzed={(data) => {

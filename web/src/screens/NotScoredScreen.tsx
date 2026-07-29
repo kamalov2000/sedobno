@@ -76,7 +76,9 @@ export default function NotScoredScreen({ result, onAgain, isSubscribed = false,
             <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
           </div>
         )}
-        {onAddToDiary && result.nutrition?.kcal != null && (
+        {/* Как и на обычном результате — кнопку не прячем: без КБЖУ App уводит в
+            текстовое добавление, а не в тупик (см. комментарий в ResultScreen). */}
+        {onAddToDiary && (
           <button
             type="button"
             onClick={onAddToDiary}
