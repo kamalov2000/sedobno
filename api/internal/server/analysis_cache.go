@@ -129,7 +129,14 @@ func (s *Server) thawScanCache(userID int64, sha string, images []llm.Image, was
 		s.log.Warn("разморозка кэша: запись", "err", perr, "user", userID)
 		return
 	}
-	props := map[string]any{"score_was": was, "score_now": res.Score}
+	// Стоимость и латентность — В СОБЫТИЕ, потому что строки в scans разморозка не
+	// создаёт (это не проверка пользователя: она не должна попадать в его историю и
+	// двигать номер проверки). Без этих полей фоновые прогоны были бы единственной
+	// статьёй расходов на LLM, которой нет нигде в учёте.
+	props := map[string]any{
+		"score_was": was, "score_now": res.Score,
+		"cost_rub": math.Round(res.CostRUB*10000) / 10000, "latency_ms": res.LatencyMs,
+	}
 	addDetectorProps(props, res)
 	_ = s.store.InsertEvent(ctx, &userID, "scan_cache_thawed", props)
 	s.log.Info("разморозка кэша: запись обновлена сильной моделью",
