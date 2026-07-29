@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"net/http"
+	"time"
 
+	"github.com/sostav/api/internal/imaging"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
 	"github.com/sostav/api/internal/pipeline"
@@ -60,21 +63,137 @@ func imagesSHA(images []llm.Image) string {
 
 // cachedScanResponse достаёт сохранённый ответ сканера. Ошибки кэша не фатальны:
 // не прочитали — просто считаем заново (best-effort, как вся диагностика).
-func (s *Server) cachedScanResponse(ctx context.Context, userID int64, sha string) (scanResponse, bool) {
-	raw, found, err := s.store.GetAnalysisCache(ctx, userID, store.CacheKindScan, sha)
+func (s *Server) cachedScanResponse(ctx context.Context, userID int64, sha string) (scanResponse, int16, bool) {
+	raw, strength, found, err := s.store.GetAnalysisCache(ctx, userID, store.CacheKindScan, sha)
 	if err != nil {
 		s.log.Warn("scan: чтение кэша разбора", "err", err, "user", userID)
-		return scanResponse{}, false
+		return scanResponse{}, 0, false
 	}
 	if !found {
-		return scanResponse{}, false
+		return scanResponse{}, 0, false
 	}
 	var resp scanResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		s.log.Warn("scan: разбор кэша", "err", err, "user", userID)
-		return scanResponse{}, false
+		return scanResponse{}, 0, false
 	}
-	return resp, true
+	return resp, strength, true
+}
+
+// thawCacheTimeout — потолок фоновой перепроверки. Больше обычного скана: она идёт
+// через сильную модель, у которой латентность втрое выше (замер: 6.3 с против 17.9 с).
+const thawCacheTimeout = 90 * time.Second
+
+// thawScanCache — фоновая разморозка слабой записи кэша.
+//
+// Задача: кэш заморозил ответ дешёвой модели, а детекторы говорят, что на этом кадре
+// она врёт. Ждать пользователя нельзя (ответ уже отдан мгновенно — в этом весь смысл
+// кэша), а оставлять враньё лежать 90 дней тем более. Поэтому сильная модель
+// доигрывает партию ПОСЛЕ ответа и переписывает запись: следующее открытие того же
+// фото покажет уже правду. Максимум один показ вранья вместо бессрочного.
+//
+// Контекст свой, не запросный: запросный отменяется сразу после ответа клиенту, и
+// разморозка умирала бы, не начавшись. Паника гасится здесь же — фоновая горутина не
+// имеет права уронить процесс.
+func (s *Server) thawScanCache(userID int64, sha string, images []llm.Image, was int) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("разморозка кэша: паника", "recover", r, "user", userID)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), thawCacheTimeout)
+	defer cancel()
+
+	// Обычный Run: детекторы внутри пайплайна сработают на тех же кадрах и сами уведут
+	// разбор на сильную модель. Отдельного «принудительного» режима не заводим — иначе
+	// правило эскалации существовало бы в двух местах и разъехалось бы.
+	res, err := s.pipe.Run(ctx, images)
+	if err != nil {
+		s.log.Warn("разморозка кэша: пайплайн", "err", err, "user", userID)
+		return
+	}
+	if !res.StrongAnswer {
+		// Сильная модель так и не отработала (эскалация не сложилась). Писать слабый
+		// ответ поверх слабого незачем — только сбросили бы TTL и счётчик попаданий.
+		s.log.Info("разморозка кэша: сильный ответ не получен, запись не трогаем", "user", userID)
+		return
+	}
+
+	num, _ := s.store.CountUserScansOK(ctx, userID)
+	resp := buildScanResponse(res, 0, num) // scans_left подставляется на выдаче
+	body, merr := json.Marshal(resp)
+	if merr != nil {
+		return
+	}
+	if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindScan, sha, body, store.CacheStrengthStrong); perr != nil {
+		s.log.Warn("разморозка кэша: запись", "err", perr, "user", userID)
+		return
+	}
+	props := map[string]any{"score_was": was, "score_now": res.Score}
+	addDetectorProps(props, res)
+	_ = s.store.InsertEvent(ctx, &userID, "scan_cache_thawed", props)
+	s.log.Info("разморозка кэша: запись обновлена сильной моделью",
+		"user", userID, "было", was, "стало", res.Score)
+}
+
+// measureImages — максимум признаков плотности по набору кадров. Максимум, а не
+// среднее: состав может быть на одном плотном кадре, и «обзорное фото упаковки»
+// рядом не должно его разбавлять. Кадр, который не померился, просто не участвует.
+func measureImages(images []llm.Image) imaging.Density {
+	var out imaging.Density
+	for _, img := range images {
+		d, err := imaging.Measure(img.Data)
+		if err != nil {
+			continue
+		}
+		if d.FineLoss > out.FineLoss {
+			out.FineLoss = d.FineLoss
+		}
+		if d.EdgeFrac > out.EdgeFrac {
+			out.EdgeFrac = d.EdgeFrac
+		}
+	}
+	return out
+}
+
+// addDetectorProps подмешивает в событие признаки детекторов сочинённого состава.
+// Пишутся на КАЖДОМ скане, а не только на сработавших: порог форс-эскалации выбран
+// на корпусе из двух десятков кадров одной фотосессии, и перекалибровать его можно
+// только по распределению живого трафика. Без «несработавших» замеров у распределения
+// нет левой половины, и любой новый порог был бы такой же догадкой, как первый.
+//
+// Числа округляем до трёх знаков: в events это сырьё для гистограммы, а не для
+// побитового сравнения, и полная мантисса раздувала бы props без пользы.
+func addDetectorProps(props map[string]any, res *pipeline.Result) {
+	if res == nil {
+		return
+	}
+	props["fine_loss"] = math.Round(res.FineLoss*1000) / 1000
+	props["edge_frac"] = math.Round(res.EdgeFrac*1000) / 1000
+	props["chars_per_item"] = math.Round(res.CharsPerItem*10) / 10
+	if res.ForcedStrong {
+		props["forced_strong"] = true
+	}
+	if res.ShortItemsFlag {
+		props["short_items"] = true
+	}
+}
+
+// suspiciousCachedScan — стоит ли перепроверять СЛАБУЮ запись кэша сильной моделью.
+// Оба детектора считаются без единого токена: плотность — по кадрам, форма состава —
+// по уже сохранённому ответу.
+func suspiciousCachedScan(resp scanResponse, dens imaging.Density, threshold float64) bool {
+	if resp.Status != pipeline.StatusOK {
+		return false // перепроверять «не еда»/«состава нет» нечего
+	}
+	if threshold > 0 && dens.FineLoss >= threshold {
+		return true
+	}
+	items := make([]string, 0, len(resp.Ingredients))
+	for _, ing := range resp.Ingredients {
+		items = append(items, ing.Raw)
+	}
+	return pipeline.ShortItemsSuspicious(items, dens.FineLoss)
 }
 
 // scanCacheStrength — сила ответа сканера для кэша. Сильный только тот разбор, чьё
@@ -106,7 +225,9 @@ func (s *Server) writeAndCacheScan(ctx context.Context, w http.ResponseWriter, u
 
 // cachedMealResult достаёт сохранённый разбор еды.
 func (s *Server) cachedMealResult(ctx context.Context, userID int64, sha string) (*meal.Result, bool) {
-	raw, found, err := s.store.GetAnalysisCache(ctx, userID, store.CacheKindMeal, sha)
+	// strength у калорий не используется: детекторов сочинённого состава для фото еды
+	// нет (там нет печатного текста, который можно недочитать), и размораживать нечего.
+	raw, _, found, err := s.store.GetAnalysisCache(ctx, userID, store.CacheKindMeal, sha)
 	if err != nil {
 		s.log.Warn("meal: чтение кэша разбора", "err", err, "user", userID)
 		return nil, false

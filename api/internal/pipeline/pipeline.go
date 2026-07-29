@@ -98,11 +98,11 @@ type Result struct {
 	Matched        []MatchedIngredient `json:"ingredients_matched"`
 	// ProductName — название с упаковки (фаза 1). Пусто — не прочиталось; интерфейс
 	// в этом случае падает на фолбэк «ПРОВЕРКА №N», как и раньше.
-	ProductName string `json:"product_name,omitempty"`
-	Explanation    string              `json:"explanation"`
-	Nutrition      *llm.Nutrition      `json:"nutrition,omitempty"`
-	Provider       string              `json:"provider"`
-	Confidence     float64             `json:"confidence"`
+	ProductName string         `json:"product_name,omitempty"`
+	Explanation string         `json:"explanation"`
+	Nutrition   *llm.Nutrition `json:"nutrition,omitempty"`
+	Provider    string         `json:"provider"`
+	Confidence  float64        `json:"confidence"`
 	// LowConfidence — итоговое извлечение осталось неуверенным (confidence < confMin,
 	// сильная модель не выручила либо не подключена). Состав распознан и оценён, но
 	// строки могли прочитаться с ошибками — повод попросить пользователя сверить их
@@ -128,6 +128,15 @@ type Result struct {
 	// дочитывает только числа, а список ингредиентов остаётся от основной модели, и
 	// ровно он определяет риск выдуманного состава.
 	StrongAnswer bool `json:"-"`
+	// Признаки детекторов сочинённого состава (hallucination.go) — телеметрия на
+	// КАЖДОМ скане, а не только на сработавших: пороги калибруются по распределению
+	// живого трафика, а не по корпусу из двух десятков кадров. На ответ клиенту не
+	// влияют.
+	FineLoss       float64 `json:"-"` // доля деталей, теряемых при ужатии вдвое
+	EdgeFrac       float64 `json:"-"` // доля пикселей с сильным градиентом
+	CharsPerItem   float64 `json:"-"` // средняя длина позиции итогового состава
+	ForcedStrong   bool    `json:"-"` // сработала форс-эскалация по fine_loss
+	ShortItemsFlag bool    `json:"-"` // сработал детектор «позиций много, текста мало»
 	// Transcription — дословная переписка состава, с которой гейт сверяет ингредиенты.
 	// Нужна для разбора срабатываний: без неё «гейт сработал» нечем объяснить, а по
 	// прод-логам фото уже не поднять (мы их не храним).
@@ -136,15 +145,19 @@ type Result struct {
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
 type Pipeline struct {
-	llm        llm.LLMProvider
-	fallback   llm.LLMProvider // необязательный повторный извлекатель для неуверенных случаев
-	confMin    float64         // порог confidence основной модели, ниже которого зовём fallback
-	matcher    *dict.Matcher
-	scorer     *scoring.Config
-	byCode     map[string]dict.Additive
-	candidates []llm.Candidate
-	log        *slog.Logger
-	sem        chan struct{}
+	llm      llm.LLMProvider
+	fallback llm.LLMProvider // необязательный повторный извлекатель для неуверенных случаев
+	confMin  float64         // порог confidence основной модели, ниже которого зовём fallback
+	// forceFineLoss — порог форс-эскалации по плотности мелкого текста. 0 выключает
+	// её полностью (пайплайн ведёт себя как до правки), что нужно и тестам, и
+	// аварийному откату без пересборки — через SCAN_FORCE_ESCALATE_FINE_LOSS=0.
+	forceFineLoss float64
+	matcher       *dict.Matcher
+	scorer        *scoring.Config
+	byCode        map[string]dict.Additive
+	candidates    []llm.Candidate
+	log           *slog.Logger
+	sem           chan struct{}
 	// explainEnabled — выполнять ли фазу 4 (LLM-объяснение). По умолчанию true (обратная
 	// совместимость: кто не звал SetExplainEnabled, ведёт себя как раньше); прод выключает
 	// через EXPLAIN_ENABLED. При false фаза пропускается, res.Explanation остаётся пустым.
@@ -173,6 +186,12 @@ func (p *Pipeline) SetExtractFallback(fb llm.LLMProvider, confMin float64) {
 	p.fallback = fb
 	p.confMin = confMin
 }
+
+// SetForceEscalateFineLoss задаёт порог форс-эскалации по плотности мелкого текста
+// (hallucination.go). 0 — выключено. Значение — на шкале ИМЕННО этой реализации
+// imaging.Measure: числа несравнимы между реализациями, калибровать только по
+// телеметрии.
+func (p *Pipeline) SetForceEscalateFineLoss(v float64) { p.forceFineLoss = v }
 
 // New собирает пайплайн: строит матчер, индекс по коду и список кандидатов для
 // фазы 2 из словаря items. maxConcurrent — семафор на LLM-вызовы.
@@ -222,7 +241,26 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// strongUsed — звали ли уже сильную (fallback) модель на извлечении: тогда точечный
 	// нутриент-ретрай ниже бессмыслен (та же модель уже смотрела на кадр).
 	var strongUsed bool
-	if len(images) > 1 && p.fallback != nil {
+
+	// Признаки кадра ДО вызова модели (hallucination.go). Считаются ВСЕГДА, даже когда
+	// ничего не срабатывает: числа уходят в телеметрию, и порог перекалибровывается по
+	// живому трафику, а не по корпусу из двух десятков кадров.
+	dens := measureFrames(images, p.log)
+	res.FineLoss = dens.FineLoss
+	res.EdgeFrac = dens.EdgeFrac
+
+	// Форс-эскалация: на кадре столько мелкого текста, что дешёвая модель его не
+	// прочитает, а СОЧИНИТ (и сочинит согласованно с transcription, так что гейт
+	// промолчит). Зовём сильную модель сразу — слабый ответ на таком кадре не нужен ни
+	// пользователю, ни кэшу.
+	forceStrong := p.fallback != nil && p.forceFineLoss > 0 && dens.FineLoss >= p.forceFineLoss
+	if forceStrong {
+		res.ForcedStrong = true
+		p.log.Info("форс-эскалация: плотная мелкая этикетка",
+			"fine_loss", dens.FineLoss, "порог", p.forceFineLoss, "model", p.fallback.Name())
+	}
+
+	if (len(images) > 1 || forceStrong) && p.fallback != nil {
 		e, uf, err := p.extractEntryWith(ctx, p.fallback, images)
 		fbUsage = fbUsage.Add(uf)
 		if err != nil {
@@ -235,7 +273,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		ext = e
 		strongUsed = true
 		res.StrongAnswer = true
-		res.Provider = p.fallback.Name() // диагностика: мультикадр ушёл на сильную модель
+		res.Provider = p.fallback.Name() // диагностика: кадр ушёл на сильную модель
 	} else {
 		e, u1, err := p.extractEntry(ctx, images)
 		vUsage = vUsage.Add(u1)
@@ -261,7 +299,30 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 				res.StrongAnswer = true
 			}
 		}
+		// Детектор «позиций много, текста мало» (hallucination.go). В отличие от
+		// fine_loss считается ПО ОТВЕТУ, поэтому работает как обычная эскалация: дешёвый
+		// прогон уже оплачен, но показывать его результат нельзя — по форме это подпись
+		// сочинённого состава (короткие типовые названия на плотной этикетке).
+		if p.fallback != nil && !strongUsed && ShortItemsSuspicious(ext.Ingredients, dens.FineLoss) {
+			res.ShortItemsFlag = true
+			p.log.Info("эскалация: короткие позиции на плотном кадре",
+				"позиций", len(ext.Ingredients), "симв_на_позицию", CharsPerItem(ext.Ingredients),
+				"fine_loss", dens.FineLoss, "model", p.fallback.Name())
+			strongUsed = true
+			ext2, uf, ferr := p.extractWith(ctx, p.fallback, images)
+			fbUsage = fbUsage.Add(uf)
+			if ferr != nil {
+				p.log.Warn("эскалация по коротким позициям не удалась, оставляем результат основной модели", "err", ferr)
+			} else if ext2.IsLabel && len(ext2.Ingredients) > 0 {
+				ext = ext2
+				res.StrongAnswer = true
+				res.Provider = p.fallback.Name()
+			}
+		}
 	}
+	// Средняя длина позиции ИТОГОВОГО извлечения — в телеметрию на каждом скане
+	// (считаем после всех эскалаций: интересна форма того ответа, что увидит человек).
+	res.CharsPerItem = CharsPerItem(ext.Ingredients)
 
 	res.Confidence = ext.Confidence
 	// Читалось ли фото плохо — по ИТОГОВОМУ извлечению (если неуверенный кейс выручила

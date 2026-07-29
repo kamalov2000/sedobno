@@ -20,7 +20,7 @@ func TestAnalysisCache_ТотЖеФайлТотЖеОтвет(t *testing.T) {
 	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "abc123", want, CacheStrengthBase); err != nil {
 		t.Fatalf("запись в кэш: %v", err)
 	}
-	got, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "abc123")
+	got, _, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "abc123")
 	if err != nil {
 		t.Fatalf("чтение кэша: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestAnalysisCache_КлючРазделяетЮзеровИСканеры(t 
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, found, err := s.GetAnalysisCache(ctx, c.uid, c.kind, c.sha); err != nil || found {
+			if _, _, found, err := s.GetAnalysisCache(ctx, c.uid, c.kind, c.sha); err != nil || found {
 				t.Errorf("found=%v err=%v — ждали промах", found, err)
 			}
 		})
@@ -90,7 +90,7 @@ func TestAnalysisCache_ПовторнаяЗаписьПерезаписывае�
 	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthBase); err != nil {
 		t.Fatalf("перезапись: %v", err)
 	}
-	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	got, _, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
 	if err != nil {
 		t.Fatalf("чтение: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestAnalysisCache_ПротухшаяНеОтдаётся(t *testing.T) {
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "old", []byte(`{"score":50}`), CacheStrengthBase)
 	agePastTTL(t, ctx, "old", cacheTTL+24*time.Hour)
 
-	if _, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "old"); err != nil || found {
+	if _, _, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "old"); err != nil || found {
 		t.Errorf("found=%v err=%v — протухшая запись не должна отдаваться", found, err)
 	}
 }
@@ -135,7 +135,7 @@ func TestAnalysisCache_ЧисткаУдаляетТолькоПротухшее(
 	if n != 1 {
 		t.Errorf("удалено %d записей, ждали 1", n)
 	}
-	if _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindScan, "fresh"); !found {
+	if _, _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindScan, "fresh"); !found {
 		t.Error("свежая запись пропала после чистки")
 	}
 }
@@ -148,7 +148,7 @@ func TestAnalysisCache_СчётчикПопаданий(t *testing.T) {
 
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindMeal, "sha", []byte(`{"a":1}`), CacheStrengthBase)
 	for i := 0; i < 3; i++ {
-		if _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindMeal, "sha"); !found {
+		if _, _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindMeal, "sha"); !found {
 			t.Fatalf("попадание %d не сработало", i+1)
 		}
 	}
@@ -175,7 +175,7 @@ func TestAnalysisCache_СильныйВытесняетСлабый(t *testing.T
 		t.Fatalf("запись сильного ответа: %v", err)
 	}
 
-	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	got, _, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
 	if err != nil {
 		t.Fatalf("чтение: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestAnalysisCache_СлабыйНеЗатираетСильный(t *testing
 		t.Fatalf("запись слабого ответа не должна быть ошибкой: %v", err)
 	}
 
-	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	got, _, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
 	if err != nil {
 		t.Fatalf("чтение: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestAnalysisCache_ПриРавнойСилеПобеждаетСвежий(
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":10}`), CacheStrengthStrong)
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":20}`), CacheStrengthStrong)
 
-	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	got, _, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
 	if err != nil {
 		t.Fatalf("чтение: %v", err)
 	}
@@ -226,8 +226,8 @@ func TestAnalysisCache_ОтклонённаяЗаписьНеСбрасывае�
 	uid := mkUser(t, s, ctx, 7011)
 
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthStrong)
-	_, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
-	_, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	_, _, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	_, _, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
 
 	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`), CacheStrengthBase)
 

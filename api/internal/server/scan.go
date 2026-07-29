@@ -221,7 +221,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// и без списания попытки. Проверяем ДО scan_started: попадание в кэш — это не
 	// новая проверка, а показ уже сделанной, и в воронке сканов ему делать нечего.
 	sha := imagesSHA(images)
-	if cached, hit := s.cachedScanResponse(ctx, u.ID, sha); hit {
+	if cached, strength, hit := s.cachedScanResponse(ctx, u.ID, sha); hit {
 		// Остаток проверок — из АКТУАЛЬНОГО состояния пользователя, а не из кэша:
 		// за время между прогонами он мог потратить попытки на другие сканы или
 		// оформить подписку.
@@ -229,6 +229,19 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", map[string]any{"status": cached.Status})
 		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
 		writeJSON(w, http.StatusOK, cached)
+
+		// Разморозка: запись слабая, а детекторы говорят, что на этом кадре дешёвая
+		// модель врёт. Ответ уже отдан — сильная модель переписывает запись фоном, и
+		// следующее открытие того же фото покажет правду.
+		//
+		// Кадры отдавать в горутину безопасно: images — выход imaging.Normalize, то есть
+		// собственные буферы в куче, не окна во временные файлы multipart (их подчищает
+		// RemoveAll сразу после обработчика).
+		if strength == store.CacheStrengthBase && s.pipe != nil {
+			if dens := measureImages(images); suspiciousCachedScan(cached, dens, s.cfg.ScanForceEscalateFineLoss) {
+				go s.thawScanCache(u.ID, sha, images, cached.Score)
+			}
+		}
 		return
 	}
 
@@ -331,6 +344,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// Сработал — фиксируем частоту/эскалацию, чтобы через неделю посмотреть на
 		// реальном потоке, как часто модель придумывает состав/КБЖУ.
 		scanOkProps := map[string]any{"score": res.Score}
+		addDetectorProps(scanOkProps, res)
 		if res.GateMismatch {
 			scanOkProps["gate_mismatch"] = true
 			scanOkProps["gate_escalated"] = res.GateEscalated

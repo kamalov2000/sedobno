@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sostav/api/internal/imaging"
 )
 
 // Config — вся конфигурация приложения. Секреты только из env, в git не попадают.
@@ -55,6 +57,11 @@ type Config struct {
 	// ниже порога) — один повторный вызов на более сильной vision-модели Claude.
 	ExtractFallbackModel string  // "" — fallback выключен
 	ExtractConfidenceMin float64 // порог confidence основной модели (0<x≤1)
+	// ScanForceEscalateFineLoss — порог форс-эскалации по плотности мелкого текста
+	// на кадре (pipeline/hallucination.go). 0 выключает её — это и аварийный откат
+	// без пересборки. Значение на шкале imaging.Measure; калибруется по телеметрии
+	// (fine_loss пишется в scan_ok на каждом скане).
+	ScanForceEscalateFineLoss float64
 
 	// MealVisionModel — vision-модель модуля калорий по фото (feature/calories).
 	// "" — использовать дефолтную vision-модель выбранного провайдера (Haiku у
@@ -225,6 +232,14 @@ func MustLoad() *Config {
 	cfg.ExtractConfidenceMin = optFloat(opt("EXTRACT_CONFIDENCE_MIN", "0.5"), 0.5, &invalid, "EXTRACT_CONFIDENCE_MIN")
 	if cfg.ExtractConfidenceMin > 1 {
 		invalid = append(invalid, "EXTRACT_CONFIDENCE_MIN (ожидается 0<x≤1)")
+	}
+	// Порог форс-эскалации. Ноль ДОПУСТИМ и означает «выключено» — поэтому разбираем
+	// не через optRate (там 0 трактуется как «не задано» и подменяется дефолтом).
+	cfg.ScanForceEscalateFineLoss = optFloat(
+		opt("SCAN_FORCE_ESCALATE_FINE_LOSS", fmt.Sprintf("%g", imaging.ForceEscalateFineLoss)),
+		imaging.ForceEscalateFineLoss, &invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS")
+	if cfg.ScanForceEscalateFineLoss < 0 || cfg.ScanForceEscalateFineLoss > 1 {
+		invalid = append(invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS (ожидается 0≤x≤1, 0 — выключено)")
 	}
 
 	// FEEDBACK_CHAT_ID — обязателен: без него обратная связь молча теряется. chat_id

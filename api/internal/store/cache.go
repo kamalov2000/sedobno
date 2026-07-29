@@ -46,21 +46,23 @@ const (
 // found=false — записи нет или она старше TTL. Попадание отмечается счётчиком
 // hit_count/last_hit_at: по нему видно, насколько кэш вообще востребован, без
 // отдельной телеметрии.
-func (s *Store) GetAnalysisCache(ctx context.Context, userID int64, kind, sha string) (result []byte, found bool, err error) {
+// Возвращаемый strength нужен вызывающему, чтобы решить, не стоит ли перепроверить
+// слабую запись сильной моделью (фоновая разморозка в server/analysis_cache.go).
+func (s *Store) GetAnalysisCache(ctx context.Context, userID int64, kind, sha string) (result []byte, strength int16, found bool, err error) {
 	const q = `
 UPDATE analysis_cache
    SET hit_count = hit_count + 1, last_hit_at = now()
  WHERE user_id = $1 AND kind = $2 AND image_sha = $3
    AND created_at > now() - $4::interval
-RETURNING result`
-	err = s.pool.QueryRow(ctx, q, userID, kind, sha, cacheTTL.String()).Scan(&result)
+RETURNING result, strength`
+	err = s.pool.QueryRow(ctx, q, userID, kind, sha, cacheTTL.String()).Scan(&result, &strength)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
+		return nil, 0, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
-	return result, true, nil
+	return result, strength, true, nil
 }
 
 // PutAnalysisCache сохраняет результат разбора. Конфликт по ключу разрешается СИЛОЙ
