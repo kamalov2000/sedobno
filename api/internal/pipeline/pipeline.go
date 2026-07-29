@@ -118,6 +118,16 @@ type Result struct {
 	GateMismatch          bool `json:"-"` // хоть одно несовпадение (ингредиент или КБЖУ)
 	GateEscalated         bool `json:"-"` // штрафной ингредиент не подтвердился → эскалация
 	GateNutritionMismatch bool `json:"-"` // числа КБЖУ не подтвердились → nutrition скрыт
+	// StrongAnswer — ИТОГОВОЕ извлечение пришло от сильной модели (Sonnet-fallback), а
+	// не от основной. Это НЕ то же самое, что «сильную модель звали»: её могли позвать
+	// и отбросить её результат (ошибка вызова, пустой состав) — тогда отвечает всё ещё
+	// основная модель, и флаг остаётся false.
+	//
+	// Нужен кэшу разбора: сильный ответ вытесняет по тому же фото слабый, слабый поверх
+	// сильного не пишется (store.PutAnalysisCache). Ретрай КБЖУ сюда НЕ входит — он
+	// дочитывает только числа, а список ингредиентов остаётся от основной модели, и
+	// ровно он определяет риск выдуманного состава.
+	StrongAnswer bool `json:"-"`
 	// Transcription — дословная переписка состава, с которой гейт сверяет ингредиенты.
 	// Нужна для разбора срабатываний: без неё «гейт сработал» нечем объяснить, а по
 	// прод-логам фото уже не поднять (мы их не храним).
@@ -224,6 +234,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		}
 		ext = e
 		strongUsed = true
+		res.StrongAnswer = true
 		res.Provider = p.fallback.Name() // диагностика: мультикадр ушёл на сильную модель
 	} else {
 		e, u1, err := p.extractEntry(ctx, images)
@@ -247,6 +258,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			} else if ext2.IsLabel && len(ext2.Ingredients) > 0 {
 				p.log.Info("fallback-извлечение выручило неуверенный кейс", "model", p.fallback.Name())
 				ext = ext2
+				res.StrongAnswer = true
 			}
 		}
 	}
@@ -358,6 +370,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			res.GateEscalated = true
 			ext = ext2
 			strongUsed = true
+			res.StrongAnswer = true
 			res.Provider = p.fallback.Name()
 			res.Confidence = ext.Confidence
 			res.LowConfidence = p.lowConfidence(ext)

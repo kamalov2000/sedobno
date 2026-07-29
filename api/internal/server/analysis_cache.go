@@ -9,6 +9,7 @@ import (
 
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
+	"github.com/sostav/api/internal/pipeline"
 	"github.com/sostav/api/internal/store"
 )
 
@@ -76,14 +77,27 @@ func (s *Server) cachedScanResponse(ctx context.Context, userID int64, sha strin
 	return resp, true
 }
 
+// scanCacheStrength — сила ответа сканера для кэша. Сильный только тот разбор, чьё
+// ИТОГОВОЕ извлечение пришло от Sonnet: звали сильную модель или нет — неважно, важно,
+// чей ответ мы показываем.
+func scanCacheStrength(res *pipeline.Result) int16 {
+	if res != nil && res.StrongAnswer {
+		return store.CacheStrengthStrong
+	}
+	return store.CacheStrengthBase
+}
+
 // writeAndCacheScan отвечает клиенту и кладёт ответ в кэш. Статус error сюда не
 // попадает намеренно (обработчик отвечает на него writeError): сбой пайплайна —
 // состояние преходящее, замораживать его на 90 дней нельзя, иначе одна сетевая
 // неудача навсегда сломала бы конкретное фото.
-func (s *Server) writeAndCacheScan(ctx context.Context, w http.ResponseWriter, userID int64, sha string, resp scanResponse) {
+//
+// strength решает конфликт с уже лежащей записью: сильный ответ вытесняет слабый,
+// слабый поверх сильного не пишется (store.PutAnalysisCache).
+func (s *Server) writeAndCacheScan(ctx context.Context, w http.ResponseWriter, userID int64, sha string, strength int16, resp scanResponse) {
 	body, err := json.Marshal(resp)
 	if err == nil {
-		if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindScan, sha, body); perr != nil {
+		if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindScan, sha, body, strength); perr != nil {
 			s.log.Warn("scan: запись кэша разбора", "err", perr, "user", userID)
 		}
 	}
@@ -108,13 +122,20 @@ func (s *Server) cachedMealResult(ctx context.Context, userID int64, sha string)
 	return &res, true
 }
 
-// cacheMealResult сохраняет разбор еды. Как и у сканера, статус error не кэшируется.
+// cacheMealResult сохраняет разбор еды. Как и у сканера, статус error не кэшируется,
+// а сила ответа решает конфликт с уже лежащей записью. У калорий признак прямой —
+// res.Escalated: разбор целиком выполнила сильная модель, частичной подмены, как у
+// сканера, здесь нет.
 func (s *Server) cacheMealResult(ctx context.Context, userID int64, sha string, res *meal.Result) {
 	body, err := json.Marshal(res)
 	if err != nil {
 		return
 	}
-	if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindMeal, sha, body); perr != nil {
+	strength := store.CacheStrengthBase
+	if res.Escalated {
+		strength = store.CacheStrengthStrong
+	}
+	if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindMeal, sha, body, strength); perr != nil {
 		s.log.Warn("meal: запись кэша разбора", "err", perr, "user", userID)
 	}
 }

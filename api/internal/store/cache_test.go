@@ -17,7 +17,7 @@ func TestAnalysisCache_ТотЖеФайлТотЖеОтвет(t *testing.T) {
 	uid := mkUser(t, s, ctx, 7001)
 
 	want := []byte(`{"status":"ok","score":38}`)
-	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "abc123", want); err != nil {
+	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "abc123", want, CacheStrengthBase); err != nil {
 		t.Fatalf("запись в кэш: %v", err)
 	}
 	got, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "abc123")
@@ -57,7 +57,7 @@ func TestAnalysisCache_КлючРазделяетЮзеровИСканеры(t 
 	alice := mkUser(t, s, ctx, 7002)
 	bob := mkUser(t, s, ctx, 7003)
 
-	if err := s.PutAnalysisCache(ctx, alice, CacheKindScan, "sha", []byte(`{"a":1}`)); err != nil {
+	if err := s.PutAnalysisCache(ctx, alice, CacheKindScan, "sha", []byte(`{"a":1}`), CacheStrengthBase); err != nil {
 		t.Fatalf("запись: %v", err)
 	}
 
@@ -86,8 +86,8 @@ func TestAnalysisCache_ПовторнаяЗаписьПерезаписывае�
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 7004)
 
-	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`))
-	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`)); err != nil {
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`), CacheStrengthBase)
+	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthBase); err != nil {
 		t.Fatalf("перезапись: %v", err)
 	}
 	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
@@ -112,7 +112,7 @@ func TestAnalysisCache_ПротухшаяНеОтдаётся(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 7005)
 
-	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "old", []byte(`{"score":50}`))
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "old", []byte(`{"score":50}`), CacheStrengthBase)
 	agePastTTL(t, ctx, "old", cacheTTL+24*time.Hour)
 
 	if _, found, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "old"); err != nil || found {
@@ -124,8 +124,8 @@ func TestAnalysisCache_ЧисткаУдаляетТолькоПротухшее(
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 7006)
 
-	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "fresh", []byte(`{"a":1}`))
-	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "stale", []byte(`{"a":2}`))
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "fresh", []byte(`{"a":1}`), CacheStrengthBase)
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "stale", []byte(`{"a":2}`), CacheStrengthBase)
 	agePastTTL(t, ctx, "stale", cacheTTL+time.Hour)
 
 	n, err := s.PurgeAnalysisCache(ctx)
@@ -146,7 +146,7 @@ func TestAnalysisCache_СчётчикПопаданий(t *testing.T) {
 	s, ctx := newStore(t)
 	uid := mkUser(t, s, ctx, 7007)
 
-	_ = s.PutAnalysisCache(ctx, uid, CacheKindMeal, "sha", []byte(`{"a":1}`))
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindMeal, "sha", []byte(`{"a":1}`), CacheStrengthBase)
 	for i := 0; i < 3; i++ {
 		if _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindMeal, "sha"); !found {
 			t.Fatalf("попадание %d не сработало", i+1)
@@ -160,6 +160,96 @@ func TestAnalysisCache_СчётчикПопаданий(t *testing.T) {
 	}
 	if hits != 3 {
 		t.Errorf("hit_count = %d, ждали 3", hits)
+	}
+}
+
+// Главное свойство правила приоритета: разбор, прошедший эскалацию на Sonnet,
+// вытесняет закэшированный ответ основной модели. Это ровно кейс онигири — первым
+// пришёл выдуманный Haiku-ответ (81), верным был эскалированный (38).
+func TestAnalysisCache_СильныйВытесняетСлабый(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7008)
+
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`), CacheStrengthBase)
+	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthStrong); err != nil {
+		t.Fatalf("запись сильного ответа: %v", err)
+	}
+
+	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	assertSameJSON(t, got, []byte(`{"score":38}`))
+	assertStrength(t, ctx, "sha", CacheStrengthStrong)
+}
+
+// Обратное направление: слабый ответ поверх сильного НЕ пишется. Иначе гонка двух
+// параллельных отправок одного файла решалась бы порядком записи, и Haiku мог бы
+// затереть уже полученный ответ Sonnet.
+func TestAnalysisCache_СлабыйНеЗатираетСильный(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7009)
+
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthStrong)
+	if err := s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`), CacheStrengthBase); err != nil {
+		t.Fatalf("запись слабого ответа не должна быть ошибкой: %v", err)
+	}
+
+	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	assertSameJSON(t, got, []byte(`{"score":38}`))
+	assertStrength(t, ctx, "sha", CacheStrengthStrong)
+}
+
+// При РАВНОЙ силе побеждает свежий: это случай прогона после истечения TTL, где
+// старый ответ уже не отдаётся и держать его незачем.
+func TestAnalysisCache_ПриРавнойСилеПобеждаетСвежий(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7010)
+
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":10}`), CacheStrengthStrong)
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":20}`), CacheStrengthStrong)
+
+	got, _, err := s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	if err != nil {
+		t.Fatalf("чтение: %v", err)
+	}
+	assertSameJSON(t, got, []byte(`{"score":20}`))
+}
+
+// Отклонённая запись не должна побочно сбрасывать счётчик попаданий: hit_count —
+// метрика востребованности кэша, и её нельзя обнулять неудавшейся перезаписью.
+func TestAnalysisCache_ОтклонённаяЗаписьНеСбрасываетСчётчик(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7011)
+
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":38}`), CacheStrengthStrong)
+	_, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+	_, _, _ = s.GetAnalysisCache(ctx, uid, CacheKindScan, "sha")
+
+	_ = s.PutAnalysisCache(ctx, uid, CacheKindScan, "sha", []byte(`{"score":81}`), CacheStrengthBase)
+
+	var hits int
+	if err := testPool.QueryRow(ctx,
+		`SELECT hit_count FROM analysis_cache WHERE image_sha = 'sha'`).Scan(&hits); err != nil {
+		t.Fatalf("чтение счётчика: %v", err)
+	}
+	if hits != 2 {
+		t.Errorf("hit_count = %d, ждали 2 (отклонённая запись счётчик не трогает)", hits)
+	}
+}
+
+func assertStrength(t *testing.T, ctx context.Context, sha string, want int16) {
+	t.Helper()
+	var got int16
+	if err := testPool.QueryRow(ctx,
+		`SELECT strength FROM analysis_cache WHERE image_sha = $1`, sha).Scan(&got); err != nil {
+		t.Fatalf("чтение strength: %v", err)
+	}
+	if got != want {
+		t.Errorf("strength = %d, ждали %d", got, want)
 	}
 }
 

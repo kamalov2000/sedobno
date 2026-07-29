@@ -257,6 +257,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	s.saveScan(ctx, u.ID, res, len(images))
 
+	// Сила ответа для кэша: считается ОДИН раз здесь и передаётся во все ветки —
+	// исход (ok / не еда / состава нет) на неё не влияет, влияет только то, чья модель
+	// дала итоговое извлечение.
+	strength := scanCacheStrength(res)
+
 	switch {
 	case perr != nil || res.Status == pipeline.StatusError:
 		s.log.Error("scan: пайплайн", "err", perr, "user", u.ID)
@@ -266,7 +271,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusMixedFrames:
 		// Кадры от разных продуктов — попытку не списываем, просим снимать по одному.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_mixed_frames", nil)
-		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Кадры от разных продуктов. Проверяйте по одному продукту за раз — несколько кадров нужны, только если состав одного продукта не влез в один снимок.",
 			ScansLeft: remainingScans(u), // не списано
@@ -281,7 +286,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		for i, raw := range res.IngredientsRaw {
 			ings = append(ings, scanIngredientView{Raw: raw, Position: i + 1})
 		}
-		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:      res.Status,
 			Ingredients: ings,
 			Nutrition:   nutritionView(res.Nutrition),
@@ -293,7 +298,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusNotFood:
 		// Косметика/химия/лекарство — оценку съедобности не считаем, попытку не списываем.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", nil)
-		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Похоже, это не еда — косметика, бытовая химия или другое несъедобное. Оценку состава для таких продуктов не считаем.",
 			ScansLeft: remainingScans(u), // не списано
@@ -301,7 +306,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == pipeline.StatusLabelNotFound:
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found", nil)
-		s.writeAndCacheScan(ctx, w, u.ID, sha, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Reason:    res.Reason,
 			Message:   labelNotFoundMessage(res.Reason),
@@ -337,7 +342,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		if nerr != nil {
 			s.log.Warn("scan: подсчёт номера проверки", "err", nerr, "user", u.ID)
 		}
-		s.writeAndCacheScan(ctx, w, u.ID, sha, buildScanResponse(res, left, num))
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, buildScanResponse(res, left, num))
 	}
 }
 

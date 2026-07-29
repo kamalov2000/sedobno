@@ -29,6 +29,12 @@ const (
 	// CacheKindMeal — счётчик калорий по фото (POST /api/meals).
 	CacheKindMeal = "meal"
 
+	// CacheStrengthBase — разбор обычной vision-моделью, без эскалации.
+	CacheStrengthBase int16 = 0
+	// CacheStrengthStrong — разбор прошёл через сильную модель (Sonnet-fallback).
+	// Такой ответ вытесняет из кэша слабый по тому же ключу (см. PutAnalysisCache).
+	CacheStrengthStrong int16 = 1
+
 	// cacheTTL — срок жизни записи. 90 дней, а не «навсегда»: за этим горизонтом
 	// рецептура продукта на полке успевает смениться, и отдавать старый разбор как
 	// текущий уже нечестно. Проверяется на чтении (см. GetAnalysisCache), так что
@@ -57,18 +63,30 @@ RETURNING result`
 	return result, true, nil
 }
 
-// PutAnalysisCache сохраняет результат разбора. Повторная запись по тому же ключу
-// ПЕРЕЗАПИСЫВАЕТ результат и сбрасывает created_at: сюда попадают только реально
-// выполненные прогоны (на попадании в кэш пайплайн не запускается), то есть это
-// либо первый разбор, либо разбор после истечения TTL — в обоих случаях свежий
-// ответ вернее старого.
-func (s *Store) PutAnalysisCache(ctx context.Context, userID int64, kind, sha string, result []byte) error {
+// PutAnalysisCache сохраняет результат разбора. Конфликт по ключу разрешается СИЛОЙ
+// ответа, а не порядком записи: сильный (прошедший эскалацию на Sonnet) вытесняет
+// слабый, слабый поверх сильного НЕ пишется, при равной силе побеждает свежий.
+//
+// Почему не «последний победил», как было сначала: у одного ключа пайплайн отрабатывает
+// по сути один раз (повторный скан до него не доходит — его снимает кэш), поэтому
+// «последний» на практике означает «первый». В кейсе онигири первым пришёл выдуманный
+// Haiku-ответ на 81 балл, а верный — эскалацией на Sonnet (38). Замораживать полагалось
+// бы именно враньё.
+//
+// Где это правило реально срабатывает: (1) двойная отправка одного файла — оба запроса
+// промахиваются мимо кэша, бегут параллельно, и один может эскалировать, а другой нет;
+// (2) прогон после истечения TTL. Само по себе правило УЖЕ ЗАМОРОЖЕННЫЙ слабый ответ не
+// разморозит — для этого нужен повторный разбор, а его снимает кэш (см. REVIEW/backlog:
+// форс-эскалация и фоновая перепроверка слабых записей).
+func (s *Store) PutAnalysisCache(ctx context.Context, userID int64, kind, sha string, result []byte, strength int16) error {
 	const q = `
-INSERT INTO analysis_cache (user_id, kind, image_sha, result)
-VALUES ($1, $2, $3, $4)
+INSERT INTO analysis_cache (user_id, kind, image_sha, result, strength)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (user_id, kind, image_sha)
-DO UPDATE SET result = EXCLUDED.result, created_at = now(), hit_count = 0, last_hit_at = NULL`
-	_, err := s.pool.Exec(ctx, q, userID, kind, sha, result)
+DO UPDATE SET result = EXCLUDED.result, strength = EXCLUDED.strength,
+              created_at = now(), hit_count = 0, last_hit_at = NULL
+WHERE EXCLUDED.strength >= analysis_cache.strength`
+	_, err := s.pool.Exec(ctx, q, userID, kind, sha, result, strength)
 	return err
 }
 
