@@ -102,8 +102,19 @@ type Config struct {
 	SubscriptionStarsPrice int // цена подписки в Telegram Stars (§9)
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
-	SBPEnabled        bool         // включён ли канал СБП (при false эндпоинты /payments/sbp/* выключены)
-	SBPPriceRub       int          // цена месячной подписки в рублях (default 249, как на пейволле)
+	SBPEnabled bool // включён ли канал СБП (при false эндпоинты /payments/sbp/* выключены)
+	// SBPRecurrentEnabled — просить ли ЮKassa сохранить способ оплаты (save_payment_method),
+	// то есть заводить ли автопродление у НОВЫХ покупок. Default true — боевое поведение.
+	//
+	// Отдельный тумблер от SBPEnabled, потому что это разные отказы. Сохранение платёжных
+	// данных магазин получает у ЮKassa отдельным согласованием, и до него запрос с
+	// save_payment_method магазин может отвергнуть — а отвергается при этом ВЕСЬ платёж,
+	// вместе с обычной разовой покупкой. Без этого тумблера единственным откатом был бы
+	// SBP_ENABLED=false, то есть выключить платный канал целиком ради несогласованной
+	// его части. При false покупки идут разовыми: способ не сохраняется, next_charge_at
+	// пуст, подписка живёт до конца оплаченного периода — ровно грандфатеринг оферты.
+	SBPRecurrentEnabled bool
+	SBPPriceRub         int          // цена месячной подписки в рублях (default 249, как на пейволле)
 	SBPAnnualPriceRub int          // цена годовой подписки в рублях (default 2490; только СБП/карта)
 	YooKassaShopID    string       // shopId для Basic-auth к API ЮKassa
 	YooKassaSecretKey string       // секретный ключ для Basic-auth к API ЮKassa
@@ -295,6 +306,7 @@ func MustLoad() *Config {
 	cfg.MealRateLimit = optIntOptional(opt("MEAL_RATE_LIMIT", "0"), &invalid, "MEAL_RATE_LIMIT")
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
+	cfg.SBPRecurrentEnabled = optBool(opt("SBP_RECURRENT_ENABLED", "true"))
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
 	cfg.SBPAnnualPriceRub = optInt(opt("SBP_ANNUAL_PRICE_RUB", "2490"), 2490, &invalid, "SBP_ANNUAL_PRICE_RUB")
 	cfg.YooKassaAPIBase = opt("YOOKASSA_API_BASE", "https://api.yookassa.ru/v3")

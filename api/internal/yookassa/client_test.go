@@ -111,6 +111,34 @@ func TestCreatePayment_SaveMethod(t *testing.T) {
 	}
 }
 
+// SavePaymentMethod=false → ключа в теле НЕТ вовсе (не false). Это рычаг отката
+// SBP_RECURRENT_ENABLED: пока ЮKassa не согласовала сохранение платёжных данных,
+// запрос должен выглядеть как обычная разовая оплата. Отправленный save_payment_method:false
+// формально то же самое, но лишний ключ в теле — лишний повод для отказа на их стороне.
+func TestCreatePayment_БезСохраненияСпособа(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"p2","status":"pending","paid":false,
+			"confirmation":{"type":"redirect","confirmation_url":"https://pay/2"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := New(srv.URL, "shop", "key")
+	if _, err := c.CreatePayment(context.Background(), CreateInput{
+		AmountRub: 249, IdempotenceKey: "k2", SavePaymentMethod: false,
+	}); err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(gotBody), &body)
+	if _, ok := body["save_payment_method"]; ok {
+		t.Errorf("save_payment_method просочился в тело при выключенном рекурренте: %s", gotBody)
+	}
+}
+
 // Автосписание: payment_method_id в теле, confirmation отсутствует (без плательщика),
 // capture=true; ключ идемпотентности проброшен.
 func TestCreateAutoPayment(t *testing.T) {

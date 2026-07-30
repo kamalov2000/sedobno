@@ -68,7 +68,9 @@ func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 		Metadata:  map[string]string{"user_id": strconv.FormatInt(uid, 10), "plan": normPlan},
 		// Рекуррент: сохраняем способ оплаты для автопродления. Grandfathering: способ
 		// сохраняется только у НОВЫХ покупок — старые разовые записи автопродления не получат.
-		SavePaymentMethod: true,
+		// Тумблером выключается, пока ЮKassa не согласовала сохранение платёжных данных:
+		// при false покупка идёт обычной разовой, а не падает целиком (см. SBPRecurrentEnabled).
+		SavePaymentMethod: s.cfg.SBPRecurrentEnabled,
 		IdempotenceKey:    randIdemKey(),
 	})
 	if err != nil {

@@ -97,6 +97,15 @@ func main() {
 	// внутри сам проверяет флаг и молча выходит, если он выключен.
 	go srv.StartPoolSampler(ctx)
 
+	// Режим платного канала — в лог на старте, той же логикой, что и режим сканера:
+	// «автопродление включено или нет» решается переменной окружения и на глаз из
+	// работающего сервиса не видно, а спрашивать об этом будут в момент разбирательства
+	// с деньгами. Дешевле строчка на старте, чем гадание по .env постфактум.
+	if cfg.SBPEnabled {
+		log.Info("pay: канал СБП/карта", "recurrent", cfg.SBPRecurrentEnabled,
+			"price_rub", cfg.SBPPriceRub, "annual_price_rub", cfg.SBPAnnualPriceRub)
+	}
+
 	go func() {
 		log.Info("api запущен", "addr", httpSrv.Addr, "llm_provider", cfg.LLMProvider)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
