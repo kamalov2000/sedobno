@@ -141,6 +141,22 @@ type Result struct {
 	// Нужна для разбора срабатываний: без неё «гейт сработал» нечем объяснить, а по
 	// прод-логам фото уже не поднять (мы их не храним).
 	Transcription string `json:"-"`
+
+	// ScoreApproximate — два независимых прочтения плотной этикетки сильной моделью дали
+	// РАЗНЫЕ наборы штрафных добавок (selfcheck.go). Балл посчитан по первому из них и
+	// показывается как обычно, но интерфейс обязан сказать, что на этой этикетке он
+	// приблизителен: молчать одним числом там, где модель не воспроизводит саму себя, —
+	// то же враньё, что и показывать выдуманный состав.
+	//
+	// Единственное поле self-consistency, которое уходит клиенту; остальные — телеметрия.
+	ScoreApproximate bool `json:"score_approximate,omitempty"`
+	// Поля телеметрии self-consistency (selfcheck.go): нужны, чтобы на живом трафике
+	// увидеть, КАК ЧАСТО сильная модель расходится сама с собой и на чём именно, —
+	// без этого «расхождение» осталось бы такой же догадкой, как первый порог fine_loss.
+	SelfCheckRan   bool     `json:"-"` // контрольное прочтение состоялось и сравнено
+	SelfCheckScore int      `json:"-"` // балл контрольного прочтения (первое — Score)
+	SelfCheckOnlyA []string `json:"-"` // штрафные коды только в первом прочтении
+	SelfCheckOnlyB []string `json:"-"` // штрафные коды только в контрольном
 }
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
@@ -152,7 +168,12 @@ type Pipeline struct {
 	// её полностью (пайплайн ведёт себя как до правки), что нужно и тестам, и
 	// аварийному откату без пересборки — через SCAN_FORCE_ESCALATE_FINE_LOSS=0.
 	forceFineLoss float64
-	matcher       *dict.Matcher
+	// selfConsistency — делать ли ВТОРОЕ контрольное прочтение на кадрах, которые увела
+	// на сильную модель форс-эскалация (selfcheck.go). Только на них: это ~12% сканов,
+	// и именно там модель расходится сама с собой. false — пайплайн ведёт себя как до
+	// правки (аварийный откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
+	selfConsistency bool
+	matcher         *dict.Matcher
 	scorer        *scoring.Config
 	byCode        map[string]dict.Additive
 	candidates    []llm.Candidate
@@ -192,6 +213,11 @@ func (p *Pipeline) SetExtractFallback(fb llm.LLMProvider, confMin float64) {
 // imaging.Measure: числа несравнимы между реализациями, калибровать только по
 // телеметрии.
 func (p *Pipeline) SetForceEscalateFineLoss(v float64) { p.forceFineLoss = v }
+
+// SetSelfConsistency включает прицельную перепроверку плотных этикеток вторым
+// параллельным вызовом сильной модели (selfcheck.go). Работает только там, где уже
+// сработала форс-эскалация, и только при подключённом fallback-провайдере.
+func (p *Pipeline) SetSelfConsistency(v bool) { p.selfConsistency = v }
 
 // New собирает пайплайн: строит матчер, индекс по коду и список кандидатов для
 // фазы 2 из словаря items. maxConcurrent — семафор на LLM-вызовы.
@@ -260,8 +286,29 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			"fine_loss", dens.FineLoss, "порог", p.forceFineLoss, "model", p.fallback.Name())
 	}
 
+	// control — контрольное прочтение ТОГО ЖЕ кадра той же сильной моделью (прицельный
+	// self-consistency, selfcheck.go). Заполняется только на форс-эскалации: сравнивать
+	// прочтения имеет смысл там, где детекторы уже сказали «этикетка на пределе».
+	// Сравнение — после фазы 2, когда у обоих есть набор штрафных добавок.
+	var control pairExtraction
+
 	if (len(images) > 1 || forceStrong) && p.fallback != nil {
-		e, uf, err := p.extractEntryWith(ctx, p.fallback, images)
+		var (
+			e   *llm.Extraction
+			uf  llm.Usage
+			err error
+		)
+		if forceStrong && p.selfConsistency {
+			// Два вызова параллельно: контрольный не добавляет латентности, только цену
+			// (+0.54 ₽ на скан в среднем по потоку — он идёт лишь на ~12% кадров).
+			var primary pairExtraction
+			primary, control, uf, err = p.extractPair(ctx, p.fallback, images)
+			if err == nil {
+				e, err = primary.ext, primary.err
+			}
+		} else {
+			e, uf, err = p.extractEntryWith(ctx, p.fallback, images)
+		}
 		fbUsage = fbUsage.Add(uf)
 		if err != nil {
 			if errors.Is(err, ErrBusy) {
@@ -397,8 +444,22 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		}
 	}
 
-	// Фаза 2 — нормализация по словарю (+ добор LLM по несматченным).
-	recs, u2, err := p.normalize(ctx, ext.Ingredients)
+	// Фаза 2 — нормализация по словарю (+ добор LLM по несматченным). Контрольное
+	// прочтение проходит её тем же путём и ПАРАЛЛЕЛЬНО (selfcheck.go): фаза 2 — это ещё
+	// один LLM-вызов, и последовательный второй заход снова растил бы латентность
+	// флагнутого скана, ради которой пара вызовов фазы 1 и делалась параллельной.
+	var (
+		recs, recsControl []rec
+		u2                llm.Usage
+		err               error
+	)
+	if usableControl(control) {
+		var u2b llm.Usage
+		recs, u2, err, recsControl, u2b = p.normalizePair(ctx, ext.Ingredients, control.ext.Ingredients)
+		tUsage = tUsage.Add(u2b)
+	} else {
+		recs, u2, err = p.normalize(ctx, ext.Ingredients)
+	}
 	tUsage = tUsage.Add(u2)
 	if err != nil {
 		p.log.Warn("фаза 2: добор LLM не удался, продолжаем без него", "err", err)
@@ -486,13 +547,9 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.Nutrition = nil
 	}
 
-	items := make([]scoring.Ingredient, 0, len(recs))
+	items := scoringItems(recs)
 	res.Matched = make([]MatchedIngredient, 0, len(recs))
 	for _, r := range recs {
-		items = append(items, scoring.Ingredient{
-			Code: r.code, Category: r.category, Name: r.name, VerdictShort: r.verdictShort,
-			VerdictFull: r.verdictFull, Risk: r.risk, Position: r.pos, Matched: r.matched,
-		})
 		res.Matched = append(res.Matched, MatchedIngredient{
 			Raw: r.raw, Code: r.code, Name: r.name, Category: r.category,
 			Risk: r.risk, Position: r.pos, Matched: r.matched,
@@ -506,6 +563,13 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	res.Score = sc.Score
 	res.Flags = sc.Flags
 	res.Breakdown = sc.Breakdown
+
+	// Сравнение с контрольным прочтением (selfcheck.go). Стоит ПОСЛЕ фазы 3 и ничего в
+	// ней не меняет: балл остаётся первым прочтением, второе только решает, честно ли
+	// показывать его как точное число.
+	if usableControl(control) {
+		p.applySelfCheck(res, sc, recsControl)
+	}
 
 	// Фаза 4 — объяснение (строго из вердиктов). Отключается флагом (EXPLAIN_ENABLED,
 	// по умолчанию выкл в проде): фронт объяснение не показывает, а вызов стоит денег на

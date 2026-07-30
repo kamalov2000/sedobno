@@ -51,12 +51,15 @@ func measureFile(t *testing.T, path string) Density {
 	return d
 }
 
-// Онигири — кадр, на котором дешёвая модель четыре раза подряд СОЧИНИЛА состав
-// (81/38/68/74, верен только эскалированный). Он обязан оставаться самым «мелким»
-// в корпусе: если правка ресайза или порога это сломает, форс-эскалация перестанет
-// на нём срабатывать молча.
+// onigiriFile — тот самый кадр, на котором дешёвая модель четыре раза подряд
+// СОЧИНИЛА состав (81/38/68/74, верен только эскалированный). Лежит в общем корпусе
+// этикеток, а не в летописи беты: это регресс-фикстура, а не снимок экрана.
+const onigiriFile = "dense_onigiri_crab.jpg"
+
+// Онигири обязан оставаться самым «мелким» в корпусе: если правка ресайза или порога
+// это сломает, форс-эскалация перестанет на нём срабатывать молча.
 func TestMeasure_ОнигириСамыйМелкийВКорпусе(t *testing.T) {
-	onigiri := filepath.Join(corpusDir, "_beta_findings", "2026-07-27_onigiri-snezhny-krab__beta-scan-81-38-68-74.jpg")
+	onigiri := filepath.Join(corpusDir, "labels", onigiriFile)
 	got := measureFile(t, onigiri)
 
 	if got.FineLoss < ForceEscalateFineLoss {
@@ -64,19 +67,23 @@ func TestMeasure_ОнигириСамыйМелкийВКорпусе(t *testing
 			got.FineLoss, ForceEscalateFineLoss)
 	}
 
-	// И он же должен быть максимумом среди обычных этикеток: метрика обязана
-	// РАЗДЕЛЯТЬ, а не просто выдавать большое число на всём подряд.
+	// И он же должен быть максимумом среди ОСТАЛЬНЫХ этикеток корпуса: метрика обязана
+	// РАЗДЕЛЯТЬ, а не просто выдавать большое число на всём подряд. Сам онигири из
+	// базовой линии исключаем — иначе сравнение вырождается в «не больше себя».
 	labels, _ := filepath.Glob(filepath.Join(corpusDir, "labels", "*.jpg"))
-	if len(labels) == 0 {
-		t.Skip("корпус этикеток недоступен")
-	}
 	var maxOther float64
 	var maxName string
 	for _, p := range labels {
+		if filepath.Base(p) == onigiriFile {
+			continue
+		}
 		d := measureFile(t, p)
 		if d.FineLoss > maxOther {
 			maxOther, maxName = d.FineLoss, filepath.Base(p)
 		}
+	}
+	if maxName == "" {
+		t.Skip("корпус этикеток недоступен")
 	}
 	if got.FineLoss <= maxOther {
 		t.Errorf("fine_loss онигири = %.3f не больше максимума обычных этикеток (%.3f, %s)",

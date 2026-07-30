@@ -134,7 +134,8 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	pipe := pipeline.New(provider, items, scorer, cfg.LLMMaxConcurrent, log)
 	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
 	pipe.SetForceEscalateFineLoss(cfg.ScanForceEscalateFineLoss)
-	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
+	pipe.SetSelfConsistency(cfg.ScanSelfConsistency) // второй Sonnet на флагнутых кадрах
+	pipe.SetExplainEnabled(cfg.ExplainEnabled)       // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
 	return pipe, nil
 }
 

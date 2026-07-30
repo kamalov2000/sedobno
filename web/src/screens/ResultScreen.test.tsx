@@ -48,3 +48,37 @@ describe("ResultScreen — путь в дневник", () => {
     expect(screen.queryByText("В дневник")).toBeNull();
   });
 });
+
+// Прицельный self-consistency (бэклог п.5): плотную этикетку сильная модель читает
+// дважды, и если наборы штрафных добавок разошлись — балл показывается с оговоркой.
+// Молчать одним числом там, где модель не воспроизводит саму себя, нельзя: какое из
+// двух чисел увидит человек, решает жребий.
+describe("ResultScreen — «балл приблизителен»", () => {
+  const approxText = "Балл на этой этикетке приблизителен";
+  const lowConfText = /Текст на фото читался плохо/;
+
+  it("прочтения разошлись: плашка есть, балл показан как обычно", () => {
+    render(<ResultScreen result={baseResult({ score_approximate: true })} isSubscribed onAgain={noop} />);
+    expect(screen.getByText(approxText)).toBeTruthy();
+    expect(screen.getByText("38")).toBeTruthy(); // число не прячем — оговариваем
+  });
+
+  it("прочтения сошлись: плашки нет (норма — это её отсутствие)", () => {
+    render(<ResultScreen result={baseResult()} isSubscribed onAgain={noop} />);
+    expect(screen.queryByText(approxText)).toBeNull();
+  });
+
+  it("вместе с low_confidence показывается только сильная плашка, без дубля", () => {
+    render(
+      <ResultScreen result={baseResult({ score_approximate: true, low_confidence: true })} isSubscribed onAgain={noop} />,
+    );
+    expect(screen.getByText(approxText)).toBeTruthy();
+    expect(screen.queryByText(lowConfText)).toBeNull();
+  });
+
+  it("одно только low_confidence по-прежнему показывает свою плашку", () => {
+    render(<ResultScreen result={baseResult({ low_confidence: true })} isSubscribed onAgain={noop} />);
+    expect(screen.getByText(lowConfText)).toBeTruthy();
+    expect(screen.queryByText(approxText)).toBeNull();
+  });
+});

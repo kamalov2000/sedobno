@@ -63,6 +63,14 @@ type Config struct {
 	// (fine_loss пишется в scan_ok на каждом скане).
 	ScanForceEscalateFineLoss float64
 
+	// ScanSelfConsistency — прицельная перепроверка плотных этикеток: на кадрах, которые
+	// увела на сильную модель форс-эскалация (те же ~12% сканов), делается ВТОРОЙ
+	// параллельный вызов той же модели, и расхождение по набору штрафных добавок
+	// показывается пользователю как «балл приблизителен» (pipeline/selfcheck.go).
+	// Цена: +0.54 ₽ к среднему скану; латентность не растёт (вызовы параллельны).
+	// false — мгновенный откат к одиночной форс-эскалации без пересборки.
+	ScanSelfConsistency bool
+
 	// MealVisionModel — vision-модель модуля калорий по фото (feature/calories).
 	// "" — использовать дефолтную vision-модель выбранного провайдера (Haiku у
 	// anthropic). Переопределяется MEAL_VISION_MODEL, чтобы прогнать качество на
@@ -241,6 +249,7 @@ func MustLoad() *Config {
 	if cfg.ScanForceEscalateFineLoss < 0 || cfg.ScanForceEscalateFineLoss > 1 {
 		invalid = append(invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS (ожидается 0≤x≤1, 0 — выключено)")
 	}
+	cfg.ScanSelfConsistency = optBool(opt("SCAN_SELF_CONSISTENCY", "true"))
 
 	// FEEDBACK_CHAT_ID — обязателен: без него обратная связь молча теряется. chat_id
 	// может быть отрицательным (группы/каналы), поэтому проверяем лишь на «ненулевое целое».

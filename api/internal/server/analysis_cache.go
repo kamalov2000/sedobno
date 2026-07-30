@@ -184,6 +184,20 @@ func addDetectorProps(props map[string]any, res *pipeline.Result) {
 	if res.ShortItemsFlag {
 		props["short_items"] = true
 	}
+	// Прицельный self-consistency (pipeline/selfcheck.go). Пишем ОБА балла и обе
+	// половины расхождения, а не только факт срабатывания: открытый вопрос бэклога —
+	// как часто и на чём именно сильная модель расходится сама с собой, и ответить на
+	// него можно лишь по накопленной выборке флагнутых сканов. Коды короткие (E-номера),
+	// props от них не разбухают.
+	if res.SelfCheckRan {
+		props["sc_ran"] = true
+		props["sc_score_b"] = res.SelfCheckScore
+		if res.ScoreApproximate {
+			props["sc_diverged"] = true
+			props["sc_only_a"] = res.SelfCheckOnlyA
+			props["sc_only_b"] = res.SelfCheckOnlyB
+		}
+	}
 }
 
 // suspiciousCachedScan — стоит ли перепроверять СЛАБУЮ запись кэша сильной моделью.

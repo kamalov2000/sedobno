@@ -101,8 +101,14 @@ type scanResponse struct {
 	// LowConfidence — текст читался плохо: состав распознан, но мог быть прочитан с
 	// ошибками. Фронт показывает плашку «сверьте состав с этикеткой». Уверенный скан
 	// поля не содержит — отсутствие предупреждения и есть норма.
-	LowConfidence bool               `json:"low_confidence,omitempty"`
-	Nutrition     *scanNutritionView `json:"nutrition,omitempty"`
+	LowConfidence bool `json:"low_confidence,omitempty"`
+	// ScoreApproximate — плотная этикетка, прочитанная сильной моделью ДВАЖДЫ, дала два
+	// разных набора штрафных добавок (pipeline/selfcheck.go). Балл показывается как
+	// обычно, но с оговоркой «на этой этикетке он приблизителен» — там, где модель на
+	// пределе, честнее сказать об этом, чем молчать одним числом. Смысловой аналог
+	// знака «≈» в калориях. Совпали прочтения — поля нет (норма не объявляется).
+	ScoreApproximate bool               `json:"score_approximate,omitempty"`
+	Nutrition        *scanNutritionView `json:"nutrition,omitempty"`
 	Explanation   string             `json:"explanation,omitempty"`
 	Message       string             `json:"message,omitempty"`
 	// ProductName — название продукта с упаковки. Пусто — не прочиталось (нормальный
@@ -379,9 +385,10 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 	}
 	return scanResponse{
 		Status: res.Status, Score: res.Score, Flags: flags, Ingredients: ings,
-		Deductions:    deds,
-		LowConfidence: res.LowConfidence,
-		Nutrition:     nutritionView(res.Nutrition),
+		Deductions:       deds,
+		LowConfidence:    res.LowConfidence,
+		ScoreApproximate: res.ScoreApproximate,
+		Nutrition:        nutritionView(res.Nutrition),
 		ProductName:   res.ProductName,
 		Explanation:   res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
