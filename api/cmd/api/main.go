@@ -131,11 +131,21 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	if err != nil {
 		return nil, fmt.Errorf("инициализация LLM-провайдера: %w", err)
 	}
+	fallback := llm.NewExtractFallback(cfg)
 	pipe := pipeline.New(provider, items, scorer, cfg.LLMMaxConcurrent, log)
-	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
+	pipe.SetExtractFallback(fallback, cfg.ExtractConfidenceMin)
 	pipe.SetForceEscalateFineLoss(cfg.ScanForceEscalateFineLoss)
 	pipe.SetSelfConsistency(cfg.ScanSelfConsistency) // второй Sonnet на флагнутых кадрах
 	pipe.SetExplainEnabled(cfg.ExplainEnabled)       // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
+
+	// Режим сканера — в лог на старте, как и у пайплайна калорий. У обоих рычагов
+	// (форс-эскалация, перепроверка) дефолт ВКЛЮЧЁН и живёт в коде, а не в .env, —
+	// значит по содержимому .env нельзя понять, что сейчас работает. Строка в логе это
+	// и отвечает, в том числе после аварийного переключения тумблера.
+	log.Info("scan: пайплайн сканера",
+		"сильная_модель", fallback != nil,
+		"форс_эскалация_fine_loss", cfg.ScanForceEscalateFineLoss,
+		"self_consistency", cfg.ScanSelfConsistency && fallback != nil)
 	return pipe, nil
 }
 
