@@ -88,3 +88,35 @@ func TestCurrentSubscription_ДетальДляЭкрана(t *testing.T) {
 		t.Fatalf("после отмены деталь неверна: %+v", d2)
 	}
 }
+
+// Отмена стирает сохранённый способ оплаты. Экран подписки обещает пользователю
+// «сохранённая карта удаляется» — и по этому экрану ЮKassa согласует автоплатежи,
+// так что обещание проверяем в БД, а не на глаз. Остановки планировщика мало:
+// status/next_charge_at гасят списания, но токен остался бы лежать в таблице.
+func TestCancelSubscription_СтираетСпособОплаты(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 4202)
+	mustRecordAuto(t, s, ctx, uid, "pay-del", "pm-del")
+
+	if n := countRows(t, ctx, `
+SELECT count(*) FROM subscriptions
+WHERE user_id=$1 AND provider_payment_method_id='pm-del'`, uid); n != 1 {
+		t.Fatalf("до отмены способ оплаты не сохранён: строк=%d, ждали 1", n)
+	}
+
+	if _, err := s.CancelSubscription(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := countRows(t, ctx, `
+SELECT count(*) FROM subscriptions
+WHERE user_id=$1 AND provider_payment_method_id IS NOT NULL`, uid); n != 0 {
+		t.Fatalf("после отмены способ оплаты остался в базе: строк=%d, ждали 0", n)
+	}
+	// Доступ при этом не тронут — отмена не отбирает оплаченный период.
+	if n := countRows(t, ctx, `
+SELECT count(*) FROM subscriptions
+WHERE user_id=$1 AND status='cancelled' AND expires_at > now()`, uid); n != 1 {
+		t.Fatalf("отмена забрала оплаченный доступ: строк=%d, ждали 1", n)
+	}
+}

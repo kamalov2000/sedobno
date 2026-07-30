@@ -123,11 +123,19 @@ WHERE u.id = $1 AND u.is_subscribed = true
   );
 
 -- name: sub_cancel
--- Отмена автопродления: подписку в 'cancelled', снимаем плановое списание. expires_at НЕ
--- трогаем — доступ до конца оплаченного периода. Отменяем автопродляемую запись (есть
--- next_charge_at); Stars-рекуррент отменяется в настройках Telegram, не здесь.
+-- Отмена автопродления: подписку в 'cancelled', снимаем плановое списание и УДАЛЯЕМ
+-- сохранённый способ оплаты. expires_at НЕ трогаем — доступ до конца оплаченного периода.
+-- Отменяем автопродляемую запись (есть next_charge_at); Stars-рекуррент отменяется в
+-- настройках Telegram, не здесь.
+--
+-- provider_payment_method_id = NULL — не «на всякий случай», а обещание с экрана подписки
+-- («сохранённая карта удаляется») в машинном виде: без токена ни один путь списания не
+-- заряжается (sub_due_for_charge и sub_due_for_notice требуют IS NOT NULL). Одного
+-- status/next_charge_at хватило бы, чтобы остановить планировщик, но токен остался бы
+-- лежать в базе — а мы пользователю сказали, что его больше нет. Повторная покупка
+-- заводит новую запись и новый способ оплаты, переиспользовать этот нечему.
 UPDATE subscriptions
-SET status = 'cancelled', next_charge_at = NULL
+SET status = 'cancelled', next_charge_at = NULL, provider_payment_method_id = NULL
 WHERE user_id = $1 AND status IN ('active', 'past_due') AND next_charge_at IS NOT NULL
 RETURNING expires_at;
 

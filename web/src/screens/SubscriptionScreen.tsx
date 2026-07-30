@@ -7,6 +7,11 @@ import { notify } from "../telegram";
 // оплаты, кнопка отмены. Отмена — доступ до конца оплаченного периода, без удержаний;
 // подтверждение в два тапа, без dark-паттернов. Stars-подписка отменяется в настройках
 // Telegram (кнопки отмены здесь нет — мы её не контролируем).
+//
+// Про удаление карты сказано ДО нажатия, а не в подтверждении: ЮKassa требует, чтобы
+// отвязка сохранённого способа оплаты была видна на самом экране управления (по этому
+// экрану согласуются автоплатежи). Формулировка не декоративная — sub_cancel действительно
+// стирает provider_payment_method_id, см. queries/subscriptions.sql.
 
 interface Props {
   me: Me;
@@ -63,17 +68,23 @@ export default function SubscriptionScreen({ me, onBack, onChanged }: Props) {
       {sub?.auto_renew && (
         <div style={{ flex: "none", paddingBottom: 12 }}>
           {!confirming ? (
-            <button
-              type="button"
-              onClick={() => setConfirming(true)}
-              style={{ width: "100%", height: 50, background: "none", border: "1px solid var(--border)", borderRadius: 13, color: "var(--text2)", fontFamily: "'Golos Text', sans-serif", fontSize: 15, cursor: "pointer" }}
-            >
-              Отменить автопродление
-            </button>
+            <>
+              <div style={{ fontSize: 12.5, color: "var(--text3)", textAlign: "center", lineHeight: 1.5, marginBottom: 10 }}>
+                При отмене автопродления сохранённая карта удаляется — новых списаний не будет.
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                style={{ width: "100%", height: 50, background: "none", border: "1px solid var(--border)", borderRadius: 13, color: "var(--text2)", fontFamily: "'Golos Text', sans-serif", fontSize: 15, cursor: "pointer" }}
+              >
+                Отменить автопродление и удалить карту
+              </button>
+            </>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ fontSize: 13, color: "var(--text2)", textAlign: "center", lineHeight: 1.5 }}>
-                Доступ останется до {fmtDate(sub.expires_at)}. Дальше списаний не будет.
+                Сохранённая карта будет удалена, новых списаний не будет.
+                Доступ останется до {fmtDate(sub.expires_at)}.
               </div>
               <button
                 type="button"
@@ -81,7 +92,7 @@ export default function SubscriptionScreen({ me, onBack, onChanged }: Props) {
                 onClick={cancel}
                 style={{ width: "100%", height: 50, background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 13, color: "var(--text)", fontFamily: "'Golos Text', sans-serif", fontSize: 15, fontWeight: 500, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}
               >
-                {busy ? "Отменяем…" : "Да, отменить автопродление"}
+                {busy ? "Отменяем…" : "Да, отменить и удалить карту"}
               </button>
               <button
                 type="button"
@@ -113,9 +124,12 @@ function SubBody({ sub }: { sub: SubscriptionInfo }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {/* Про удалённую карту — только для sbp: у Stars сохранённой карты у нас и не было
+          (рекуррент ведёт Telegram), обещать её удаление там нечестно. */}
       {!sub.auto_renew && (
         <div style={{ fontSize: 12.5, color: "var(--text3)", background: "var(--bg-soft)", borderRadius: 11, padding: "10px 13px", marginBottom: 12, lineHeight: 1.45 }}>
-          Автопродление выключено. Доступ сохранится до конца оплаченного периода.
+          Автопродление выключено{sub.provider === "sbp" ? ", сохранённая карта удалена" : ""}.
+          Доступ сохранится до конца оплаченного периода.
         </div>
       )}
       {rows.map((r) => (
