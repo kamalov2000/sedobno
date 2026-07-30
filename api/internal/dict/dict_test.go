@@ -1,10 +1,22 @@
 package dict
 
 import (
+	"strings"
 	"testing"
 
 	seeddata "github.com/sostav/api/data"
 )
+
+// testMatcher — матчер на БОЕВОМ словаре: проверки типографики этикетки («краситель
+// бета-каротин») имеют смысл только против реальных синонимов и кодов.
+func testMatcher(t *testing.T) *Matcher {
+	t.Helper()
+	items, err := LoadSeed(seeddata.AdditivesJSON)
+	if err != nil {
+		t.Fatalf("загрузка словаря: %v", err)
+	}
+	return NewMatcher(items)
+}
 
 func TestNormalize(t *testing.T) {
 	cases := []struct{ in, want string }{
@@ -294,5 +306,39 @@ func TestNestedItems_CodesInBracketNotSplitWrong(t *testing.T) {
 	want := []string{"E450", "E451"}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("получено %q, ждали %q", got, want)
+	}
+}
+
+// Функциональный класс перед названием — обычная типографика этикетки. Такие строки
+// обязаны сопоставляться ДЕТЕРМИНИРОВАННО, до LLM-добора: тот путает близкие коды
+// («краситель бета-каротин» → E160e вместо E160a, −3 из ниоткуда — майонез, 24.07).
+func TestMatchAllOrSuffix_ФункциональныйКлассПередНазванием(t *testing.T) {
+	m := testMatcher(t)
+	cases := map[string]string{
+		"краситель бета-каротин":          "E160a",
+		"подсластитель сахарин":           "E954",
+		"консервант сорбат калия":         "E202",
+		"стабилизатор ксантановая камедь": "E415",
+	}
+	for raw, wantCode := range cases {
+		as := m.MatchAllOrSuffix(raw)
+		if len(as) == 0 {
+			t.Errorf("%q не сматчено, ждали %s", raw, wantCode)
+			continue
+		}
+		if !strings.EqualFold(as[0].Code, wantCode) {
+			t.Errorf("%q → %s, ждали %s", raw, as[0].Code, wantCode)
+		}
+	}
+}
+
+// Хвостовое сопоставление требует ТОЧНОГО совпадения хвоста с синонимом словаря —
+// обычные слова состава им не цепляются (иначе «молочный жир» стал бы добавкой).
+func TestMatchAllOrSuffix_ОбычныеСловаНеЦепляются(t *testing.T) {
+	m := testMatcher(t)
+	for _, raw := range []string{"молочный жир", "яичный белок", "мука пшеничная в/с", "сок фиолетовой моркови"} {
+		if as := m.MatchAllOrSuffix(raw); len(as) > 0 {
+			t.Errorf("%q ошибочно сматчено с %s (risk %d)", raw, as[0].Code, as[0].Risk)
+		}
 	}
 }

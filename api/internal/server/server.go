@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sostav/api/internal/config"
+	"github.com/sostav/api/internal/meal"
 	"github.com/sostav/api/internal/pipeline"
 	"github.com/sostav/api/internal/store"
 	"github.com/sostav/api/internal/tg"
@@ -23,10 +24,13 @@ type Server struct {
 	pool        *pgxpool.Pool
 	store       *store.Store
 	pipe        *pipeline.Pipeline
+	mealPipe    *meal.Pipeline // модуль калорий (feature/calories); nil — эндпоинты /meals отдают 503
 	tg          *tg.Client
 	yk          *yookassa.Client
 	scanLimiter *userLimiter
+	mealLimiter *userLimiter
 	support     *supportState
+	poolPeak    poolPeak // пик занятых коннектов; наполняется только при DEBUG_STATS=1
 	log         *slog.Logger
 }
 
@@ -37,14 +41,35 @@ func New(cfg *config.Config, pool *pgxpool.Pool, pipe *pipeline.Pipeline, log *s
 		cfg: cfg, pool: pool, store: store.New(pool), pipe: pipe,
 		tg:          tg.New(cfg.TelegramAPIBase, cfg.TelegramBotToken),
 		yk:          yookassa.New(cfg.YooKassaAPIBase, cfg.YooKassaShopID, cfg.YooKassaSecretKey),
-		scanLimiter: newUserLimiter(scanRateLimit, time.Minute),
+		scanLimiter: newUserLimiter(rateLimitOr(cfg.ScanRateLimit, scanRateLimit), time.Minute),
+		mealLimiter: newUserLimiter(rateLimitOr(cfg.MealRateLimit, mealRateLimit), time.Minute),
 		support:     newSupportState(),
 		log:         log,
 	}
 }
 
+// SetMealPipeline подключает пайплайн модуля калорий (feature/calories). Отдельный
+// сеттер, а не параметр New: не ломает сигнатуру и существующие тесты; nil (по
+// умолчанию) — эндпоинты /meals отдают 503, как /scan при nil pipe в тестах.
+func (s *Server) SetMealPipeline(mp *meal.Pipeline) { s.mealPipe = mp }
+
 // scanRateLimit — 5 сканов в минуту на пользователя (§8).
 const scanRateLimit = 5
+
+// mealRateLimit — 5 разборов еды в минуту на пользователя (свой бюджет, независимо от сканов).
+const mealRateLimit = 5
+
+// rateLimitOr подставляет дефолт, если лимит не переопределён окружением.
+// Переопределение нужно нагрузочному стенду: сценарий «гонка квоты» шлёт 20
+// параллельных запросов ОДНИМ пользователем, и лимит 5/мин отсекал бы их раньше,
+// чем они дойдут до проверки квоты, — то есть маскировал бы проверяемое свойство.
+// В боевом окружении переменные не задаются и действуют константы выше.
+func rateLimitOr(fromEnv, def int) int {
+	if fromEnv > 0 {
+		return fromEnv
+	}
+	return def
+}
 
 // Router строит chi-роутер со всеми маршрутами.
 // На Этапе 0 определён только служебный /api/health; остальные маршруты
@@ -74,9 +99,35 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireAuth)
 			r.With(s.rateLimitScans).Post("/scan", s.handleScan)
 			r.Get("/scans/history", s.handleScansHistory)
+
+			// Модуль калорий по фото (feature/calories). /meals/days — до /meals/{id},
+			// иначе chi сматчит «days» как id; GET /meals (без id) — свой обработчик.
+			r.With(s.rateLimitMeals).Post("/meals", s.handleMealCreate)
+			// Текстовый разбор блюда (backlog п.2): тот же LLM-вызов, что и фото, поэтому
+			// тот же рейт-лимит. Роут отдельный, а не ветка в POST /meals: этот путь ничего
+			// не сохраняет и списывает квоту — смешивать его с «сохрани приём» нельзя.
+			r.With(s.rateLimitMeals).Post("/meals/text", s.handleMealText)
+			r.Get("/meals", s.handleMealsByDay)
+			r.Get("/meals/days", s.handleMealDays)
+			r.Get("/meals/history", s.handleMealsHistory)
+			r.Get("/food-reference", s.handleFoodReference) // справочник для автоподсказки ручного ввода
+			r.Patch("/meals/{id}", s.handleMealUpdate)
+			r.Delete("/meals/{id}", s.handleMealDelete)
+
+			// Профиль питания и дневная норма (feature/calories).
+			r.Patch("/profile/nutrition", s.handleProfileNutrition)
+
 			r.Get("/me", s.handleMe)
+
+			// Вес, вода (спринт 2). Бесплатные: ни квот, ни рейт-лимита LLM — это
+			// данные пользователя о себе, а не вызовы модели.
+			r.Post("/weight", s.handleWeightCreate)
+			r.Get("/weight", s.handleWeightList)
+			r.Delete("/weight/{date}", s.handleWeightDelete)
+			r.Post("/water", s.handleWaterAdd)
 			r.Post("/pay/create", s.handlePayCreate)
 			r.Post("/payments/sbp/create", s.handleSBPPay) // создать платёж → ссылка на ЮKassa
+			r.Post("/sub/cancel", s.handleSubCancel)       // отмена автопродления (доступ до конца периода)
 		})
 	})
 

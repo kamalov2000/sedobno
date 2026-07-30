@@ -21,18 +21,8 @@ func retryBackoff(attempt int) time.Duration {
 	return 300 * time.Millisecond << (attempt - 1)
 }
 
-// waitBackoff выжидает retryBackoff(attempt), прерываясь при отмене ctx (чтобы не
-// висеть на паузе, когда клиент уже ушёл / истёк общий дедлайн скана).
-func waitBackoff(ctx context.Context, attempt int) error {
-	t := time.NewTimer(retryBackoff(attempt))
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-t.C:
-		return nil
-	}
-}
+// Пауза перед повтором и решение «повторять ли вообще» — в retry.go (waitFor,
+// retryDelay): политика повторов общая для обоих транспортов.
 
 // Image — одно изображение для фазы 1. Несколько изображений = ракурсы ОДНОЙ этикетки
 // (круглая/изогнутая упаковка): все уходят в ОДИН vision-вызов отдельными image-блоками,
@@ -53,9 +43,20 @@ func extractInstruction(n int) string {
 
 // Extraction — результат фазы 1 (извлечение состава из фото).
 type Extraction struct {
-	Ingredients []string `json:"ingredients"`
-	Confidence  float64  `json:"confidence"`
-	IsLabel     bool     `json:"is_label"`
+	// Transcription — дословная переписка блока «Состав» с фото (до разбивки на
+	// отдельные ингредиенты). Источник для детерминированного антигаллюцинационного
+	// гейта в pipeline.go: каждый ingredient обязан находиться в этом тексте — иначе
+	// модель не прочитала его с фото, а придумала (см. TranscriptionGate).
+	Transcription string   `json:"transcription,omitempty"`
+	Ingredients   []string `json:"ingredients"`
+	// ProductName — название продукта с лицевой стороны упаковки («Онигири «Снежный
+	// краб» с соусом «Спайси»»). Может быть пустым — это НОРМА, а не сбой: названия
+	// не видно на кадре с оборотом, а выдумывать его промпт запрещает. Ни на состав,
+	// ни на балл не влияет: нужно, чтобы подписать результат и предзаполнить имя,
+	// когда со скана уходят в дневник.
+	ProductName string  `json:"product_name,omitempty"`
+	Confidence  float64 `json:"confidence"`
+	IsLabel       bool     `json:"is_label"`
 	// IsFood — продукт съедобен (еда/напиток). Указатель: nil (поле не пришло / mock)
 	// трактуем как «еда» — permissive, чтобы не блокировать реальную еду. Скан-гейт
 	// отсекает только ЯВНЫЙ false (косметика/химия/лекарства с INCI-составом).
@@ -136,11 +137,21 @@ type ExplainInput struct {
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	// Кэш промпта: запись префикса в кэш и чтение из него. Тарифицируются иначе,
+	// чем обычный вход (запись ×1.25, чтение ×0.1), поэтому считаются отдельно —
+	// смешивать их с InputTokens значит потерять весь смысл кэша в оценке цены.
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
 }
 
 // Add суммирует потребление токенов.
 func (u Usage) Add(o Usage) Usage {
-	return Usage{u.InputTokens + o.InputTokens, u.OutputTokens + o.OutputTokens}
+	return Usage{
+		InputTokens:              u.InputTokens + o.InputTokens,
+		OutputTokens:             u.OutputTokens + o.OutputTokens,
+		CacheCreationInputTokens: u.CacheCreationInputTokens + o.CacheCreationInputTokens,
+		CacheReadInputTokens:     u.CacheReadInputTokens + o.CacheReadInputTokens,
+	}
 }
 
 // LLMProvider — контракт провайдера vision/LLM.

@@ -1,0 +1,97 @@
+# Нагрузочный стенд «Съедобно» (Этап 3): postgres + api на мок-провайдере.
+#
+# Изолирован от боевого стека и от dev: свой compose-проект (name), свой том БД и
+# порты наружу — прод и бета не затрагиваются ничем. Внешнего API здесь нет вовсе:
+# LLM_PROVIDER=mock, так что прогон не стоит денег и не зависит от сети.
+#
+# Запуск — через `make load-test` (цель поднимает стек, ждёт готовности и гонит
+# сценарии). Вручную: docker compose -f deploy/docker-compose.load.yml up -d
+name: sostav-load
+
+# Общее окружение: config.MustLoad() требует полный набор переменных в ЛЮБОЙ команде
+# (в т.ч. migrate), поэтому заглушки нужны и там. LLM_PROVIDER=mock снимает
+# требование ключа провайдера.
+x-common-env: &common-env
+  APP_ENV: dev
+  DATABASE_URL: postgres://load:load@postgres:5432/load?sslmode=disable
+  # mock по умолчанию (бесплатный стенд). Этап 4 переключает на anthropic и
+  # прокидывает боевой ключ из окружения — см. цель load-test-real.
+  LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  JWT_SECRET: loadtest-secret-not-for-production
+  TELEGRAM_BOT_TOKEN: "000000:loadtest"
+  TELEGRAM_WEBHOOK_SECRET: loadtest
+  FEEDBACK_CHAT_ID: "-1000000000000"
+  WEBAPP_URL: http://localhost:8081
+  ADMIN_KEY: loadtest
+  SUBSCRIPTION_STARS_PRICE: "150"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: load
+      POSTGRES_PASSWORD: load
+      POSTGRES_DB: load
+    ports:
+      - "55433:5432" # наружу — драйвер стенда сидит пользователей и читает счётчики
+    # max_connections по умолчанию 100: специально НЕ поднимаем, чтобы стенд ловил
+    # ситуацию «пул api больше, чем разрешает Postgres», если она вдруг возникнет.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U load -d load"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ../api
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ../api
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      <<: *common-env
+      PORT: "8080"
+      LOG_LEVEL: warn # на 50 клиентах info-лог сам становится нагрузкой
+
+      # Мок вместо живого провайдера: без ключей, без сети, без трат.
+      MOCK_LLM_DELAY: ${MOCK_LLM_DELAY:-8s}
+      MOCK_LLM_ERROR_RATE: ${MOCK_LLM_ERROR_RATE:-0}
+      LLM_MAX_CONCURRENT: ${LLM_MAX_CONCURRENT:-40}
+      LLM_TIMEOUT_SEC: "25"
+      LLM_USD_RUB: "95"
+
+      # Статистика пула в /api/health — иначе стенду нечего измерять.
+      DEBUG_STATS: "1"
+
+      # Рейт-лимиты. Сценарий B (гонка квоты) шлёт 20 параллельных запросов одним
+      # пользователем: штатные 5/мин отсекли бы их до проверки квоты и замаскировали
+      # ровно то свойство, которое проверяется.
+      SCAN_RATE_LIMIT: ${SCAN_RATE_LIMIT:-1000}
+      MEAL_RATE_LIMIT: ${MEAL_RATE_LIMIT:-1000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes: {}

@@ -1,0 +1,20 @@
+# Dev-override для локальной разработки модуля калорий (feature/calories).
+# Публикует порт API на хост (чтобы vite-прокси фронта достучался на localhost:8080) и
+# включает dev-обход Telegram-авторизации. НЕ использовать на проде.
+#
+# Запуск:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml \
+#     --env-file .env up -d --build api
+name: sostav
+
+services:
+  api:
+    environment:
+      # Явный маркер dev-окружения: только он разрешает dev-обход (IsProd()=false).
+      # Без него APP_ENV трактуется как прод — боевой сервер защищён по умолчанию.
+      APP_ENV: "dev"
+      # Обход Telegram-авторизации: /auth принимает {dev_user_id}. На проде (APP_ENV!=dev
+      # или включён SBP) игнорируется с warning — двойная защита.
+      DEV_AUTH_BYPASS: "true"
+    ports:
+      - "8080:8080"

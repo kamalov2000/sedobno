@@ -54,12 +54,27 @@ func (c *anthropicClient) Name() string { return c.name }
 
 // CostRUB считает vision- и text-токены по цене их моделей: при смене
 // ANTHROPIC_VISION_MODEL (например на Haiku) оценка меняется автоматически.
+// Множители кэша промпта к цене обычного входного токена: запись в кэш дороже
+// (×1.25 при TTL 5 минут), чтение — почти бесплатно (×0.1). Без них оценка врала бы
+// в обе стороны: занижала на первом вызове и завышала на всех последующих.
+const (
+	cacheWriteMult = 1.25
+	cacheReadMult  = 0.10
+)
+
 func (c *anthropicClient) CostRUB(vision, text Usage) float64 {
 	vin, vout := anthropicPrice(c.visionModel)
 	tin, tout := anthropicPrice(c.textModel)
-	usd := (float64(vision.InputTokens)*vin+float64(vision.OutputTokens)*vout)/1e6 +
-		(float64(text.InputTokens)*tin+float64(text.OutputTokens)*tout)/1e6
+	usd := inputUSD(vision, vin) + float64(vision.OutputTokens)*vout/1e6 +
+		inputUSD(text, tin) + float64(text.OutputTokens)*tout/1e6
 	return usd * c.usdRUB
+}
+
+// inputUSD считает входную часть с учётом кэш-тарифов.
+func inputUSD(u Usage, perM float64) float64 {
+	return (float64(u.InputTokens)*perM +
+		float64(u.CacheCreationInputTokens)*perM*cacheWriteMult +
+		float64(u.CacheReadInputTokens)*perM*cacheReadMult) / 1e6
 }
 
 // anthropicPrice возвращает цену модели Claude в USD за 1M токенов (вход, выход).
@@ -78,15 +93,51 @@ func anthropicPrice(model string) (inPer1M, outPer1M float64) {
 // --- типы протокола Messages API ---
 
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens"`
 	// Temperature — указатель с omitempty: у Haiku шлём 0 (детерминизм извлечения),
 	// у Sonnet 5+ НЕ шлём вовсе (nil) — там параметр deprecated и даёт 400. Логика
 	// выбора — в temperatureFor().
-	Temperature *float64           `json:"temperature,omitempty"`
-	System      string             `json:"system,omitempty"`
-	Thinking    *anthropicThinking `json:"thinking,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	// System — массив блоков, а не строка: только так на него вешается cache_control.
+	// Системный промпт извлечения (extract_v1.txt, 15 КБ) одинаков от вызова к вызову
+	// и стоит в самом начале префикса — идеальный кандидат на кэш. Если префикс не
+	// дотягивает до минимума модели (у Haiku 4.5 — 4096 токенов), API молча не кэширует:
+	// ошибки не будет, в usage придут нули. Именно это и проверяем замером.
+	System   []anthropicSystemBlock `json:"system,omitempty"`
+	Thinking *anthropicThinking     `json:"thinking,omitempty"`
+	Messages []anthropicMessage     `json:"messages"`
+}
+
+// anthropicSystemBlock — текстовый блок системного промпта с необязательным кэшем.
+type anthropicSystemBlock struct {
+	Type         string              `json:"type"` // "text"
+	Text         string              `json:"text"`
+	CacheControl *anthropicCacheCtrl `json:"cache_control,omitempty"`
+}
+
+type anthropicCacheCtrl struct {
+	Type string `json:"type"` // "ephemeral" — TTL 5 минут
+}
+
+// systemBlocks оборачивает промпт в блок. Кэш ВЫКЛЮЧЕН намеренно — по замеру
+// 19.07 он не включается и включиться не может:
+//
+//	extract_v1.txt — 14978 БАЙТ, но 8787 СИМВОЛОВ (кириллица в UTF-8 занимает два
+//	байта на символ), это ≈3500 токенов при минимуме кэшируемого префикса у
+//	Haiku 4.5 в 4096. Прогон с cache_control вернул cache_creation=0, cache_read=0
+//	при корректном JSON запроса (см. TestSystemPromptFormat).
+//
+// Оставлять cache_control включённым было бы ловушкой: промпт всего в ~600 токенах
+// от порога, и первая же правка, которая его удлинит, молча включит кэш. На бете,
+// где сканы идут реже раза в 5 минут, кэш-записи (×1.25) не окупятся чтениями и
+// себестоимость вырастет — без единого сигнала. Чтобы включить, когда трафик
+// станет плотнее порога: вернуть CacheControl ниже одной строкой.
+func systemBlocks(system string) []anthropicSystemBlock {
+	if system == "" {
+		return nil
+	}
+	return []anthropicSystemBlock{{Type: "text", Text: system}}
 }
 
 // Thinking отключаем: задача — структурное извлечение/объяснение, adaptive-режим
@@ -118,8 +169,10 @@ type anthropicResponse struct {
 		Text string `json:"text"`
 	} `json:"content"`
 	Usage struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 	StopReason string `json:"stop_reason"`
 	Error      *struct {
@@ -135,7 +188,7 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 		Model:       model,
 		MaxTokens:   c.maxTokens,
 		Temperature: temperatureFor(model),
-		System:      system,
+		System:      systemBlocks(system),
 		Thinking:    &anthropicThinking{Type: "disabled"},
 		Messages:    []anthropicMessage{{Role: "user", Content: content}},
 	}
@@ -144,23 +197,9 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 		return "", Usage{}, err
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < maxLLMAttempts; attempt++ {
-		if attempt > 0 {
-			if err := waitBackoff(ctx, attempt); err != nil {
-				break // ctx отменён во время паузы — повтор бессмыслен
-			}
-		}
-		text, usage, err := c.doOnce(ctx, payload)
-		if err == nil {
-			return text, usage, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			break
-		}
-	}
-	return "", Usage{}, fmt.Errorf("%s: %w", c.name, lastErr)
+	return doWithRetry(ctx, c.name, func() (string, Usage, error) {
+		return c.doOnce(ctx, payload)
+	})
 }
 
 func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, Usage, error) {
@@ -183,11 +222,14 @@ func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, U
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return "", Usage{}, fmt.Errorf("429 rate limit: %s", strings.TrimSpace(string(body)))
-	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", Usage{}, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// Типизированная ошибка: решение о повторе принимает retryDelay по статусу
+		// и Retry-After, а не вызывающий код.
+		return "", Usage{}, &httpError{
+			status:     resp.StatusCode,
+			retryAfter: parseRetryAfter(resp.Header),
+			body:       strings.TrimSpace(string(body)),
+		}
 	}
 
 	var ar anthropicResponse
@@ -197,7 +239,11 @@ func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, U
 	if ar.Error != nil {
 		return "", Usage{}, fmt.Errorf("api: %s", ar.Error.Message)
 	}
-	usage := Usage{InputTokens: ar.Usage.InputTokens, OutputTokens: ar.Usage.OutputTokens}
+	usage := Usage{
+		InputTokens: ar.Usage.InputTokens, OutputTokens: ar.Usage.OutputTokens,
+		CacheCreationInputTokens: ar.Usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     ar.Usage.CacheReadInputTokens,
+	}
 	if ar.StopReason == "refusal" {
 		// Классификаторы отклонили запрос (HTTP 200) — считаем ошибкой вызова.
 		return "", usage, fmt.Errorf("отказ модели (stop_reason=refusal)")

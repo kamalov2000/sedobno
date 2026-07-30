@@ -3,8 +3,27 @@
 // - 401 → тихой re-auth и один повтор (silent re-auth, см. заметку по Этапу 4).
 // 402/429 обрабатываются на уровне /scan (4.2), здесь — только базовый транспорт.
 
-import { getInitData } from "./telegram";
-import type { AuthResponse, Me, ScanResult, ScanHistoryPage } from "./types";
+import { authBody } from "./telegram";
+import type {
+  AuthResponse,
+  Me,
+  ScanResult,
+  ScanHistoryPage,
+  MealResult,
+  MealDiaryItem,
+  MealHistoryPage,
+  FoodRefItem,
+  MealType,
+  MealsByDay,
+  MealDays,
+  NutritionProfile,
+  Sex,
+  ActivityLevel,
+  Goal,
+  WeightResponse,
+  WaterResponse,
+  SubPlan,
+} from "./types";
 
 let token: string | null = null;
 
@@ -32,7 +51,8 @@ async function authenticate(): Promise<Me> {
   const res = await fetch("/api/auth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ init_data: getInitData() }),
+    // В Telegram — {init_data}; в браузере (dev-сборка) — {dev_user_id} для dev-обхода.
+    body: JSON.stringify(authBody()),
   });
   if (!res.ok) {
     token = null;
@@ -112,11 +132,26 @@ export type SbpPayOutcome =
   | { kind: "url"; url: string }
   | { kind: "error"; message: string };
 
-export async function sbpPay(): Promise<SbpPayOutcome> {
-  const res = await apiFetch("/api/payments/sbp/create", { method: "POST" });
+export async function sbpPay(plan: SubPlan = "monthly"): Promise<SbpPayOutcome> {
+  const q = plan === "annual" ? "?plan=annual" : "";
+  const res = await apiFetch(`/api/payments/sbp/create${q}`, { method: "POST" });
   if (!res.ok) return { kind: "error", message: await readMessage(res) };
   const data = (await res.json()) as { url: string };
   return { kind: "url", url: data.url };
+}
+
+/** Отмена автопродления. cancelled=false — отменять было нечего (Stars отменяется в
+ *  настройках Telegram). access_until — до какого момента остаётся доступ. */
+export type SubCancelOutcome =
+  | { kind: "cancelled"; accessUntil?: string }
+  | { kind: "nothing" }
+  | { kind: "error"; message: string };
+
+export async function subCancel(): Promise<SubCancelOutcome> {
+  const res = await apiFetch("/api/sub/cancel", { method: "POST" });
+  if (!res.ok) return { kind: "error", message: await readMessage(res) };
+  const data = (await res.json()) as { cancelled: boolean; access_until?: string };
+  return data.cancelled ? { kind: "cancelled", accessUntil: data.access_until } : { kind: "nothing" };
 }
 
 export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
@@ -139,4 +174,234 @@ export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
 
     return { kind: "result", data: (await res.json()) as ScanResult };
   }
+}
+
+// --- Модуль калорий по фото (feature/calories) ---
+
+/** Результат разбора фото еды для UI (зеркалит ScanOutcome сканера). */
+export type MealOutcome =
+  | { kind: "result"; data: MealResult }
+  | { kind: "paywall" }
+  | { kind: "error"; message: string };
+
+/** POST /api/meals — разбор фото приёма. Тот же паттерн, что scanPhoto: FormData поле
+ *  photo (1–3 кадра), ретраи 429 с бэкоффом, 402 → пейволл. */
+export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
+  const maxBusyRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    const form = new FormData();
+    for (const f of files) form.append("photo", f);
+    const res = await apiFetch("/api/meals", { method: "POST", body: form });
+
+    if (res.status === 402) return { kind: "paywall" };
+
+    if (res.status === 429 && attempt < maxBusyRetries) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || 3;
+      await sleep(retryAfter * 1000 * (attempt + 1));
+      continue;
+    }
+
+    if (!res.ok) return { kind: "error", message: await readMessage(res) };
+
+    return { kind: "result", data: (await res.json()) as MealResult };
+  }
+}
+
+/** POST /api/meals/text — оценка блюда по ТЕКСТОВОМУ описанию («котлета из щуки, 2 штуки»).
+ *
+ *  Тот же LLM-разбор, что и фото (те же квоты, те же 402/429), и тот же формат ответа —
+ *  но приём НЕ сохраняется: результат уходит в редактор, а в дневник его кладёт уже
+ *  существующий путь (createManualMeal с source="text" или patchMeal). */
+export async function analyzeMealText(text: string): Promise<MealOutcome> {
+  const maxBusyRetries = 3;
+  for (let attempt = 0; ; attempt++) {
+    const res = await apiFetch("/api/meals/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (res.status === 402) return { kind: "paywall" };
+
+    if (res.status === 429 && attempt < maxBusyRetries) {
+      const retryAfter = Number(res.headers.get("Retry-After")) || 3;
+      await sleep(retryAfter * 1000 * (attempt + 1));
+      continue;
+    }
+
+    if (!res.ok) return { kind: "error", message: await readMessage(res) };
+
+    return { kind: "result", data: (await res.json()) as MealResult };
+  }
+}
+
+/** GET /api/meals?day=YYYY-MM-DD — приёмы за день + агрегат. Без day — сегодня (МСК). */
+export async function getMeals(day?: string): Promise<MealsByDay> {
+  const q = day ? `?day=${day}` : "";
+  const res = await apiFetch(`/api/meals${q}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+// Справочник продуктов кешируется в памяти на сессию: он статичен и мал (~150), грузить
+// повторно незачем. null — ещё не загружен.
+let foodRefCache: FoodRefItem[] | null = null;
+
+/** GET /api/food-reference — статический справочник для автоподсказки ручного ввода.
+ *  Отдаётся целиком, фильтрация — на клиенте. Кешируется на сессию. */
+export async function getFoodReference(): Promise<FoodRefItem[]> {
+  if (foodRefCache) return foodRefCache;
+  const res = await apiFetch("/api/food-reference");
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  foodRefCache = (await res.json()) as FoodRefItem[];
+  return foodRefCache;
+}
+
+/** GET /api/meals/history — плоская история приёмов, keyset-пагинация.
+ *
+ *  cursor — next_cursor предыдущей страницы (непрозрачная строка «время_id»), не номер
+ *  страницы: сервер листает по ключу, а не по OFFSET. Без cursor — первая страница. */
+export async function mealsHistory(cursor?: string): Promise<MealHistoryPage> {
+  const q = cursor ? `?before=${encodeURIComponent(cursor)}` : "";
+  const res = await apiFetch(`/api/meals/history${q}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** GET /api/meals/days?from&to — дневные агрегаты за период (недельный экран). */
+export async function getMealDays(from: string, to: string): Promise<MealDays> {
+  const res = await apiFetch(`/api/meals/days?from=${from}&to=${to}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** Тело правки приёма: любое подмножество полей. */
+/** Блюдо в правке приёма. Покрывает два случая одним массивом:
+ *  распознанное — абсолютные значения на порцию (их посчитал сервер при разборе);
+ *  ручное — значения на 100 г плюс граммовка, сервер пересчитает сам.
+ *  Различает их наличие kcal_per_100 — так же, как на бэке. */
+export interface DishPatch {
+  name: string;
+  grams: number;
+  kcal?: number;
+  protein_g?: number;
+  fat_g?: number;
+  carb_g?: number;
+  confidence?: number;
+  kcal_per_100?: number;
+  protein_per_100?: number;
+  fat_per_100?: number;
+  carb_per_100?: number;
+  /** Яичное блюдо: dish_kind="eggs" + счётчики желтков/белков. Числа КБЖУ сервер пересчитает
+   *  из штук по константам — клиентские kcal/grams для такого блюда игнорируются. */
+  dish_kind?: string;
+  yolks?: number;
+  whites?: number;
+  /** Примитивы блюда (штучные + ложечные добавки) — КБЖУ считает сервер по константам
+   *  поверх базы. Флаг assumed переживает правку (модель предположила добавку). */
+  pieces?: { kind: string; count: number; assumed?: boolean }[];
+}
+
+export interface MealPatch {
+  dishes?: DishPatch[];
+  eaten_at?: string;
+  meal_type?: MealType;
+}
+
+/** PATCH /api/meals/{id} — правка приёма (сервер пересчитывает суммы). */
+export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryItem> {
+  const res = await apiFetch(`/api/meals/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** POST /api/meals с JSON вместо фото — приём, вписанный руками.
+ *
+ *  Тот же эндпоинт, что и у фото: сущность одна, различается только Content-Type.
+ *  Квота НЕ списывается — vision не вызывается, платить не за что.
+ *  date — локальный день клиента: без него вечерний приём уехал бы во вчера. */
+export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" }): Promise<MealResult> {
+  const res = await apiFetch("/api/meals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, date: localDay() }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** DELETE /api/meals/{id} — удаление приёма. */
+export async function deleteMeal(id: number): Promise<void> {
+  const res = await apiFetch(`/api/meals/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+}
+
+/** Тело правки профиля питания: любое подмножество полей. */
+export interface NutritionProfilePatch {
+  sex?: Sex;
+  birth_year?: number;
+  height_cm?: number;
+  weight_kg?: number;
+  activity_level?: ActivityLevel;
+  goal?: Goal;
+}
+
+/** PATCH /api/profile/nutrition — сохранить профиль, сервер пересчитывает норму. */
+export async function patchProfileNutrition(body: NutritionProfilePatch): Promise<NutritionProfile> {
+  const res = await apiFetch("/api/profile/nutrition", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+// --- Вес и вода (спринт 2). Бесплатные: ни квот, ни пейволла. ---
+
+/** Локальный день пользователя. Сервер верит клиенту (иначе таймзоны ломают границу
+ *  дня) и валидирует окном [сегодня−7, сегодня+1]. Считаем по локальному времени
+ *  устройства, а не по UTC — в этом весь смысл поля. */
+export function localDay(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/** GET /api/weight?range=30d|90d|all — точки графика по возрастанию даты + сводка. */
+export async function getWeight(range: "30d" | "90d" | "all" = "90d"): Promise<WeightResponse> {
+  const res = await apiFetch(`/api/weight?range=${range}`);
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** POST /api/weight — upsert по дню: повторное взвешивание перезаписывает точку. */
+export async function postWeight(weightKg: number, date = localDay()): Promise<WeightResponse> {
+  const res = await apiFetch("/api/weight", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ weight_kg: weightKg, date }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** DELETE /api/weight/{date} — удалить запись дня (опечатки случаются). */
+export async function deleteWeight(date: string): Promise<void> {
+  const res = await apiFetch(`/api/weight/${date}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+}
+
+/** POST /api/water — инкремент дня. Сервер принимает строго ±250 мл. */
+export async function addWater(deltaMl: number, date = localDay()): Promise<WaterResponse> {
+  const res = await apiFetch("/api/water", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_ml: deltaMl, date }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
 }

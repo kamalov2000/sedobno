@@ -15,7 +15,22 @@ interface Props {
   onAgain: (files: File[]) => void;
   isSubscribed?: boolean; // у подписчика попыток нет — плашку «не списана» не показываем
   hints?: Hint[]; // по умолчанию — «камерные» советы (плохо прочитанный состав)
+  // Доп. акцентное действие над «снять ещё раз» (напр. «Открыть сканер состава» для
+  // label_detected модуля калорий). Не задано — не рендерится.
+  primaryAction?: { label: string; icon?: string; onClick: () => void };
+  againLabel?: string; // подпись стартовой кнопки съёмки (по умолчанию «Снять ещё раз»)
 }
+
+// Модуль калорий: на фото не видно готовой еды.
+export const MEAL_NOT_FOOD_HINTS: Hint[] = [
+  { icon: "ti-bowl-spoon", text: "Съедобно оценивает калории по готовой еде на тарелке" },
+  { icon: "ti-camera", text: "Снимите блюдо сверху, чтобы было видно порцию" },
+];
+// Модуль калорий: в кадре упаковка с этикеткой, а не еда.
+export const MEAL_LABEL_HINTS: Hint[] = [
+  { icon: "ti-barcode", text: "Для упакованных продуктов есть сканер состава" },
+  { icon: "ti-tools-kitchen-2", text: "Калории по фото — для приготовленной еды" },
+];
 
 // Не разглядели состав: советы про съёмку.
 export const CAMERA_HINTS: Hint[] = [
@@ -33,7 +48,7 @@ export const MIXED_FRAMES_HINTS: Hint[] = [
   { icon: "ti-focus-2", text: "Проверяйте по одному продукту за раз" },
 ];
 
-export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = false, hints = CAMERA_HINTS }: Props) {
+export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = false, hints = CAMERA_HINTS, primaryAction, againLabel = "Снять ещё раз" }: Props) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", boxSizing: "border-box", minHeight: 0 }}>
       <div style={{ marginTop: 36 }}>
@@ -69,7 +84,34 @@ export default function ErrorScreen({ title, subtitle, onAgain, isSubscribed = f
             <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>Эта попытка не списана</span>
           </div>
         )}
-        <PhotoStager onScan={onAgain} startLabel="Снять ещё раз" startIcon="ti-camera" />
+        {primaryAction && (
+          <button
+            type="button"
+            className="sj-cta"
+            onClick={primaryAction.onClick}
+            style={{
+              width: "100%",
+              height: 52,
+              marginBottom: 10,
+              background: "var(--accent)",
+              color: "var(--on-accent)",
+              border: "none",
+              borderRadius: 14,
+              fontFamily: "'Golos Text', sans-serif",
+              fontSize: 15.5,
+              fontWeight: 500,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 9,
+              cursor: "pointer",
+            }}
+          >
+            {primaryAction.icon && <i className={`ti ${primaryAction.icon}`} aria-hidden="true" style={{ fontSize: 19 }} />}
+            {primaryAction.label}
+          </button>
+        )}
+        <PhotoStager onScan={onAgain} startLabel={againLabel} startIcon="ti-camera" />
       </div>
     </div>
   );

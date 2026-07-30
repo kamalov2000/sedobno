@@ -86,6 +86,22 @@ func TestMustLoad_SBPDisabledByDefault(t *testing.T) {
 	}
 }
 
+// Рекуррент включён по умолчанию (боевое поведение) и гасится отдельно от канала.
+// Дефолт важен: если бы SBP_RECURRENT_ENABLED молча умолчал в false, автопродление
+// на проде не включилось бы после согласования с ЮKassa — платежи бы шли, способ
+// оплаты не сохранялся, и заметили бы это только через период, по неслучившемуся
+// продлению.
+func TestMustLoad_SBPRecurrent(t *testing.T) {
+	requiredEnv(t)
+	if cfg := MustLoad(); !cfg.SBPRecurrentEnabled {
+		t.Error("SBPRecurrentEnabled по умолчанию должен быть true (боевое поведение)")
+	}
+	t.Setenv("SBP_RECURRENT_ENABLED", "false")
+	if cfg := MustLoad(); cfg.SBPRecurrentEnabled {
+		t.Error("SBP_RECURRENT_ENABLED=false не выключил рекуррент — рычага отката нет")
+	}
+}
+
 // Включённый СБП без ключей/лендинга — паника с перечислением недостающих (fail-fast §11).
 func TestMustLoad_SBPEnabledRequiresKeys(t *testing.T) {
 	requiredEnv(t)

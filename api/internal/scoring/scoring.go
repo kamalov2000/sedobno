@@ -81,6 +81,19 @@ type Result struct {
 	Flags []Flag `json:"flags"` // топ-3 по величине вычета
 	// Breakdown — «почему такой балл»: все применённые вычеты, по убыванию.
 	Breakdown []Deduction `json:"breakdown"`
+	// Penalized — МНОЖЕСТВО кодов, из-за которых балл снижен: и обычные добавки по
+	// классу риска, и коды, которыми сработали спец-правила маркеров (сахар, трансжиры,
+	// пальма, соль). Отсортировано, без повторов — одна и та же добавка на двух позициях
+	// даёт один элемент.
+	//
+	// Зачем отдельно от Flags/Breakdown: ни то, ни другое не годится для сравнения двух
+	// прочтений одного кадра (self-consistency, pipeline/selfcheck.go). Flags — топ-3 и
+	// без части кодов, Breakdown — заголовки для человека («добавки среднего риска,
+	// 4 шт.»), где коды уже схлопнуты потолком. Penalized — то единственное, по чему
+	// «модель прочитала другой состав» отличается от «модель иначе расставила позиции».
+	//
+	// Наружу не отдаётся (клиенту эти коды ничего не говорят) — служебное поле сравнения.
+	Penalized []string `json:"-"`
 }
 
 // Load разбирает yaml-конфиг и строит наборы маркеров.
@@ -141,6 +154,15 @@ func (c *Config) Score(items []Ingredient) Result {
 	var breakdown []Deduction
 	total := 0
 
+	// Коды, которые реально уронили балл (см. Result.Penalized). Пополняется в тех же
+	// местах, где применяется вычет, — чтобы список не мог разъехаться с арифметикой.
+	penalized := make(map[string]struct{}, len(items))
+	penalize := func(code string) {
+		if code != "" {
+			penalized[code] = struct{}{}
+		}
+	}
+
 	// Вычеты по классам риска обычных добавок (с потолком по классу).
 	counts := map[int]int{}
 	byRisk := map[int][]Ingredient{}
@@ -151,6 +173,7 @@ func (c *Config) Score(items []Ingredient) Result {
 		if it.Risk >= 1 && it.Risk <= 3 {
 			counts[it.Risk]++
 			byRisk[it.Risk] = append(byRisk[it.Risk], it)
+			penalize(it.Code)
 			flags = append(flags, Flag{
 				Code: it.Code, Title: displayName(it), Reason: it.VerdictShort,
 				Penalty: c.riskEach(it.Risk), Risk: it.Risk,
@@ -188,24 +211,28 @@ func (c *Config) Score(items []Ingredient) Result {
 	// Сахар/сироп/патока: одно правило по худшей позиции.
 	if it, pen := c.worstSugar(items); it != nil {
 		total += pen
+		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Добавленный сахар", Reason: it.VerdictShort, Penalty: pen, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{Title: "добавленный сахар", Penalty: pen})
 	}
 	// Трансжиры.
 	if it := firstInSet(items, c.transfatSet); it != nil {
 		total += c.Transfat
+		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Трансжиры", Reason: it.VerdictShort, Penalty: c.Transfat, Risk: 3})
 		breakdown = append(breakdown, Deduction{Title: "трансжиры", Penalty: c.Transfat})
 	}
 	// Пальмовое масло.
 	if it := firstInSet(items, c.palmSet); it != nil {
 		total += c.Palm
+		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Пальмовое масло", Reason: it.VerdictShort, Penalty: c.Palm, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{Title: "пальмовое масло", Penalty: c.Palm})
 	}
 	// Соль в первых позициях.
 	if it := c.saltInTop(items); it != nil {
 		total += c.SaltTop
+		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Соль в начале состава", Reason: it.VerdictShort, Penalty: c.SaltTop, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{Title: "соль в начале состава", Penalty: c.SaltTop})
 	}
@@ -223,7 +250,13 @@ func (c *Config) Score(items []Ingredient) Result {
 	// Разбивка — целиком, по убыванию вычета: сначала то, что сильнее всего уронило балл.
 	sort.SliceStable(breakdown, func(i, j int) bool { return breakdown[i].Penalty > breakdown[j].Penalty })
 
-	return Result{Score: score, Flags: flags, Breakdown: breakdown}
+	codes := make([]string, 0, len(penalized))
+	for code := range penalized {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes) // порядок обхода map случаен, а множество сравнивают поэлементно
+
+	return Result{Score: score, Flags: flags, Breakdown: breakdown, Penalized: codes}
 }
 
 // riskWord — название класса риска для строки разбивки («добавки среднего риска»).

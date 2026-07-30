@@ -9,6 +9,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/sostav/api/internal/imaging"
 )
 
 // Config — вся конфигурация приложения. Секреты только из env, в git не попадают.
@@ -54,6 +57,42 @@ type Config struct {
 	// ниже порога) — один повторный вызов на более сильной vision-модели Claude.
 	ExtractFallbackModel string  // "" — fallback выключен
 	ExtractConfidenceMin float64 // порог confidence основной модели (0<x≤1)
+	// ScanForceEscalateFineLoss — порог форс-эскалации по плотности мелкого текста
+	// на кадре (pipeline/hallucination.go). 0 выключает её — это и аварийный откат
+	// без пересборки. Значение на шкале imaging.Measure; калибруется по телеметрии
+	// (fine_loss пишется в scan_ok на каждом скане).
+	ScanForceEscalateFineLoss float64
+
+	// ScanSelfConsistency — прицельная перепроверка плотных этикеток: на кадрах, которые
+	// увела на сильную модель форс-эскалация (те же ~12% сканов), делается ВТОРОЙ
+	// параллельный вызов той же модели, и расхождение по набору штрафных добавок
+	// показывается пользователю как «балл приблизителен» (pipeline/selfcheck.go).
+	// Цена: +0.54 ₽ к среднему скану; латентность не растёт (вызовы параллельны).
+	// false — мгновенный откат к одиночной форс-эскалации без пересборки.
+	ScanSelfConsistency bool
+
+	// MealVisionModel — vision-модель модуля калорий по фото (feature/calories).
+	// "" — использовать дефолтную vision-модель выбранного провайдера (Haiku у
+	// anthropic). Переопределяется MEAL_VISION_MODEL, чтобы прогнать качество на
+	// более сильной модели (Sonnet) без влияния на сканер составов.
+	MealVisionModel string
+
+	// MealEscalationMode — режим эскалации разбора еды на сильную модель (Sonnet).
+	// Диагностика тестеров показала: единственная систематическая ошибка Haiku
+	// (кимчи→бекон, курица→креветки — визуальный прайор на «рисковые» классы) НЕ ловится
+	// ни по confidence (Haiku overconfident: 0.85 на ошибке), ни двойным проходом (temp=0
+	// детерминирован). Рабочий сигнал — само ИМЯ блюда, которое вернул Haiku: если это
+	// рисковый класс (бекон/креветки/нарезка/…), перепроверяем на Sonnet.
+	//   off    — только Haiku, как было by design;
+	//   risky  — эскалация на Sonnet, когда среди блюд Haiku есть рисковое имя (дефолт);
+	//   always — всегда Sonnet (дороже ×2.8, но чинит распознавание и калибрует confidence).
+	// Смена режима — одна переменная, без правки кода: если risky не вытянет по метрике
+	// (admin/stats), переключаем на always мгновенно.
+	MealEscalationMode string
+
+	// MealEscalationModel — сильная модель для эскалации разбора еды. Только anthropic;
+	// пусто или совпадение с основной моделью → эскалация недоступна (режим падает на off).
+	MealEscalationModel string
 
 	// ExplainEnabled — включает фазу 4 (LLM-объяснение, §4). По умолчанию ВЫКЛ: фронт
 	// его не показывает, а каждый ok-скан из-за него делал лишний text-LLM-вызов. При
@@ -63,8 +102,20 @@ type Config struct {
 	SubscriptionStarsPrice int // цена подписки в Telegram Stars (§9)
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
-	SBPEnabled        bool         // включён ли канал СБП (при false эндпоинты /payments/sbp/* выключены)
-	SBPPriceRub       int          // цена подписки в рублях (default 249, как на пейволле)
+	SBPEnabled bool // включён ли канал СБП (при false эндпоинты /payments/sbp/* выключены)
+	// SBPRecurrentEnabled — просить ли ЮKassa сохранить способ оплаты (save_payment_method),
+	// то есть заводить ли автопродление у НОВЫХ покупок. Default true — боевое поведение.
+	//
+	// Отдельный тумблер от SBPEnabled, потому что это разные отказы. Сохранение платёжных
+	// данных магазин получает у ЮKassa отдельным согласованием, и до него запрос с
+	// save_payment_method магазин может отвергнуть — а отвергается при этом ВЕСЬ платёж,
+	// вместе с обычной разовой покупкой. Без этого тумблера единственным откатом был бы
+	// SBP_ENABLED=false, то есть выключить платный канал целиком ради несогласованной
+	// его части. При false покупки идут разовыми: способ не сохраняется, next_charge_at
+	// пуст, подписка живёт до конца оплаченного периода — ровно грандфатеринг оферты.
+	SBPRecurrentEnabled bool
+	SBPPriceRub         int          // цена месячной подписки в рублях (default 249, как на пейволле)
+	SBPAnnualPriceRub int          // цена годовой подписки в рублях (default 2490; только СБП/карта)
 	YooKassaShopID    string       // shopId для Basic-auth к API ЮKassa
 	YooKassaSecretKey string       // секретный ключ для Basic-auth к API ЮKassa
 	YooKassaAPIBase   string       // база API ЮKassa (default https://api.yookassa.ru/v3; стаб в тестах)
@@ -72,11 +123,45 @@ type Config struct {
 	LandingLinkSecret string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
 	YooKassaAllowlist []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
 
+	// AppEnv — маркер окружения: "dev" разрешает dev-инструменты (обход авторизации),
+	// любое другое значение (и пустое) трактуется как прод — БЕЗОПАСНЫЙ ДЕФОЛТ: боевой
+	// сервер, где APP_ENV не выставлен, остаётся продом. Задаётся docker-compose.dev.yml.
+	AppEnv string
+
+	// DevAuthBypass — dev-обход авторизации (feature/calories): при true И dev-окружении
+	// (IsProd()==false) /auth принимает {dev_user_id} и выдаёт JWT без Telegram initData,
+	// чтобы открывать mini-app в обычном браузере. На проде игнорируется с warning. false по умолчанию.
+	DevAuthBypass bool
+
+	// MealDiagVerbose — расширенная диагностика разборов еды (для калибровочного датасета
+	// на бете): в события meal_ok кладём полный результат распознавания (блюда/КБЖУ/
+	// confidence), в meal_edited — правки пользователя (граммовки до/после). По умолчанию
+	// false (прод события не раздуваются); бета включает MEAL_DIAG_VERBOSE=true.
+	MealDiagVerbose bool
+
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
 	// Нужен для разбора распознавания: какое ИМЕННО изображение (после Normalize)
 	// видела модель. На проде держать выключенным (приватность/место).
 	DebugSaveScans bool   // DEBUG_SAVE_SCANS=1 — писать кадры в DebugScanDir
 	DebugScanDir   string // куда писать (default /debug; локально монтируется на хост)
+
+	// DebugStats=1 — расширенный вывод /api/health (статистика пула pgxpool).
+	// Наружу такие числа не светим: они говорят о внутреннем состоянии сервиса,
+	// поэтому по умолчанию выключено и включается только на нагрузочном стенде.
+	DebugStats bool
+
+	// --- Мок-провайдер (LLM_PROVIDER=mock): нагрузочный стенд без трат на API ---
+	// MockLLMDelay имитирует латентность vision-вызова, MockLLMErrorRate — долю
+	// сбоев (0.1 = каждый десятый вызов отдаёт 429 c Retry-After, чтобы прогнать
+	// ретрай-логику под нагрузкой). На реальных провайдерах не читаются.
+	MockLLMDelay     time.Duration
+	MockLLMErrorRate float64
+
+	// Переопределение рейт-лимитов (0 — действует константа в server). Нужно
+	// нагрузочному стенду: сценарий гонки квоты шлёт 20 параллельных запросов одним
+	// пользователем, и штатные 5/мин маскировали бы проверяемое свойство.
+	ScanRateLimit int
+	MealRateLimit int
 }
 
 // MustLoad читает окружение и паникует, если не хватает обязательных переменных
@@ -135,15 +220,47 @@ func MustLoad() *Config {
 		AnthropicTextModel:   opt("ANTHROPIC_TEXT_MODEL", "claude-haiku-4-5"),
 
 		ExtractFallbackModel: opt("EXTRACT_FALLBACK_MODEL", "claude-sonnet-5"),
+
+		// Пусто → NewMealAnalyzer возьмёт дефолтную vision-модель провайдера.
+		MealVisionModel: opt("MEAL_VISION_MODEL", ""),
+
+		// Дефолт risky: включаем вариант A сразу, метрика в admin/stats покажет, вытягивает
+		// ли он. Модель эскалации — Sonnet, та же, что fallback сканера.
+		MealEscalationMode:  opt("MEAL_ESCALATION_MODE", "risky"),
+		MealEscalationModel: opt("MEAL_ESCALATION_MODEL", "claude-sonnet-5"),
 	}
 
-	cfg.LLMMaxConcurrent = optInt(opt("LLM_MAX_CONCURRENT", "20"), 20, &invalid, "LLM_MAX_CONCURRENT")
+	// Режим эскалации — из закрытого множества; мусор в переменной не должен молча
+	// превратиться в неожиданное поведение, поэтому неизвестное значение → дефолт risky
+	// с предупреждением (не фатально: сервис поднимется на разумном дефолте).
+	switch cfg.MealEscalationMode {
+	case "off", "risky", "always":
+		// ок
+	default:
+		invalid = append(invalid, fmt.Sprintf("MEAL_ESCALATION_MODE=%q не из {off,risky,always} — беру risky", cfg.MealEscalationMode))
+		cfg.MealEscalationMode = "risky"
+	}
+
+	// 40 — по замерам нагрузочного стенда: на потолке 20 отшивалось ~29% запросов при
+	// 50 клиентах, на 40 отсев исчезает, а память остаётся с двойным запасом. Выше не
+	// поднимаем из-за памяти: каждый разбор в полёте держит ~7 МБ (декодированный
+	// битмап + JPEG + base64), то есть 60 одновременных — уже ~420 МБ на боевых фото.
+	cfg.LLMMaxConcurrent = optInt(opt("LLM_MAX_CONCURRENT", "40"), 40, &invalid, "LLM_MAX_CONCURRENT")
 	cfg.LLMTimeoutSec = optInt(opt("LLM_TIMEOUT_SEC", "25"), 25, &invalid, "LLM_TIMEOUT_SEC")
 	cfg.LLMUSDRUB = optFloat(opt("LLM_USD_RUB", "95"), 95, &invalid, "LLM_USD_RUB")
 	cfg.ExtractConfidenceMin = optFloat(opt("EXTRACT_CONFIDENCE_MIN", "0.5"), 0.5, &invalid, "EXTRACT_CONFIDENCE_MIN")
 	if cfg.ExtractConfidenceMin > 1 {
 		invalid = append(invalid, "EXTRACT_CONFIDENCE_MIN (ожидается 0<x≤1)")
 	}
+	// Порог форс-эскалации. Ноль ДОПУСТИМ и означает «выключено» — поэтому разбираем
+	// не через optRate (там 0 трактуется как «не задано» и подменяется дефолтом).
+	cfg.ScanForceEscalateFineLoss = optFloat(
+		opt("SCAN_FORCE_ESCALATE_FINE_LOSS", fmt.Sprintf("%g", imaging.ForceEscalateFineLoss)),
+		imaging.ForceEscalateFineLoss, &invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS")
+	if cfg.ScanForceEscalateFineLoss < 0 || cfg.ScanForceEscalateFineLoss > 1 {
+		invalid = append(invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS (ожидается 0≤x≤1, 0 — выключено)")
+	}
+	cfg.ScanSelfConsistency = optBool(opt("SCAN_SELF_CONSISTENCY", "true"))
 
 	// FEEDBACK_CHAT_ID — обязателен: без него обратная связь молча теряется. chat_id
 	// может быть отрицательным (группы/каналы), поэтому проверяем лишь на «ненулевое целое».
@@ -170,11 +287,28 @@ func MustLoad() *Config {
 	cfg.ExplainEnabled = optBool(opt("EXPLAIN_ENABLED", "false"))
 
 	// --- СБП/ЮKassa (§14.1). Канал опционален: при SBP_ENABLED=false ключи не требуются. ---
+	cfg.AppEnv = opt("APP_ENV", "prod") // безопасный дефолт: неизвестное окружение = прод
+	cfg.DevAuthBypass = optBool(opt("DEV_AUTH_BYPASS", "false"))
+	cfg.MealDiagVerbose = optBool(opt("MEAL_DIAG_VERBOSE", "false"))
+
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")
+	cfg.DebugStats = optBool(opt("DEBUG_STATS", "false"))
+
+	// Дефолт задержки — 8с по ЗАМЕРУ живого API (смоук 19.07, 20 разборов еды на
+	// Haiku): min 3.5с, p50 7.9с, p95 11.2с. Прежние 5с были взяты «на глаз» и
+	// льстили стенду: реальный p50 в 1.6 раза выше, p95 — в 2.2 раза. С 8с мок
+	// воспроизводит типичный вызов, а не лучший случай.
+	cfg.MockLLMDelay = optDuration(opt("MOCK_LLM_DELAY", "8s"), 8*time.Second, &invalid, "MOCK_LLM_DELAY")
+	cfg.MockLLMErrorRate = optRate(opt("MOCK_LLM_ERROR_RATE", "0"), &invalid, "MOCK_LLM_ERROR_RATE")
+	// 0 — не задано, действует константа в пакете server (боевое поведение).
+	cfg.ScanRateLimit = optIntOptional(opt("SCAN_RATE_LIMIT", "0"), &invalid, "SCAN_RATE_LIMIT")
+	cfg.MealRateLimit = optIntOptional(opt("MEAL_RATE_LIMIT", "0"), &invalid, "MEAL_RATE_LIMIT")
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
+	cfg.SBPRecurrentEnabled = optBool(opt("SBP_RECURRENT_ENABLED", "true"))
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
+	cfg.SBPAnnualPriceRub = optInt(opt("SBP_ANNUAL_PRICE_RUB", "2490"), 2490, &invalid, "SBP_ANNUAL_PRICE_RUB")
 	cfg.YooKassaAPIBase = opt("YOOKASSA_API_BASE", "https://api.yookassa.ru/v3")
 	cfg.YooKassaAllowlist = parseCIDRs(opt("YOOKASSA_ALLOWLIST", defaultYooKassaAllowlist), &invalid)
 	if cfg.SBPEnabled {
@@ -230,6 +364,19 @@ func MustLoad() *Config {
 	return cfg
 }
 
+// IsProd определяет продовую конфигурацию — для гейта dev-обходов (DevAuthBypass).
+// Безопасно по умолчанию: продом считается ВСЁ, кроме явного APP_ENV=dev, поэтому боевой
+// сервер без APP_ENV остаётся продом. Дополнительный жёсткий сигнал — включённый приём
+// платежей (SBPEnabled): если сервер берёт реальные деньги, это прод при любом APP_ENV.
+// WEBAPP_URL для детекта НЕ используем: в dev проекта это боевой https-туннель
+// (trycloudflare), неотличимый по схеме от прод-домена.
+func (c *Config) IsProd() bool {
+	if c.SBPEnabled {
+		return true
+	}
+	return !strings.EqualFold(strings.TrimSpace(c.AppEnv), "dev")
+}
+
 // optInt разбирает целое; при ошибке добавляет имя переменной в invalid и возвращает def.
 func optInt(raw string, def int, invalid *[]string, name string) int {
 	v, err := strconv.Atoi(raw)
@@ -245,6 +392,38 @@ func optFloat(raw string, def float64, invalid *[]string, name string) float64 {
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil || v <= 0 {
 		*invalid = append(*invalid, name+" (ожидается положительное число)")
+		return def
+	}
+	return v
+}
+
+// optIntOptional разбирает неотрицательное целое, где 0 значит «не задано».
+// Отдельно от optInt: там ноль считается ошибкой конфигурации.
+func optIntOptional(raw string, invalid *[]string, name string) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		*invalid = append(*invalid, name+" (ожидается неотрицательное целое; 0 — по умолчанию)")
+		return 0
+	}
+	return v
+}
+
+// optRate разбирает долю 0..1 включительно. Отдельно от optFloat: там ноль считается
+// ошибкой, а для доли сбоев мока ноль — штатный дефолт («не ломай ничего»).
+func optRate(raw string, invalid *[]string, name string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || v < 0 || v > 1 {
+		*invalid = append(*invalid, name+" (ожидается доля от 0 до 1)")
+		return 0
+	}
+	return v
+}
+
+// optDuration разбирает длительность в формате time.ParseDuration («5s», «1500ms»).
+func optDuration(raw string, def time.Duration, invalid *[]string, name string) time.Duration {
+	v, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || v < 0 {
+		*invalid = append(*invalid, name+" (ожидается длительность, например 5s или 1500ms)")
 		return def
 	}
 	return v

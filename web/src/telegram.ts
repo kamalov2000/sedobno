@@ -63,10 +63,38 @@ export function getInitData(): string {
   return tg()?.initData || (import.meta.env.VITE_DEV_INIT_DATA as string | undefined) || "";
 }
 
+/** Открыто ли приложение в обычном браузере в dev-сборке (не в Telegram). Только в
+ *  dev-режиме Vite: в проде import.meta.env.DEV=false, поэтому dev-обход недоступен. */
+function isBrowserDev(): boolean {
+  return Boolean(import.meta.env.DEV) && !tg();
+}
+
+/** dev_user_id для обхода авторизации в браузере (Часть А). null — обычный путь через
+ *  Telegram initData. Значение — VITE_DEV_USER_ID или 1. Работает ТОЛЬКО в dev-сборке. */
+function devUserId(): number | null {
+  if (!isBrowserDev()) return null;
+  const raw = import.meta.env.VITE_DEV_USER_ID as string | undefined;
+  const n = raw ? Number(raw) : 1;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** Тело запроса /api/auth: в Telegram — {init_data}; в браузере (dev) — {dev_user_id}. */
+export function authBody(): Record<string, unknown> {
+  const initData = getInitData();
+  if (initData) return { init_data: initData };
+  const dev = devUserId();
+  if (dev != null) return { dev_user_id: dev };
+  return { init_data: "" }; // ни того ни другого — обычный путь (бэк ответит 400/401)
+}
+
 export function haptic(kind: "light" | "medium" | "heavy" = "light"): void {
-  tg()?.HapticFeedback?.impactOccurred(kind);
+  const hf = tg()?.HapticFeedback;
+  if (hf) hf.impactOccurred(kind);
+  else if (isBrowserDev()) console.debug(`[dev-tg] haptic(${kind})`);
 }
 
 export function notify(kind: "error" | "success" | "warning"): void {
-  tg()?.HapticFeedback?.notificationOccurred(kind);
+  const hf = tg()?.HapticFeedback;
+  if (hf) hf.notificationOccurred(kind);
+  else if (isBrowserDev()) console.debug(`[dev-tg] notify(${kind})`);
 }

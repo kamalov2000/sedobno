@@ -54,6 +54,11 @@ func main() {
 
 	pipe := pipeline.New(provider, items, scorer, cfg.LLMMaxConcurrent, log)
 	pipe.SetExtractFallback(llm.NewExtractFallback(cfg), cfg.ExtractConfidenceMin)
+	// Форс-эскалация и прицельный self-consistency настраиваются ровно теми же
+	// переменными, что и в проде (cmd/api): иначе eval мерил бы не тот пайплайн,
+	// который работает у пользователя, — а он существует ради обратного.
+	pipe.SetForceEscalateFineLoss(cfg.ScanForceEscalateFineLoss)
+	pipe.SetSelfConsistency(cfg.ScanSelfConsistency)
 	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 управляется EXPLAIN_ENABLED (до/после)
 
 	// Кейсы: позиционные аргументы — мультифото-кейсы (файлы через запятую = один скан);
@@ -73,11 +78,30 @@ func main() {
 	fmt.Printf("evalpipe: провайдер=%s, кейсов=%d\n\n", provider.Name(), len(cases))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ФАЙЛ\tСТАТУС\tИЗВЛЕЧ.\tСМАТЧ.\tSCORE\tФЛАГИ\t₽/скан\tТОКЕНЫ\tЛАТЕНТ.")
+	fmt.Fprintln(tw, "ФАЙЛ\tСТАТУС\tМОДЕЛЬ\tИЗВЛЕЧ.\tСМАТЧ.\tSCORE\tКОНТРОЛЬ\tfine_loss\tФЛАГИ\t₽/скан\tТОКЕНЫ\tЛАТЕНТ.")
 
 	var totCost float64
 	var totLatency, totTokens int64
 	var okCount int
+	// escCount — сколько кейсов ушло на сильную модель. Эскалация выполнялась и
+	// раньше (SetExtractFallback подключён выше), но нигде не показывалась: её цена
+	// растворялась в общей средней, и понять, на каких фото она срабатывает, было
+	// нельзя. Доля эскалаций — прямой вход в юнит-экономику, поэтому считаем явно.
+	var escCount int
+	// Кэш промпта: запись префикса и чтение из него. Нули в обоих означают, что
+	// префикс не дотянул до минимума модели (у Haiku 4.5 — 4096 токенов) и кэш
+	// молча не включился — это ответ на вопрос «стоит ли вообще кэшировать».
+	var totCacheWrite, totCacheRead int64
+	// gateCount/gateEscCount/gateNutrCount — сколько кейсов ЗАЦЕПИЛ антигаллюцинационный
+	// гейт, сколько из них дошло до эскалации и у скольких скрыт КБЖУ. Доля срабатываний
+	// на нормальных этикетках — прямой критерий «гейт не ложно-срабатывает», и без
+	// счётчика он ненаблюдаем: ветка «ингредиент ненадёжен» ничего не меняет в статусе.
+	var gateCount, gateEscCount, gateNutrCount int
+	// forcedCount — сколько кадров увела на сильную модель форс-эскалация по плотности;
+	// scCount/divergedCount — на скольких из них состоялось контрольное прочтение и на
+	// скольких оно разошлось с первым. Доля расхождений — это и есть ответ на вопрос
+	// «как часто сильная модель не воспроизводит саму себя», ради которого всё делалось.
+	var forcedCount, scCount, divergedCount int
 
 	for i, grp := range cases {
 		if i > 0 && *delay > 0 {
@@ -85,7 +109,7 @@ func main() {
 		}
 		imgs, name, rerr := readCase(grp)
 		if rerr != nil {
-			fmt.Fprintf(tw, "%s\tОШИБКА ЧТЕНИЯ\t-\t-\t-\t-\t-\t-\t-\n", name)
+			fmt.Fprintf(tw, "%s\tОШИБКА ЧТЕНИЯ\t-\t-\t-\t-\t-\t-\t-\t-\n", name)
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -93,24 +117,68 @@ func main() {
 		cancel()
 
 		if err != nil {
-			fmt.Fprintf(tw, "%s\tERROR: %s\t-\t-\t-\t-\t-\t-\t-\n", name, short(err.Error()))
+			fmt.Fprintf(tw, "%s\tERROR: %s\t-\t-\t-\t-\t-\t-\t-\t-\n", name, short(err.Error()))
 			continue
 		}
 
 		matched := countMatched(res.Matched)
 		flags := topFlagTitles(res.Flags)
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%.4f\t%d\t%dms\n",
-			name, res.Status, len(res.IngredientsRaw), matched, res.Score, flags,
+		// Провайдер отражает эскалацию: пайплайн подменяет его именем fallback-модели,
+		// когда фаза 1 ушла на сильную модель (мультикадр либо низкая уверенность).
+		model := res.Provider
+		if strings.Contains(model, "fallback") {
+			escCount++
+			model += " ⚡"
+		}
+		if res.ForcedStrong {
+			forcedCount++
+			model += "⚡"
+		}
+		// Колонка КОНТРОЛЬ — балл второго прочтения (прицельный self-consistency).
+		// «≈» перед числом означает: наборы штрафных добавок разошлись, и пользователю
+		// показывается предупреждение. Прочерк — контрольного прочтения не было.
+		control := "—"
+		if res.SelfCheckRan {
+			scCount++
+			control = fmt.Sprintf("%d", res.SelfCheckScore)
+			if res.ScoreApproximate {
+				divergedCount++
+				control = "≈" + control
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%.2f\t%s\t%.4f\t%d\t%dms\n",
+			name, res.Status, model, len(res.IngredientsRaw), matched, res.Score, control, res.FineLoss, flags,
 			res.CostRUB, res.Usage.InputTokens+res.Usage.OutputTokens, res.LatencyMs)
+		if res.ScoreApproximate {
+			fmt.Fprintf(tw, "  └─ расхождение: только в 1-м %v, только в контрольном %v\t\t\t\t\t\t\t\t\t\t\t\n",
+				res.SelfCheckOnlyA, res.SelfCheckOnlyB)
+		}
 
+		if res.GateMismatch {
+			gateCount++
+		}
+		if res.GateEscalated {
+			gateEscCount++
+		}
+		if res.GateNutritionMismatch {
+			gateNutrCount++
+		}
 		totCost += res.CostRUB
 		totLatency += res.LatencyMs
 		totTokens += int64(res.Usage.InputTokens + res.Usage.OutputTokens)
+		totCacheWrite += int64(res.Usage.CacheCreationInputTokens)
+		totCacheRead += int64(res.Usage.CacheReadInputTokens)
 		if res.Status == pipeline.StatusOK {
 			okCount++
 		}
 		if *raw {
 			fmt.Fprintf(tw, "  └─ состав[%d]: %s\t\t\t\t\t\t\t\t\n", len(res.IngredientsRaw), strings.Join(res.IngredientsRaw, " | "))
+			// Дословная переписка состава — то, с чем гейт сверяет каждый ингредиент.
+			// Без неё срабатывание (или его отсутствие) разобрать нечем: фото в проде
+			// не хранятся, и второй источник правды тут только этот текст.
+			if res.Transcription != "" {
+				fmt.Fprintf(tw, "  └─ transcription: %s\t\t\t\t\t\t\t\t\n", res.Transcription)
+			}
 		}
 	}
 	tw.Flush()
@@ -118,8 +186,18 @@ func main() {
 	n := int64(len(cases))
 	fmt.Printf("\nИТОГО: кейсов=%d, ok=%d\n", len(cases), okCount)
 	fmt.Printf("Стоимость: сумма=%.4f ₽, средняя=%.4f ₽/скан (цель < 1 ₽)\n", totCost, avgF(totCost, len(cases)))
+	fmt.Printf("Эскалации на сильную модель: %d из %d (%.0f%%)\n",
+		escCount, len(cases), 100*float64(escCount)/float64(max(1, len(cases))))
+	fmt.Printf("Форс-эскалация по плотности: %d из %d (%.0f%%)\n",
+		forcedCount, len(cases), 100*float64(forcedCount)/float64(max(1, len(cases))))
+	fmt.Printf("Self-consistency: контрольных прочтений=%d, разошлись=%d (%.0f%% от контрольных) → балл приблизителен\n",
+		scCount, divergedCount, 100*float64(divergedCount)/float64(max(1, scCount)))
+	fmt.Printf("Гейт transcription: сработал на %d из %d (%.0f%%), из них эскалаций=%d, скрытых КБЖУ=%d\n",
+		gateCount, len(cases), 100*float64(gateCount)/float64(max(1, len(cases))), gateEscCount, gateNutrCount)
 	fmt.Printf("Латентность: средняя=%d ms\n", avgI(totLatency, n))
 	fmt.Printf("Токены: сумма=%d, средние=%d/скан\n", totTokens, avgI(totTokens, n))
+	fmt.Printf("Кэш промпта: запись=%d, чтение=%d (нули = префикс ниже порога модели)\n",
+		totCacheWrite, totCacheRead)
 }
 
 // buildCases собирает список кейсов. Позиционные аргументы — мультифото-кейсы:

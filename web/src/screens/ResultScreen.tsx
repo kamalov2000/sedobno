@@ -5,21 +5,30 @@ import FlagCard from "../components/FlagCard";
 import IngredientList from "../components/IngredientList";
 import NutritionCard from "../components/NutritionCard";
 import PhotoStager from "../components/PhotoStager";
+import ModelTake from "../components/ModelTake";
 
 // Экран 03 · Результат. Дисклеймер §11 в футере. Ценник — фолбэк «ПРОВЕРКА №N».
 interface Props {
   result: ScanResult;
   isSubscribed: boolean;
   onAgain: (files: File[]) => void;
+  // Остаток проверок из АКТУАЛЬНОГО профиля (/me) — единый источник правды. Скан из
+  // истории не несёт scans_left (бэк его не восстанавливает), поэтому чип берём из me,
+  // а не из result.scans_left — иначе «0 из 10» на любом открытом из истории результате.
+  scansLeft?: number;
+  // Скан → дневник (backlog): вторым действием, «Проверить ещё» остаётся главным.
+  // Не задан (историческая витрина/старый вызов) — кнопки нет вовсе.
+  onAddToDiary?: () => void;
 }
 
-export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
+export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft, onAddToDiary }: Props) {
   const verdict = scoreToVerdict(result.score);
   const count = result.ingredients.length;
   const productLine = result.scan_number
     ? `ПРОВЕРКА №${result.scan_number} · ИНГРЕДИЕНТОВ: ${count}`
     : `ИНГРЕДИЕНТОВ: ${count}`;
-  const checksChip = isSubscribed ? "БЕЗЛИМИТ" : `ОСТАЛОСЬ ${Math.max(0, result.scans_left)} ИЗ 10 ПРОВЕРОК`;
+  const left = scansLeft ?? result.scans_left; // из me; фолбэк на result (витрина/старый вызов)
+  const checksChip = isSubscribed ? "БЕЗЛИМИТ" : `ОСТАЛОСЬ ${Math.max(0, left)} ИЗ 10 ПРОВЕРОК`;
 
   // Правило #2: во флаг-карточки средний/высокий риск — ЛИБО крупный вычет по
   // спец-правилу §5. Иначе сахар в первых позициях (маркер risk=1, но −15 баллов)
@@ -60,6 +69,30 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
           Оценка — ориентир по добавкам, не полная характеристика продукта
         </div>
 
+        {/* Балл на пределе читаемости: плотную этикетку сильная модель прочитала дважды
+            и дала РАЗНЫЕ наборы штрафных добавок (score_approximate). Показать одно число
+            молча было бы враньём — какое именно из двух увидит человек, решает жребий.
+            Поэтому говорим вслух, ровно как «≈» в калориях. Плашка стоит сразу под баллом:
+            она — оговорка К НЕМУ, а не к составу, и ниже по экрану её бы не связали. */}
+        {result.score_approximate && (
+          <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "var(--bg-soft)", borderRadius: 12, padding: "13px 14px", marginTop: 12 }}>
+            {/* Тот же значок, что у «оценки на глаз» в калориях: один смысл — один знак. */}
+            <i className="ti ti-hand-stop" aria-hidden="true" style={{ fontSize: 18, color: "var(--text3)", flex: "none", marginTop: 1 }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>Балл на этой этикетке приблизителен</div>
+              <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.45, marginTop: 2 }}>
+                Состав прочитан, но шрифт мелкий: две проверки дали разный набор добавок.
+                Считаем по первой — это ориентир, а не точное число.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Короткий разбор модели (фаза 4 пайплайна): пересказ вердиктов добавок
+            фактическим тоном. Генерируется и оплачивается на бэке — доводим до экрана.
+            Пустой — блок не рендерится. Стоит над карточками флагов как TL;DR. */}
+        <ModelTake text={result.explanation} />
+
         {flags.length > 0 ? (
           flags.map((f, i) => (
             <FlagCard key={i} name={f.title} why={f.verdict} level={flagBadgeLevel(f.risk, f.penalty)} />
@@ -92,8 +125,11 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
 
         {/* Плохо прочитанный текст: состав распознан и оценён, но строки могли уехать —
             просим сверить. Уверенный скан не показывает НИЧЕГО (зелёная галочка на
-            каждом экране обесценила бы предупреждение): норма — это отсутствие плашки. */}
-        {result.low_confidence && (
+            каждом экране обесценила бы предупреждение): норма — это отсутствие плашки.
+            При score_approximate плашку не показываем: обе про одно и то же («текст на
+            грани читаемости»), а два предупреждения подряд читаются как шум и
+            обесценивают друг друга. Плашка выше — строго сильнее этой. */}
+        {result.low_confidence && !result.score_approximate && (
           <div
             style={{
               display: "flex",
@@ -129,6 +165,25 @@ export default function ResultScreen({ result, isSubscribed, onAgain }: Props) {
       </div>
 
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
+        {/* Кнопка есть ВСЕГДА, даже когда КБЖУ с этикетки не прочиталось. Прятать её в
+            этом случае — стена: человек видит разобранный состав, но положить продукт в
+            дневник почему-то не может, и почему — не написано (кейс 27.07: онигири, КБЖУ
+            на упаковке есть, модель его не увидела; сканер еды то же фото отверг как
+            «этикетку, а не еду» — два сканера и ни одного пути).
+            КБЖУ мы по-прежнему не выдумываем: развилка живёт в App — числа есть, считаем
+            порцию от нетто; чисел нет, уводим в текстовое добавление с подставленным
+            названием, где калории оценит meal-пайплайн.
+            Второе действие — «Проверить ещё» остаётся главным CTA. */}
+        {onAddToDiary && (
+          <button
+            type="button"
+            onClick={onAddToDiary}
+            style={{ width: "100%", height: 44, marginBottom: 10, background: "none", border: "1px solid var(--cal-border)", color: "var(--cal-num)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+          >
+            <i className="ti ti-book-2" aria-hidden="true" style={{ fontSize: 16 }} />
+            В дневник
+          </button>
+        )}
         <PhotoStager onScan={onAgain} startLabel="Проверить ещё" startIcon="ti-scan" startHeight={52} startFontSize={15} />
         <div style={{ textAlign: "center", fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
           Справочная информация, не медицинская рекомендация

@@ -96,10 +96,13 @@ type Result struct {
 	Breakdown      []scoring.Deduction `json:"breakdown"`
 	IngredientsRaw []string            `json:"ingredients_raw"`
 	Matched        []MatchedIngredient `json:"ingredients_matched"`
-	Explanation    string              `json:"explanation"`
-	Nutrition      *llm.Nutrition      `json:"nutrition,omitempty"`
-	Provider       string              `json:"provider"`
-	Confidence     float64             `json:"confidence"`
+	// ProductName — название с упаковки (фаза 1). Пусто — не прочиталось; интерфейс
+	// в этом случае падает на фолбэк «ПРОВЕРКА №N», как и раньше.
+	ProductName string         `json:"product_name,omitempty"`
+	Explanation string         `json:"explanation"`
+	Nutrition   *llm.Nutrition `json:"nutrition,omitempty"`
+	Provider    string         `json:"provider"`
+	Confidence  float64        `json:"confidence"`
 	// LowConfidence — итоговое извлечение осталось неуверенным (confidence < confMin,
 	// сильная модель не выручила либо не подключена). Состав распознан и оценён, но
 	// строки могли прочитаться с ошибками — повод попросить пользователя сверить их
@@ -108,19 +111,74 @@ type Result struct {
 	LatencyMs     int64     `json:"latency_ms"`
 	CostRUB       float64   `json:"cost_estimate"`
 	Usage         llm.Usage `json:"-"`
+
+	// Поля детерминированного антигаллюцинационного гейта (transcription_gate.go) —
+	// внутренние, для телеметрии (server/scan.go пишет их в events), на клиентский
+	// ответ не влияют.
+	GateMismatch          bool `json:"-"` // хоть одно несовпадение (ингредиент или КБЖУ)
+	GateEscalated         bool `json:"-"` // штрафной ингредиент не подтвердился → эскалация
+	GateNutritionMismatch bool `json:"-"` // числа КБЖУ не подтвердились → nutrition скрыт
+	// StrongAnswer — ИТОГОВОЕ извлечение пришло от сильной модели (Sonnet-fallback), а
+	// не от основной. Это НЕ то же самое, что «сильную модель звали»: её могли позвать
+	// и отбросить её результат (ошибка вызова, пустой состав) — тогда отвечает всё ещё
+	// основная модель, и флаг остаётся false.
+	//
+	// Нужен кэшу разбора: сильный ответ вытесняет по тому же фото слабый, слабый поверх
+	// сильного не пишется (store.PutAnalysisCache). Ретрай КБЖУ сюда НЕ входит — он
+	// дочитывает только числа, а список ингредиентов остаётся от основной модели, и
+	// ровно он определяет риск выдуманного состава.
+	StrongAnswer bool `json:"-"`
+	// Признаки детекторов сочинённого состава (hallucination.go) — телеметрия на
+	// КАЖДОМ скане, а не только на сработавших: пороги калибруются по распределению
+	// живого трафика, а не по корпусу из двух десятков кадров. На ответ клиенту не
+	// влияют.
+	FineLoss       float64 `json:"-"` // доля деталей, теряемых при ужатии вдвое
+	EdgeFrac       float64 `json:"-"` // доля пикселей с сильным градиентом
+	CharsPerItem   float64 `json:"-"` // средняя длина позиции итогового состава
+	ForcedStrong   bool    `json:"-"` // сработала форс-эскалация по fine_loss
+	ShortItemsFlag bool    `json:"-"` // сработал детектор «позиций много, текста мало»
+	// Transcription — дословная переписка состава, с которой гейт сверяет ингредиенты.
+	// Нужна для разбора срабатываний: без неё «гейт сработал» нечем объяснить, а по
+	// прод-логам фото уже не поднять (мы их не храним).
+	Transcription string `json:"-"`
+
+	// ScoreApproximate — два независимых прочтения плотной этикетки сильной моделью дали
+	// РАЗНЫЕ наборы штрафных добавок (selfcheck.go). Балл посчитан по первому из них и
+	// показывается как обычно, но интерфейс обязан сказать, что на этой этикетке он
+	// приблизителен: молчать одним числом там, где модель не воспроизводит саму себя, —
+	// то же враньё, что и показывать выдуманный состав.
+	//
+	// Единственное поле self-consistency, которое уходит клиенту; остальные — телеметрия.
+	ScoreApproximate bool `json:"score_approximate,omitempty"`
+	// Поля телеметрии self-consistency (selfcheck.go): нужны, чтобы на живом трафике
+	// увидеть, КАК ЧАСТО сильная модель расходится сама с собой и на чём именно, —
+	// без этого «расхождение» осталось бы такой же догадкой, как первый порог fine_loss.
+	SelfCheckRan   bool     `json:"-"` // контрольное прочтение состоялось и сравнено
+	SelfCheckScore int      `json:"-"` // балл контрольного прочтения (первое — Score)
+	SelfCheckOnlyA []string `json:"-"` // штрафные коды только в первом прочтении
+	SelfCheckOnlyB []string `json:"-"` // штрафные коды только в контрольном
 }
 
 // Pipeline держит зависимости и конкурентный лимит на LLM-вызовы (§15).
 type Pipeline struct {
-	llm        llm.LLMProvider
-	fallback   llm.LLMProvider // необязательный повторный извлекатель для неуверенных случаев
-	confMin    float64         // порог confidence основной модели, ниже которого зовём fallback
-	matcher    *dict.Matcher
-	scorer     *scoring.Config
-	byCode     map[string]dict.Additive
-	candidates []llm.Candidate
-	log        *slog.Logger
-	sem        chan struct{}
+	llm      llm.LLMProvider
+	fallback llm.LLMProvider // необязательный повторный извлекатель для неуверенных случаев
+	confMin  float64         // порог confidence основной модели, ниже которого зовём fallback
+	// forceFineLoss — порог форс-эскалации по плотности мелкого текста. 0 выключает
+	// её полностью (пайплайн ведёт себя как до правки), что нужно и тестам, и
+	// аварийному откату без пересборки — через SCAN_FORCE_ESCALATE_FINE_LOSS=0.
+	forceFineLoss float64
+	// selfConsistency — делать ли ВТОРОЕ контрольное прочтение на кадрах, которые увела
+	// на сильную модель форс-эскалация (selfcheck.go). Только на них: это ~12% сканов,
+	// и именно там модель расходится сама с собой. false — пайплайн ведёт себя как до
+	// правки (аварийный откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
+	selfConsistency bool
+	matcher         *dict.Matcher
+	scorer        *scoring.Config
+	byCode        map[string]dict.Additive
+	candidates    []llm.Candidate
+	log           *slog.Logger
+	sem           chan struct{}
 	// explainEnabled — выполнять ли фазу 4 (LLM-объяснение). По умолчанию true (обратная
 	// совместимость: кто не звал SetExplainEnabled, ведёт себя как раньше); прод выключает
 	// через EXPLAIN_ENABLED. При false фаза пропускается, res.Explanation остаётся пустым.
@@ -149,6 +207,17 @@ func (p *Pipeline) SetExtractFallback(fb llm.LLMProvider, confMin float64) {
 	p.fallback = fb
 	p.confMin = confMin
 }
+
+// SetForceEscalateFineLoss задаёт порог форс-эскалации по плотности мелкого текста
+// (hallucination.go). 0 — выключено. Значение — на шкале ИМЕННО этой реализации
+// imaging.Measure: числа несравнимы между реализациями, калибровать только по
+// телеметрии.
+func (p *Pipeline) SetForceEscalateFineLoss(v float64) { p.forceFineLoss = v }
+
+// SetSelfConsistency включает прицельную перепроверку плотных этикеток вторым
+// параллельным вызовом сильной модели (selfcheck.go). Работает только там, где уже
+// сработала форс-эскалация, и только при подключённом fallback-провайдере.
+func (p *Pipeline) SetSelfConsistency(v bool) { p.selfConsistency = v }
 
 // New собирает пайплайн: строит матчер, индекс по коду и список кандидатов для
 // фазы 2 из словаря items. maxConcurrent — семафор на LLM-вызовы.
@@ -198,8 +267,48 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// strongUsed — звали ли уже сильную (fallback) модель на извлечении: тогда точечный
 	// нутриент-ретрай ниже бессмыслен (та же модель уже смотрела на кадр).
 	var strongUsed bool
-	if len(images) > 1 && p.fallback != nil {
-		e, uf, err := p.extractEntryWith(ctx, p.fallback, images)
+
+	// Признаки кадра ДО вызова модели (hallucination.go). Считаются ВСЕГДА, даже когда
+	// ничего не срабатывает: числа уходят в телеметрию, и порог перекалибровывается по
+	// живому трафику, а не по корпусу из двух десятков кадров.
+	dens := measureFrames(images, p.log)
+	res.FineLoss = dens.FineLoss
+	res.EdgeFrac = dens.EdgeFrac
+
+	// Форс-эскалация: на кадре столько мелкого текста, что дешёвая модель его не
+	// прочитает, а СОЧИНИТ (и сочинит согласованно с transcription, так что гейт
+	// промолчит). Зовём сильную модель сразу — слабый ответ на таком кадре не нужен ни
+	// пользователю, ни кэшу.
+	forceStrong := p.fallback != nil && p.forceFineLoss > 0 && dens.FineLoss >= p.forceFineLoss
+	if forceStrong {
+		res.ForcedStrong = true
+		p.log.Info("форс-эскалация: плотная мелкая этикетка",
+			"fine_loss", dens.FineLoss, "порог", p.forceFineLoss, "model", p.fallback.Name())
+	}
+
+	// control — контрольное прочтение ТОГО ЖЕ кадра той же сильной моделью (прицельный
+	// self-consistency, selfcheck.go). Заполняется только на форс-эскалации: сравнивать
+	// прочтения имеет смысл там, где детекторы уже сказали «этикетка на пределе».
+	// Сравнение — после фазы 2, когда у обоих есть набор штрафных добавок.
+	var control pairExtraction
+
+	if (len(images) > 1 || forceStrong) && p.fallback != nil {
+		var (
+			e   *llm.Extraction
+			uf  llm.Usage
+			err error
+		)
+		if forceStrong && p.selfConsistency {
+			// Два вызова параллельно: контрольный не добавляет латентности, только цену
+			// (+0.54 ₽ на скан в среднем по потоку — он идёт лишь на ~12% кадров).
+			var primary pairExtraction
+			primary, control, uf, err = p.extractPair(ctx, p.fallback, images)
+			if err == nil {
+				e, err = primary.ext, primary.err
+			}
+		} else {
+			e, uf, err = p.extractEntryWith(ctx, p.fallback, images)
+		}
 		fbUsage = fbUsage.Add(uf)
 		if err != nil {
 			if errors.Is(err, ErrBusy) {
@@ -210,7 +319,8 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		}
 		ext = e
 		strongUsed = true
-		res.Provider = p.fallback.Name() // диагностика: мультикадр ушёл на сильную модель
+		res.StrongAnswer = true
+		res.Provider = p.fallback.Name() // диагностика: кадр ушёл на сильную модель
 	} else {
 		e, u1, err := p.extractEntry(ctx, images)
 		vUsage = vUsage.Add(u1)
@@ -233,9 +343,33 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			} else if ext2.IsLabel && len(ext2.Ingredients) > 0 {
 				p.log.Info("fallback-извлечение выручило неуверенный кейс", "model", p.fallback.Name())
 				ext = ext2
+				res.StrongAnswer = true
+			}
+		}
+		// Детектор «позиций много, текста мало» (hallucination.go). В отличие от
+		// fine_loss считается ПО ОТВЕТУ, поэтому работает как обычная эскалация: дешёвый
+		// прогон уже оплачен, но показывать его результат нельзя — по форме это подпись
+		// сочинённого состава (короткие типовые названия на плотной этикетке).
+		if p.fallback != nil && !strongUsed && ShortItemsSuspicious(ext.Ingredients, dens.FineLoss) {
+			res.ShortItemsFlag = true
+			p.log.Info("эскалация: короткие позиции на плотном кадре",
+				"позиций", len(ext.Ingredients), "симв_на_позицию", CharsPerItem(ext.Ingredients),
+				"fine_loss", dens.FineLoss, "model", p.fallback.Name())
+			strongUsed = true
+			ext2, uf, ferr := p.extractWith(ctx, p.fallback, images)
+			fbUsage = fbUsage.Add(uf)
+			if ferr != nil {
+				p.log.Warn("эскалация по коротким позициям не удалась, оставляем результат основной модели", "err", ferr)
+			} else if ext2.IsLabel && len(ext2.Ingredients) > 0 {
+				ext = ext2
+				res.StrongAnswer = true
+				res.Provider = p.fallback.Name()
 			}
 		}
 	}
+	// Средняя длина позиции ИТОГОВОГО извлечения — в телеметрию на каждом скане
+	// (считаем после всех эскалаций: интересна форма того ответа, что увидит человек).
+	res.CharsPerItem = CharsPerItem(ext.Ingredients)
 
 	res.Confidence = ext.Confidence
 	// Читалось ли фото плохо — по ИТОГОВОМУ извлечению (если неуверенный кейс выручила
@@ -244,6 +378,8 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// используется только для отображения.
 	res.LowConfidence = p.lowConfidence(ext)
 	res.IngredientsRaw = ext.Ingredients
+	res.Transcription = ext.Transcription
+	res.ProductName = ext.ProductName
 	// Пищевая ценность независима от состава: сохраняем, даже если ниже уйдём в
 	// label_not_found. Показывается на любом продукте (хорошем/плохом), §дополнение.
 	res.Nutrition = ext.Nutrition
@@ -308,20 +444,112 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		}
 	}
 
-	// Фаза 2 — нормализация по словарю (+ добор LLM по несматченным).
-	recs, u2, err := p.normalize(ctx, ext.Ingredients)
+	// Фаза 2 — нормализация по словарю (+ добор LLM по несматченным). Контрольное
+	// прочтение проходит её тем же путём и ПАРАЛЛЕЛЬНО (selfcheck.go): фаза 2 — это ещё
+	// один LLM-вызов, и последовательный второй заход снова растил бы латентность
+	// флагнутого скана, ради которой пара вызовов фазы 1 и делалась параллельной.
+	var (
+		recs, recsControl []rec
+		u2                llm.Usage
+		err               error
+	)
+	if usableControl(control) {
+		var u2b llm.Usage
+		recs, u2, err, recsControl, u2b = p.normalizePair(ctx, ext.Ingredients, control.ext.Ingredients)
+		tUsage = tUsage.Add(u2b)
+	} else {
+		recs, u2, err = p.normalize(ctx, ext.Ingredients)
+	}
 	tUsage = tUsage.Add(u2)
 	if err != nil {
 		p.log.Warn("фаза 2: добор LLM не удался, продолжаем без него", "err", err)
 	}
 
-	items := make([]scoring.Ingredient, 0, len(recs))
+	// Детерминированный антигаллюцинационный гейт (transcription_gate.go) — вместо
+	// доверия к self-reported confidence, которая уверенную галлюцинацию не ловит по
+	// конструкции. Гейтим только одиночный кадр без уже вызванной сильной модели:
+	// мультикадр и так идёт через неё с самого начала (strongUsed=true выставлен выше).
+	if !strongUsed && p.fallback != nil {
+		risky, unreliable := transcriptionMismatch(recs, ext.Transcription)
+		switch {
+		case len(risky) > 0:
+			res.GateMismatch = true
+			p.log.Warn("гейт transcription: штрафной ингредиент не подтверждён текстом, эскалируем",
+				"count", len(risky), "first", risky[0].raw)
+			ext2, uf, ferr := p.extractWith(ctx, p.fallback, images)
+			fbUsage = fbUsage.Add(uf)
+			if ferr != nil {
+				p.log.Warn("эскалация по гейту transcription не удалась, оставляем результат основной модели", "err", ferr)
+				break
+			}
+			if !ext2.IsLabel || len(ext2.Ingredients) == 0 {
+				p.log.Warn("эскалация по гейту transcription: сильная модель не увидела состав, оставляем основной")
+				break
+			}
+			// Результат сильной модели ПОБЕЖДАЕТ безоговорочно — эскалируем максимум один
+			// раз за скан (повторный гейт не гоняем, иначе рискуем бесконечно звать Sonnet
+			// на честно неуверенном фото).
+			res.GateEscalated = true
+			ext = ext2
+			strongUsed = true
+			res.StrongAnswer = true
+			res.Provider = p.fallback.Name()
+			res.Confidence = ext.Confidence
+			res.LowConfidence = p.lowConfidence(ext)
+			res.IngredientsRaw = ext.Ingredients
+			res.Transcription = ext.Transcription
+			res.ProductName = ext.ProductName
+			res.Nutrition = ext.Nutrition
+
+			// Пере-проверяем терминальные исходы на результате сильной модели: она могла
+			// честно не увидеть то, что дешёвая придумала (алкоголь/не еда/состава нет).
+			switch {
+			case ext.Category == CategoryAlcohol:
+				res.Status = StatusNotScored
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			case ext.NotFood():
+				res.Status = StatusNotFood
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			case !ext.IsLabel || len(ext.Ingredients) == 0:
+				res.Status = StatusLabelNotFound
+				res.Reason = labelNotFoundReason(ext)
+				p.finalize(res, vUsage, tUsage, fbUsage, start)
+				return res, nil
+			}
+
+			recs2, u2b, err2 := p.normalize(ctx, ext.Ingredients)
+			tUsage = tUsage.Add(u2b)
+			if err2 != nil {
+				p.log.Warn("фаза 2 после эскалации: добор LLM не удался, продолжаем без него", "err", err2)
+			}
+			recs = recs2
+		case len(unreliable) > 0:
+			res.GateMismatch = true
+			// Пишем в лог, а не только в поле: доля срабатываний гейта — это метрика,
+			// за которой следим на бете, и молчащая ветка делала её невидимой.
+			p.log.Warn("гейт transcription: ингредиент не подтверждён текстом, помечен ненадёжным",
+				"count", len(unreliable), "first", recs[unreliable[0]].raw)
+			recs = markUnreliable(recs, unreliable)
+		}
+	}
+
+	// КБЖУ-гейт: если transcription содержит блок пищевой ценности, числа nutrition
+	// обязаны в нём буквально встречаться — иначе они так же могут быть выдуманы (эталон:
+	// 48 ккал/12 У против реальных 32.48/8.0, объём 500 против 520 на «Слоне в чайном
+	// лесу»). Эскалации здесь нет (в отличие от ингредиентов) — эти числа не идут в балл,
+	// несовпадение просто прячет ненадёжные цифры, а не запускает повторный вызов.
+	if missing := nutritionMismatch(res.Nutrition, ext.Transcription); len(missing) > 0 {
+		p.log.Warn("гейт transcription: числа nutrition не подтверждены текстом, скрываем", "fields", missing)
+		res.GateMismatch = true
+		res.GateNutritionMismatch = true
+		res.Nutrition = nil
+	}
+
+	items := scoringItems(recs)
 	res.Matched = make([]MatchedIngredient, 0, len(recs))
 	for _, r := range recs {
-		items = append(items, scoring.Ingredient{
-			Code: r.code, Category: r.category, Name: r.name, VerdictShort: r.verdictShort,
-			VerdictFull: r.verdictFull, Risk: r.risk, Position: r.pos, Matched: r.matched,
-		})
 		res.Matched = append(res.Matched, MatchedIngredient{
 			Raw: r.raw, Code: r.code, Name: r.name, Category: r.category,
 			Risk: r.risk, Position: r.pos, Matched: r.matched,
@@ -335,6 +563,13 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	res.Score = sc.Score
 	res.Flags = sc.Flags
 	res.Breakdown = sc.Breakdown
+
+	// Сравнение с контрольным прочтением (selfcheck.go). Стоит ПОСЛЕ фазы 3 и ничего в
+	// ней не меняет: балл остаётся первым прочтением, второе только решает, честно ли
+	// показывать его как точное число.
+	if usableControl(control) {
+		p.applySelfCheck(res, sc, recsControl)
+	}
 
 	// Фаза 4 — объяснение (строго из вердиктов). Отключается флагом (EXPLAIN_ENABLED,
 	// по умолчанию выкл в проде): фронт объяснение не показывает, а вызов стоит денег на
@@ -435,7 +670,10 @@ func (p *Pipeline) normalize(ctx context.Context, raw []string) ([]rec, llm.Usag
 	for i, s := range raw {
 		pos := i + 1
 		seen := make(map[string]struct{}) // коды, уже учтённые для ЭТОЙ строки
-		if as := p.matcher.MatchAll(s); len(as) > 0 {
+		// MatchAllOrSuffix: точное имя/E-код, а если их нет — хвост строки. Функциональный
+		// класс впереди («краситель бета-каротин», «подсластитель сахарин») иначе уводит
+		// строку на LLM-добор, а тот путает близкие коды (E160a → E160e, −3 из ниоткуда).
+		if as := p.matcher.MatchAllOrSuffix(s); len(as) > 0 {
 			for _, a := range as {
 				r := rec{raw: s, pos: pos}
 				p.fill(&r, *a)

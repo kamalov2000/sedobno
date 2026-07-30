@@ -61,3 +61,21 @@ func (s *Server) rateLimitScans(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// rateLimitMeals — middleware для POST /api/meals: 5 разборов еды в минуту на
+// пользователя (свой лимитер, независимо от сканов). Ставится после requireAuth.
+func (s *Server) rateLimitMeals(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, ok := claimsFrom(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+			return
+		}
+		if allowed, retry := s.mealLimiter.allow(claims.UserID, time.Now()); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "слишком часто — подождите немного")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

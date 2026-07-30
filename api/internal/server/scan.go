@@ -26,8 +26,16 @@ const (
 	maxUploadBytes   = 10 << 20 // 10 МБ на исходное фото
 	maxPhotos        = 3        // до 3 кадров одной этикетки на скан (§8)
 	maxScanBodyBytes = 32 << 20 // 32 МБ на всё тело запроса (3×10 МБ + оверхед multipart)
-	maxImageDim      = 1500     // длинная сторона после ресайза (меньше vision-токенов)
-	jpegQuality      = 85
+
+	// multipartMemBytes — сколько тела ParseMultipartForm держит в RAM, прежде чем
+	// спиллить остаток во временный файл. Это НЕ потолок размера (потолок —
+	// maxScanBodyBytes выше), а порог «память против диска». Передавать сюда 32 МБ
+	// нельзя: тогда каждый параллельный аплоад легально занимает до 32 МБ кучи, и
+	// полсотни одновременных ужинов дают ~1.6 ГБ только на буферах. С 1 МБ фото
+	// уезжает в os.TempDir и подчищается штатным MultipartForm.RemoveAll().
+	multipartMemBytes = 1 << 20 // 1 МБ
+	maxImageDim       = 1500    // длинная сторона после ресайза (меньше vision-токенов)
+	jpegQuality       = 85
 
 	// scanBusyRetryAfter — хинт фронту (сек) для ретрая при перегрузке (§15).
 	scanBusyRetryAfter = "3"
@@ -93,10 +101,20 @@ type scanResponse struct {
 	// LowConfidence — текст читался плохо: состав распознан, но мог быть прочитан с
 	// ошибками. Фронт показывает плашку «сверьте состав с этикеткой». Уверенный скан
 	// поля не содержит — отсутствие предупреждения и есть норма.
-	LowConfidence bool               `json:"low_confidence,omitempty"`
-	Nutrition     *scanNutritionView `json:"nutrition,omitempty"`
+	LowConfidence bool `json:"low_confidence,omitempty"`
+	// ScoreApproximate — плотная этикетка, прочитанная сильной моделью ДВАЖДЫ, дала два
+	// разных набора штрафных добавок (pipeline/selfcheck.go). Балл показывается как
+	// обычно, но с оговоркой «на этой этикетке он приблизителен» — там, где модель на
+	// пределе, честнее сказать об этом, чем молчать одним числом. Смысловой аналог
+	// знака «≈» в калориях. Совпали прочтения — поля нет (норма не объявляется).
+	ScoreApproximate bool               `json:"score_approximate,omitempty"`
+	Nutrition        *scanNutritionView `json:"nutrition,omitempty"`
 	Explanation   string             `json:"explanation,omitempty"`
 	Message       string             `json:"message,omitempty"`
+	// ProductName — название продукта с упаковки. Пусто — не прочиталось (нормальный
+	// исход: на кадре мог быть только оборот). Интерфейс подписывает им результат, а
+	// при уходе в дневник — предзаполняет им название приёма.
+	ProductName string `json:"product_name,omitempty"`
 	// ScanNumber — порядковый номер успешной проверки пользователя (для фолбэка
 	// ценника «ПРОВЕРКА №N», когда имя товара не извлекается). Только при status=ok.
 	ScanNumber int `json:"scan_number,omitempty"`
@@ -121,9 +139,14 @@ func labelNotFoundMessage(reason string) string {
 }
 
 // handleScan — POST /api/scan (multipart, поле photo). Порядок (§8, §3):
-// пре-чек лимита → нормализация фото → пайплайн → списание ТОЛЬКО при status=ok.
+// нормализация фото → кэш → пре-чек лимита → пайплайн → списание ТОЛЬКО при status=ok.
 // label_not_found и error не списывают бесплатную попытку (в т.ч. когда сработал
 // платный Sonnet-fallback, но состав так и не распознан — платит бизнес, не юзер).
+//
+// Кэш стоит ПЕРЕД пейволлом намеренно. Попадание в кэш — это фото, за которое
+// пользователь уже заплатил попыткой; упереться на нём в «проверки кончились» значило
+// бы отобрать оплаченное. Стоит это лишней нормализации кадров у того, кто и так за
+// лимитом, — против vision-вызова цена пренебрежима, а потолки тела (≤32 МБ) на месте.
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
@@ -132,18 +155,10 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
 	if err != nil {
 		s.log.Error("scan: чтение пользователя", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
-		return
-	}
-	if !u.IsSubscribed && u.FreeScansUsed >= freeScanLimit {
-		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", nil)
-		writeJSON(w, http.StatusPaymentRequired, map[string]any{
-			"error": "limit_reached", "message": "бесплатные сканы закончились", "scans_left": 0,
-		})
 		return
 	}
 
@@ -152,7 +167,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// vision-вызов, сохраняя порядок состава и не дублируя ингредиенты на стыке.
 	// Потолки: ≤10 МБ на кадр, ≤3 кадра, ≤32 МБ на всё тело.
 	r.Body = http.MaxBytesReader(w, r.Body, maxScanBodyBytes)
-	if err := r.ParseMultipartForm(maxScanBodyBytes); err != nil {
+	if err := r.ParseMultipartForm(multipartMemBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "приложите фото в поле photo (до 3 кадров, макс 10 МБ каждый)")
 		return
 	}
@@ -208,6 +223,44 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		s.debugSaveScanImages(u.ID, images)
 	}
 
+	// Кэш разбора (analysis_cache.go): тот же файл — тот же ответ, без вызова модели
+	// и без списания попытки. Проверяем ДО scan_started: попадание в кэш — это не
+	// новая проверка, а показ уже сделанной, и в воронке сканов ему делать нечего.
+	sha := imagesSHA(images)
+	if cached, strength, hit := s.cachedScanResponse(ctx, u.ID, sha); hit {
+		// Остаток проверок — из АКТУАЛЬНОГО состояния пользователя, а не из кэша:
+		// за время между прогонами он мог потратить попытки на другие сканы или
+		// оформить подписку.
+		cached.ScansLeft = remainingScans(u)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", map[string]any{"status": cached.Status})
+		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
+		writeJSON(w, http.StatusOK, cached)
+
+		// Разморозка: запись слабая, а детекторы говорят, что на этом кадре дешёвая
+		// модель врёт. Ответ уже отдан — сильная модель переписывает запись фоном, и
+		// следующее открытие того же фото покажет правду.
+		//
+		// Кадры отдавать в горутину безопасно: images — выход imaging.Normalize, то есть
+		// собственные буферы в куче, не окна во временные файлы multipart (их подчищает
+		// RemoveAll сразу после обработчика).
+		if strength == store.CacheStrengthBase && s.pipe != nil {
+			if dens := measureImages(images); suspiciousCachedScan(cached, dens, s.cfg.ScanForceEscalateFineLoss) {
+				go s.thawScanCache(u.ID, sha, images, cached.Score)
+			}
+		}
+		return
+	}
+
+	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
+	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
+	if !u.IsSubscribed && u.FreeScansUsed >= freeScanLimit {
+		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", nil)
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"error": "limit_reached", "message": "бесплатные сканы закончились", "scans_left": 0,
+		})
+		return
+	}
+
 	_ = s.store.InsertEvent(ctx, &u.ID, "scan_started", nil)
 
 	// Пайплайн (§4). res непустой даже при ошибке — пишем его в scans для диагностики.
@@ -223,6 +276,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	s.saveScan(ctx, u.ID, res, len(images))
 
+	// Сила ответа для кэша: считается ОДИН раз здесь и передаётся во все ветки —
+	// исход (ok / не еда / состава нет) на неё не влияет, влияет только то, чья модель
+	// дала итоговое извлечение.
+	strength := scanCacheStrength(res)
+
 	switch {
 	case perr != nil || res.Status == pipeline.StatusError:
 		s.log.Error("scan: пайплайн", "err", perr, "user", u.ID)
@@ -232,7 +290,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusMixedFrames:
 		// Кадры от разных продуктов — попытку не списываем, просим снимать по одному.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_mixed_frames", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Кадры от разных продуктов. Проверяйте по одному продукту за раз — несколько кадров нужны, только если состав одного продукта не влез в один снимок.",
 			ScansLeft: remainingScans(u), // не списано
@@ -247,10 +305,11 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		for i, raw := range res.IngredientsRaw {
 			ings = append(ings, scanIngredientView{Raw: raw, Position: i + 1})
 		}
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:      res.Status,
 			Ingredients: ings,
 			Nutrition:   nutritionView(res.Nutrition),
+			ProductName: res.ProductName,
 			Message:     "Наша методология оценивает пищевые добавки, а у алкоголя главный фактор — сам спирт, который она не учитывает. Балл был бы обманчив, поэтому мы его не ставим.",
 			ScansLeft:   remainingScans(u), // не списано
 		})
@@ -258,7 +317,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	case res.Status == pipeline.StatusNotFood:
 		// Косметика/химия/лекарство — оценку съедобности не считаем, попытку не списываем.
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Похоже, это не еда — косметика, бытовая химия или другое несъедобное. Оценку состава для таких продуктов не считаем.",
 			ScansLeft: remainingScans(u), // не списано
@@ -266,7 +325,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == pipeline.StatusLabelNotFound:
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found", nil)
-		writeJSON(w, http.StatusOK, scanResponse{
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Reason:    res.Reason,
 			Message:   labelNotFoundMessage(res.Reason),
@@ -286,13 +345,24 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 				left = 0 // гонка увела за лимит между пре-чеком и списанием
 			}
 		}
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_ok", map[string]any{"score": res.Score})
+		// Телеметрия антигаллюцинационного гейта (pipeline/transcription_gate.go): при
+		// молчании гейта ("scan_ok" в норме) поля не добавляем — событие не разбухает.
+		// Сработал — фиксируем частоту/эскалацию, чтобы через неделю посмотреть на
+		// реальном потоке, как часто модель придумывает состав/КБЖУ.
+		scanOkProps := map[string]any{"score": res.Score}
+		addDetectorProps(scanOkProps, res)
+		if res.GateMismatch {
+			scanOkProps["gate_mismatch"] = true
+			scanOkProps["gate_escalated"] = res.GateEscalated
+			scanOkProps["gate_nutrition_mismatch"] = res.GateNutritionMismatch
+		}
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_ok", scanOkProps)
 		// Порядковый номер проверки для фолбэка ценника (best-effort — 0 просто опускается).
 		num, nerr := s.store.CountUserScansOK(ctx, u.ID)
 		if nerr != nil {
 			s.log.Warn("scan: подсчёт номера проверки", "err", nerr, "user", u.ID)
 		}
-		writeJSON(w, http.StatusOK, buildScanResponse(res, left, num))
+		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, buildScanResponse(res, left, num))
 	}
 }
 
@@ -315,9 +385,11 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 	}
 	return scanResponse{
 		Status: res.Status, Score: res.Score, Flags: flags, Ingredients: ings,
-		Deductions:    deds,
-		LowConfidence: res.LowConfidence,
-		Nutrition:     nutritionView(res.Nutrition),
+		Deductions:       deds,
+		LowConfidence:    res.LowConfidence,
+		ScoreApproximate: res.ScoreApproximate,
+		Nutrition:        nutritionView(res.Nutrition),
+		ProductName:   res.ProductName,
 		Explanation:   res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
 }

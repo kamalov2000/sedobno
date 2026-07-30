@@ -1,0 +1,93 @@
+# Бета-инстанс модуля калорий (feature/calories) на VPS — ИЗОЛИРОВАН от прода.
+# Отдельный compose-проект (sostav-beta), отдельная БД sedobno_beta со своим томом,
+# свои контейнеры api-beta/web-beta. Подключается к УЖЕ существующей сети прод-проекта
+# (sostav_default), чтобы прод-Caddy роутил beta.<домен> на api-beta/web-beta. Прод
+# (проект sostav: postgres/api/web/caddy) этим файлом НЕ затрагивается.
+#
+# Запускать из отдельного git-worktree ветки feature/calories (см. Makefile beta-*).
+name: sostav-beta
+
+services:
+  postgres-beta:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env.beta
+    volumes:
+      - pgdata_beta:/var/lib/postgresql/data
+    networks: [shared]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Одноразовый прогон миграций перед стартом api-beta (те же embedded-миграции).
+  migrate-beta:
+    build:
+      context: ../api
+    env_file: .env.beta
+    entrypoint: ["/usr/local/bin/migrate"]
+    command: ["up"]
+    depends_on:
+      postgres-beta:
+        condition: service_healthy
+    networks: [shared]
+    restart: "no"
+
+  # Словарь добавок для режима «Состав» (профиль tools — вызывается make beta-up).
+  seed-beta:
+    build:
+      context: ../api
+    profiles: ["tools"]
+    env_file: .env.beta
+    entrypoint: ["/usr/local/bin/seed"]
+    depends_on:
+      postgres-beta:
+        condition: service_healthy
+      migrate-beta:
+        condition: service_completed_successfully
+    networks: [shared]
+    restart: "no"
+
+  api-beta:
+    build:
+      context: ../api
+    restart: unless-stopped
+    env_file: .env.beta
+    expose:
+      - "8080"
+    depends_on:
+      postgres-beta:
+        condition: service_healthy
+      migrate-beta:
+        condition: service_completed_successfully
+    networks: [shared]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  web-beta:
+    build:
+      context: ../web
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks: [shared]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  # Сеть прод-проекта (создаётся `sostav`); подключаемся к ней, чтобы прод-Caddy
+  # видел api-beta/web-beta по именам. external — НЕ создаём и НЕ удаляем её.
+  shared:
+    external: true
+    name: sostav_default
+
+volumes:
+  pgdata_beta: # отдельный том беты — прод-данные (pgdata) не затрагиваются
