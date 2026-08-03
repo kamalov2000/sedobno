@@ -660,19 +660,6 @@ export default function App() {
           }}
         />
       )}
-      {view === "subscription" && me && (
-        <SubscriptionScreen
-          me={me}
-          onBack={() => setView("home")}
-          onChanged={async () => {
-            try {
-              setMe(await getMe());
-            } catch {
-              /* обновим при следующем действии */
-            }
-          }}
-        />
-      )}
     </Shell>
   );
 }
