@@ -71,7 +71,11 @@ func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 		// Тумблером выключается, пока ЮKassa не согласовала сохранение платёжных данных:
 		// при false покупка идёт обычной разовой, а не падает целиком (см. SBPRecurrentEnabled).
 		SavePaymentMethod: s.cfg.SBPRecurrentEnabled,
-		IdempotenceKey:    randIdemKey(),
+		// Покупатель для ЮKassa — наш users.id. Шлём всегда (не только под рекуррентом):
+		// значение должно совпадать с тем, что уйдёт в автосписании, а платёж, сохранивший
+		// способ, и платёж, списывающий по нему, разделены месяцем и тумблером.
+		MerchantCustomerID: strconv.FormatInt(uid, 10),
+		IdempotenceKey:     randIdemKey(),
 	})
 	if err != nil {
 		s.log.Error("sbp pay: ЮKassa", "err", err, "user", uid)

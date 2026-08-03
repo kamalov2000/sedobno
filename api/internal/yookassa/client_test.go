@@ -182,6 +182,65 @@ func TestCreateAutoPayment(t *testing.T) {
 	}
 }
 
+// merchant_customer_id уходит в ОБОИХ запросах и ОДИНАКОВЫЙ: платёж, сохраняющий способ,
+// и автосписание по нему разнесены на месяц, а связку способ↔покупатель ЮKassa держит по
+// этому полю. Разъедется — сохранённый способ повиснет на другом покупателе.
+func TestMerchantCustomerID_ОдинаковыйВОбоихЗапросах(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		bodies = append(bodies, m)
+		_, _ = w.Write([]byte(`{"id":"p","status":"succeeded","paid":true,
+			"amount":{"value":"249.00","currency":"RUB"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "shop-1", "secret-1")
+	if _, err := c.CreatePayment(context.Background(), CreateInput{
+		AmountRub: 249, IdempotenceKey: "k", SavePaymentMethod: true, MerchantCustomerID: "42",
+	}); err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	if _, err := c.CreateAutoPayment(context.Background(), AutoChargeInput{
+		AmountRub: 249, PaymentMethodID: "pm_9", IdempotenceKey: "k2", MerchantCustomerID: "42",
+	}); err != nil {
+		t.Fatalf("CreateAutoPayment: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("ждали 2 запроса, получили %d", len(bodies))
+	}
+	for i, b := range bodies {
+		if b["merchant_customer_id"] != "42" {
+			t.Errorf("запрос %d: merchant_customer_id=%v, ждали \"42\"", i, b["merchant_customer_id"])
+		}
+	}
+}
+
+// Пустой MerchantCustomerID не должен просачиваться в тело пустой строкой: ЮKassa валидирует
+// поле по длине, "" — не то же самое, что отсутствие ключа.
+func TestMerchantCustomerID_ПустойНеУходит(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"id":"p","status":"succeeded","paid":true,
+			"amount":{"value":"249.00","currency":"RUB"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "shop-1", "secret-1")
+	if _, err := c.CreatePayment(context.Background(), CreateInput{AmountRub: 249, IdempotenceKey: "k"}); err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(gotBody), &body)
+	if _, ok := body["merchant_customer_id"]; ok {
+		t.Errorf("пустой merchant_customer_id просочился в тело: %s", gotBody)
+	}
+}
+
 func TestCreatePayment_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

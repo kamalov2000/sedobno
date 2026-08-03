@@ -76,7 +76,12 @@ type CreateInput struct {
 	// SavePaymentMethod=true просит ЮKassa сохранить способ оплаты для последующих
 	// автосписаний (рекуррент): в succeeded-платеже придёт payment_method.id/saved.
 	SavePaymentMethod bool
-	IdempotenceKey    string // ключ идемпотентности запроса (обязателен ЮKassa)
+	// MerchantCustomerID — идентификатор покупателя в НАШЕЙ системе (users.id строкой).
+	// Дока сценария привязки требует передавать его при сохранении способа: так ЮKassa
+	// связывает сохранённый способ с покупателем. Обязан совпадать со значением, которое
+	// уйдёт в автосписании по этому же способу (см. AutoChargeInput).
+	MerchantCustomerID string
+	IdempotenceKey     string // ключ идемпотентности запроса (обязателен ЮKassa)
 }
 
 // CreatePayment создаёт платёж с автосписанием (capture=true) и redirect-подтверждением.
@@ -91,6 +96,9 @@ func (c *Client) CreatePayment(ctx context.Context, in CreateInput) (*Payment, e
 	if in.SavePaymentMethod {
 		body["save_payment_method"] = true
 	}
+	if in.MerchantCustomerID != "" {
+		body["merchant_customer_id"] = in.MerchantCustomerID
+	}
 	return c.do(ctx, http.MethodPost, "/payments", in.IdempotenceKey, body)
 }
 
@@ -101,7 +109,11 @@ type AutoChargeInput struct {
 	Description     string
 	PaymentMethodID string            // сохранённый способ (из первого платежа)
 	Metadata        map[string]string // user_id + план для вебхука/аудита
-	IdempotenceKey  string            // = subscription_id + период: повторный тик не дублирует платёж
+	// MerchantCustomerID — тот же идентификатор покупателя, что уходил при сохранении
+	// способа (CreateInput.MerchantCustomerID). Разъедется — связка способ↔покупатель
+	// на стороне ЮKassa перестанет сходиться.
+	MerchantCustomerID string
+	IdempotenceKey     string // = subscription_id + период: повторный тик не дублирует платёж
 }
 
 // CreateAutoPayment списывает по сохранённому способу оплаты без подтверждения плательщиком
@@ -114,6 +126,9 @@ func (c *Client) CreateAutoPayment(ctx context.Context, in AutoChargeInput) (*Pa
 		"payment_method_id": in.PaymentMethodID,
 		"description":       in.Description,
 		"metadata":          in.Metadata,
+	}
+	if in.MerchantCustomerID != "" {
+		body["merchant_customer_id"] = in.MerchantCustomerID
 	}
 	return c.do(ctx, http.MethodPost, "/payments", in.IdempotenceKey, body)
 }

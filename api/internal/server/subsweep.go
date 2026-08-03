@@ -150,8 +150,10 @@ func (s *Server) chargeOneSubscription(ctx context.Context, d store.DueSubscript
 		PaymentMethodID: d.PaymentMethodID,
 		// kind=renewal — вебхук по этому платежу НЕ создаёт новую подписку (её продлевает
 		// планировщик); иначе была бы дублирующая строка.
-		Metadata:       map[string]string{"user_id": strconv.FormatInt(uid, 10), "plan": plan, "kind": "renewal"},
-		IdempotenceKey: key,
+		Metadata: map[string]string{"user_id": strconv.FormatInt(uid, 10), "plan": plan, "kind": "renewal"},
+		// Тот же покупатель, что и в платеже, сохранившем способ (handleSBPPay) — users.id.
+		MerchantCustomerID: strconv.FormatInt(uid, 10),
+		IdempotenceKey:     key,
 	})
 	if err == nil && p.Status == "succeeded" && p.Paid {
 		raw, _ := json.Marshal(p)
