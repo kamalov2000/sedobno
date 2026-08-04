@@ -97,6 +97,25 @@ LIMIT $1;
 -- name: sub_mark_notified
 UPDATE subscriptions SET renewal_notified_at = now() WHERE id = $1;
 
+-- name: sub_due_for_lapse_notice
+-- Разовые (без автопродления) sbp-подписки, которым гаснуть в ближайшие 24ч и ещё не
+-- предупреждённые. provider_payment_method_id IS NULL отличает разовые от автопродляемых
+-- (у тех уже есть sub_due_for_notice); provider='sbp' исключает Stars — тот продлевает
+-- Telegram сам, ему это предупреждение не нужно и было бы враньём («автопродления нет»).
+-- renewal_notified_at переиспользован из механики автосписаний: популяции строк (разовые
+-- vs автопродляемые) не пересекаются, поле свободно.
+SELECT s.id, s.user_id, u.telegram_id, s.plan, s.expires_at
+FROM subscriptions s
+JOIN users u ON u.id = s.user_id
+WHERE s.status = 'active'
+  AND s.provider = 'sbp'
+  AND s.provider_payment_method_id IS NULL
+  AND s.expires_at > now()
+  AND s.expires_at <= now() + interval '24 hours'
+  AND s.renewal_notified_at IS NULL
+ORDER BY s.expires_at
+LIMIT $1;
+
 -- name: sub_current_detail
 -- Текущая действующая подписка пользователя для экрана подписки: самая поздняя по сроку
 -- среди дающих доступ (active|cancelled, срок ещё идёт). auto_renew = есть плановое списание

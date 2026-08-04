@@ -67,3 +67,70 @@ func TestDueForNotice_ПометкаГаситПовторПродлениеСб
 		t.Fatal("после продления подписка не вернулась в выборку — уведомление следующего периода потеряно")
 	}
 }
+
+// Уведомление об окончании РАЗОВОЙ подписки (§2b): в выборку попадает только sbp-строка
+// БЕЗ сохранённого способа оплаты, гаснущая в ближайшие 24ч. Автопродляемая (есть pm) и
+// Stars (рекуррент у них честный, ведёт Telegram — предупреждение соврало бы) исключены,
+// даже если у обеих expires_at тоже в окне.
+func TestDueForLapseNotice_ТолькоРазовыйSbpВОкне(t *testing.T) {
+	s, ctx := newStore(t)
+
+	// A — разовая sbp, гаснет через 12ч (в окне 24ч) → должна попасть в выборку.
+	uidA := mkUser(t, s, ctx, 7201)
+	if _, err := s.RecordSBPPaymentAndActivate(ctx, sbpInput(uidA, "pay-lapse-A", sbpPeriod, 249)); err != nil {
+		t.Fatalf("RecordSBPPaymentAndActivate A: %v", err)
+	}
+	execT(t, ctx, `UPDATE subscriptions SET expires_at = now() + interval '12 hours' WHERE user_id=$1`, uidA)
+
+	// B — разовая sbp, гаснет через 3 дня (вне окна) → не должна попасть.
+	uidB := mkUser(t, s, ctx, 7202)
+	if _, err := s.RecordSBPPaymentAndActivate(ctx, sbpInput(uidB, "pay-lapse-B", sbpPeriod, 249)); err != nil {
+		t.Fatalf("RecordSBPPaymentAndActivate B: %v", err)
+	}
+
+	// C — автопродляемая sbp (есть способ оплаты), тоже гаснет через 12ч → её ведёт
+	// sub_due_for_notice, не эта выборка.
+	uidC := mkUser(t, s, ctx, 7203)
+	mustRecordAuto(t, s, ctx, uidC, "pay-lapse-C", "pm-lapse-C")
+	execT(t, ctx, `UPDATE subscriptions SET expires_at = now() + interval '12 hours' WHERE user_id=$1`, uidC)
+
+	// D — Stars, гаснет через 12ч → рекуррент честный (ведёт Telegram), предупреждение
+	// «автопродления нет» здесь было бы враньём.
+	uidD := mkUser(t, s, ctx, 7204)
+	if _, err := s.ActivateSubscription(ctx, starsInput(uidD, "chg-lapse-D", 12*time.Hour, 150)); err != nil {
+		t.Fatalf("ActivateSubscription D: %v", err)
+	}
+
+	due, err := s.SubscriptionsDueForLapseNotice(ctx, 100)
+	if err != nil {
+		t.Fatalf("SubscriptionsDueForLapseNotice: %v", err)
+	}
+	if len(due) != 1 || due[0].UserID != uidA {
+		t.Fatalf("к уведомлению об окончании выбрано %+v, ждали только uidA=%d", due, uidA)
+	}
+	if due[0].TelegramID != 7201 {
+		t.Errorf("telegram_id=%d, ждали 7201 (джойн users)", due[0].TelegramID)
+	}
+}
+
+// Пометка (переиспользует renewal_notified_at) гасит повтор — часовой тик не спамит
+// разового покупателя тем же предупреждением на каждый прогон.
+func TestDueForLapseNotice_ПометкаГаситПовтор(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7301)
+	if _, err := s.RecordSBPPaymentAndActivate(ctx, sbpInput(uid, "pay-lapse-mark", sbpPeriod, 249)); err != nil {
+		t.Fatalf("RecordSBPPaymentAndActivate: %v", err)
+	}
+	execT(t, ctx, `UPDATE subscriptions SET expires_at = now() + interval '12 hours' WHERE user_id=$1`, uid)
+	subID := subIDOf(t, ctx, uid)
+
+	if err := s.MarkRenewalNotified(ctx, subID); err != nil {
+		t.Fatalf("MarkRenewalNotified: %v", err)
+	}
+	due, _ := s.SubscriptionsDueForLapseNotice(ctx, 100)
+	for _, d := range due {
+		if d.ID == subID {
+			t.Fatal("уведомлённая разовая подписка снова в выборке — тик будет спамить")
+		}
+	}
+}

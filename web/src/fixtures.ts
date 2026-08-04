@@ -65,6 +65,7 @@ export function makeMe(subscription: Subscription = "active", goal: Goal = "lose
     free_scans_used: 2,
     free_meals_used: 2,
     sbp_available: true,
+    sbp_recurrent: true,
     nutrition_profile: makeProfile(goal),
   };
   switch (subscription) {

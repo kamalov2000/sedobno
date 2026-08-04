@@ -17,6 +17,11 @@ interface Props {
   onDismiss: () => void;
   // Канал СБП/карта (§14.1). Без него доступен только месяц через Stars (год скрыт).
   sbpAvailable?: boolean;
+  // Сохраняет ли канал СБП/карта способ оплаты для автопродления (cfg.SBPRecurrentEnabled,
+  // §14.1). Пока ЮKassa не согласовала рекуррент — false, и покупка картой разовая: дисклеймер
+  // не должен обещать автопродление там, где спишется один раз. Stars — отдельная история,
+  // её рекуррент даёт сам Bot API и от этого флага не зависит.
+  sbpRecurrent?: boolean;
   onSbpPay?: (plan: SubPlan) => Promise<void>;
 }
 
@@ -26,7 +31,7 @@ const BENEFITS = [
   { icon: "ti-notebook", text: "Дневник, неделя и шер-карточки" },
 ];
 
-export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAvailable = false, onSbpPay }: Props) {
+export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAvailable = false, sbpRecurrent = false, onSbpPay }: Props) {
   const [plan, setPlan] = useState<SubPlan>("monthly");
   const [busy, setBusy] = useState(false); // Stars
   const [busySbp, setBusySbp] = useState(false);
@@ -166,13 +171,15 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
           </button>
         )}
 
-        {/* Дисклеймер рекуррента. ЮKassa требует до сохранения способа оплаты сказать три
-            вещи: что сохраняем платёжные данные, с какой периодичностью и на какую сумму
-            списываем, и как отказаться. Про карту — только на канале СБП/карта: у Stars
-            платёжных данных мы не видим (рекуррент ведёт Telegram), обещать там нечего. */}
+        {/* Дисклеймер рекуррента. Когда карта реально сохраняется (sbpRecurrent), ЮKassa
+            требует сказать три вещи: что сохраняем платёжные данные, с какой периодичностью
+            и на какую сумму списываем, и как отказаться. Когда sbpRecurrent=false (ЮKassa
+            ещё не согласовала рекуррент), карта НЕ сохраняется и списание разовое — обещать
+            автопродление там нельзя, даже если Stars рядом честно рекуррентный (это ведёт
+            Bot API, а не наш флаг). См. paywallDisclaimer — там расписан весь расклад
+            план×канал×флаг. */}
         <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text3)", marginTop: 9, lineHeight: 1.4 }}>
-          Автопродление {plan === "annual" ? "каждый год" : "каждые 30 дней"}, отмена в один тап — доступ до конца оплаченного периода
-          {sbpAvailable && <>. Данные карты сохраняются для автопродления</>}
+          {paywallDisclaimer(plan, sbpAvailable, sbpRecurrent)}
         </div>
 
         <button
@@ -186,6 +193,28 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
       </div>
     </div>
   );
+}
+
+// paywallDisclaimer — честный текст под кнопками оплаты. Год доступен только через
+// СБП/карту (sbpAvailable гарантированно true, когда plan==="annual" — иначе карточка
+// "Год" не рендерится, см. PlanCard выше), поэтому его текст зависит только от sbpRecurrent.
+// Месяц доступен через Stars (рекуррент даёт Bot API, от sbpRecurrent не зависит) и, если
+// sbpAvailable, ещё и через карту — её текст зависит от sbpRecurrent. Врать в любую сторону
+// нельзя: обещать автопродление там, где спишется один раз (см. §14.1 SBPRecurrentEnabled),
+// или наоборот — молчать о том, что Stars спишет сам.
+function paywallDisclaimer(plan: SubPlan, sbpAvailable: boolean, sbpRecurrent: boolean): string {
+  if (plan === "annual") {
+    return sbpRecurrent
+      ? "Автопродление каждый год, отмена в один тап — доступ до конца оплаченного периода. Данные карты сохраняются для автопродления"
+      : "Разовая оплата на 365 дней: автопродления нет, карта не сохраняется. Доступ действует год, дальше — новая оплата";
+  }
+  if (sbpRecurrent) {
+    return `Автопродление каждые 30 дней, отмена в один тап — доступ до конца оплаченного периода${sbpAvailable ? ". Данные карты сохраняются для автопродления" : ""}`;
+  }
+  if (sbpAvailable) {
+    return "Stars — автопродление каждые 30 дней, отмена в настройках Telegram. Картой — разовая оплата на 30 дней: автопродления нет, карта не сохраняется";
+  }
+  return "Автопродление каждые 30 дней через Stars, отмена в настройках Telegram";
 }
 
 // ctaStyle — общий каркас кнопки оплаты (цвет/спиннер варьируются).

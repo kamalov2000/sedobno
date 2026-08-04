@@ -25,9 +25,15 @@ const asyncNoop = async () => {};
 
 const emptyProfile = { filled: false };
 const filledProfile = { filled: true, sex: "male" as const, birth_year: 1994, height_cm: 180, weight_kg: 80, activity_level: "moderate" as const, goal: "lose" as const, daily_kcal_target: 2345, daily_protein_g: 144, daily_fat_g: 65, daily_carb_g: 296 };
-const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true, nutrition_profile: emptyProfile };
-const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile, subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
+const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true, sbp_recurrent: true, nutrition_profile: emptyProfile };
+const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, sbp_recurrent: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile, subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
 const meSubCancelled: Me = { ...meSub, subscription: { provider: "sbp", plan: "annual", status: "cancelled", expires_at: "2027-07-22T10:00:00Z", auto_renew: false } };
+// Разовая карта: SBP_RECURRENT_ENABLED=false в момент покупки — способ не сохранён,
+// next_charge_at/auto_renew=false, но status ОСТАЁТСЯ active (не пользователь отменил).
+const meSubOneTime: Me = { ...meSub, sbp_recurrent: false, subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", auto_renew: false } };
+// Stars: рекуррент честно ведёт Telegram — auto_renew=true даже без next_charge_at в БД
+// (см. store.CurrentSubscription), кнопки отмены нет (отменяется в настройках Telegram).
+const meSubStars: Me = { ...meSub, subscription: { provider: "stars", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
 
 // «Плохой» состав — чтобы были видны флаг-карточки среднего/высокого риска и весь список.
 const mockResult: ScanResult = {
@@ -203,10 +209,13 @@ const SCREENS: { title: string; node: ReactNode }[] = [
     title: "04 · ОШИБКА · кадры от разных продуктов",
     node: <ErrorScreen title="Кадры от разных продуктов" subtitle="Проверяйте по одному продукту за раз." hints={MIXED_FRAMES_HINTS} onAgain={noop} />,
   },
-  { title: "05 · ПЕЙВОЛЛ · Stars + СБП", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable onSbpPay={asyncNoop} /> },
-  { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} /> },
-  { title: "06 · ПОДПИСКА · активна (автопродление)", node: <SubscriptionScreen me={meSub} onBack={noop} onChanged={asyncNoop} /> },
+  { title: "05 · ПЕЙВОЛЛ · Stars + СБП (рекуррент вкл)", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable sbpRecurrent onSbpPay={asyncNoop} /> },
+  { title: "05 · ПЕЙВОЛЛ · Stars + СБП (рекуррент выкл, прод сейчас)", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable sbpRecurrent={false} onSbpPay={asyncNoop} /> },
+  { title: "05 · ПЕЙВОЛЛ · только Stars", node: <PaywallScreen onPay={asyncNoop} onDismiss={noop} sbpAvailable={false} sbpRecurrent={false} /> },
+  { title: "06 · ПОДПИСКА · активна (автопродление, карта)", node: <SubscriptionScreen me={meSub} onBack={noop} onChanged={asyncNoop} /> },
   { title: "06 · ПОДПИСКА · отменена (год)", node: <SubscriptionScreen me={meSubCancelled} onBack={noop} onChanged={asyncNoop} /> },
+  { title: "06 · ПОДПИСКА · разовая карта (рекуррент был выкл)", node: <SubscriptionScreen me={meSubOneTime} onBack={noop} onChanged={asyncNoop} /> },
+  { title: "06 · ПОДПИСКА · Stars (автопродление, без кнопки отмены)", node: <SubscriptionScreen me={meSubStars} onBack={noop} onChanged={asyncNoop} /> },
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
   { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },

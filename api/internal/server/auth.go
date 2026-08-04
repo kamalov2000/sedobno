@@ -43,6 +43,12 @@ type meView struct {
 	// SBPAvailable — включён ли канал оплаты по СБП/карте (§14.1). Фронт по нему решает,
 	// показывать ли вторую кнопку пейволла. Всегда присутствует (не omitempty).
 	SBPAvailable bool `json:"sbp_available"`
+	// SBPRecurrent — сохраняет ли канал СБП/карта способ оплаты для автопродления
+	// (cfg.SBPRecurrentEnabled). Пока ЮKassa не согласовала рекуррент, покупка картой
+	// разовая — пейволл по этому флагу решает, обещать ли автопродление в дисклеймере
+	// (см. PaywallScreen), а не гадать по SBPAvailable (тот только про доступность канала).
+	// Всегда присутствует (не omitempty).
+	SBPRecurrent bool `json:"sbp_recurrent"`
 	// NutritionProfile — профиль питания и дневная норма (feature/calories): заполнен ли,
 	// введённые поля (префилл визарда) и таргеты. Всегда присутствует (filled=false, если пуст).
 	NutritionProfile nutritionProfileView `json:"nutrition_profile"`
@@ -168,6 +174,7 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
 		IsSubscribed: u.IsSubscribed,
 		SBPAvailable: s.cfg.SBPEnabled,
+		SBPRecurrent: s.cfg.SBPRecurrentEnabled,
 	}
 	if u.IsSubscribed {
 		if sub, err := s.store.CurrentSubscription(ctx, u.ID); err != nil {

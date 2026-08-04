@@ -44,6 +44,7 @@ func (s *Server) StartSubscriptionSweeper(ctx context.Context) {
 // его смысл в том, чтобы прийти заранее, до списания.
 func (s *Server) tickSubscriptions(ctx context.Context) {
 	s.notifyUpcomingRenewals(ctx)
+	s.notifyUpcomingLapses(ctx)
 	s.chargeDueSubscriptions(ctx)
 	s.sweepExpiredSubs(ctx)
 	s.purgeAnalysisCache(ctx)
@@ -94,6 +95,38 @@ func (s *Server) notifyUpcomingRenewals(ctx context.Context) {
 	}
 	if len(due) > 0 {
 		s.log.Info("уведомления о продлении отправлены", "count", len(due))
+	}
+}
+
+// notifyUpcomingLapses предупреждает разовых sbp-подписчиков (рекуррент был выключен в
+// момент покупки — §2b) о том, что доступ гаснет завтра: оферта обещает продление, а без
+// сохранённого способа оплаты продлевать нечем, и молча обрывать доступ нельзя. Симметрично
+// notifyUpcomingRenewals, но для ДРУГОЙ популяции строк (см. sub_due_for_lapse_notice).
+func (s *Server) notifyUpcomingLapses(ctx context.Context) {
+	if !s.cfg.SBPEnabled || s.tg == nil {
+		return
+	}
+	due, err := s.store.SubscriptionsDueForLapseNotice(ctx, 200)
+	if err != nil {
+		s.log.Error("уведомление об окончании разовой подписки: выборка", "err", err)
+		return
+	}
+	const text = "Напоминание: завтра заканчивается доступ к «Съедобно». Автопродление не подключено — " +
+		"чтобы не потерять доступ, оформите подписку заново в приложении."
+	for _, r := range due {
+		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			s.log.Warn("уведомление об окончании разовой подписки: отправка", "err", err, "sub", r.ID)
+			continue // не помечаем — повторим на следующем тике
+		}
+		if err := s.store.MarkRenewalNotified(ctx, r.ID); err != nil {
+			s.log.Error("уведомление об окончании разовой подписки: пометка", "err", err, "sub", r.ID)
+			continue
+		}
+		uid := r.UserID
+		_ = s.store.InsertEvent(ctx, &uid, "lapse_notice_sent", map[string]any{"plan": r.Plan})
+	}
+	if len(due) > 0 {
+		s.log.Info("уведомления об окончании разовой подписки отправлены", "count", len(due))
 	}
 }
 

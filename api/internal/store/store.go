@@ -654,6 +654,19 @@ func (s *Store) CurrentSubscription(ctx context.Context, userID int64) (*Subscri
 	if err != nil {
 		return nil, err
 	}
+	// Stars: next_charge_at у этих строк всегда NULL (см. sub_activate_stars_insert) — там
+	// рекуррент ведёт Telegram, не наш планировщик, и колонку мы не заполняем. Но это НЕ
+	// значит, что подписка разовая: Bot API инвойс по умолчанию рекуррентный, и Telegram не
+	// шлёт нам сигнал заранее, если пользователь его отключил в настройках (только тишина
+	// вместо очередного successful_payment). Показывать эти строки как «автопродление
+	// выключено» — прямое враньё в другую сторону; поэтому для Stars считаем автопродление
+	// истинным по умолчанию, а дату следующего списания оцениваем как ExpiresAt (момент,
+	// когда Telegram спишет период при успехе).
+	if d.Provider == "stars" {
+		d.AutoRenew = true
+		exp := d.ExpiresAt
+		d.NextCharge = &exp
+	}
 	return &d, nil
 }
 
@@ -691,9 +704,43 @@ func (s *Store) SubscriptionsDueForRenewalNotice(ctx context.Context, limit int)
 // MarkRenewalNotified помечает, что предупреждение о списании за текущий период отправлено.
 // Ставим ПОСЛЕ успешной отправки: сбой отправки оставит подписку в выборке — следующий тик
 // повторит (лучше повтор, чем молчание перед списанием). Продление сбрасывает пометку.
+// Тем же полем помечаем и предупреждение о конце разовой подписки (MarkRenewalNotified
+// используется для обеих: см. SubscriptionsDueForLapseNotice).
 func (s *Store) MarkRenewalNotified(ctx context.Context, subID int64) error {
 	_, err := s.pool.Exec(ctx, namedQuery("sub_mark_notified"), subID)
 	return err
+}
+
+// UpcomingLapse — разовая (без автопродления) sbp-подписка, у которой доступ гаснет
+// в ближайшие сутки. TelegramID нужен, чтобы отправить сообщение через бот.
+type UpcomingLapse struct {
+	ID         int64
+	UserID     int64
+	TelegramID int64
+	Plan       string
+	ExpiresAt  time.Time
+}
+
+// SubscriptionsDueForLapseNotice возвращает разовые (без сохранённого способа оплаты)
+// sbp-подписки, у которых доступ гаснет в ближайшие 24ч и предупреждение ещё не
+// отправлено (§2b: оферта обещает продление, но при выключенном рекурренте покупка
+// разовая — молча гаснуть доступ не должен). Stars и автопродляемые sbp сюда не попадают
+// (см. sub_due_for_lapse_notice) — им бы это предупреждение соврало.
+func (s *Store) SubscriptionsDueForLapseNotice(ctx context.Context, limit int) ([]UpcomingLapse, error) {
+	rows, err := s.pool.Query(ctx, namedQuery("sub_due_for_lapse_notice"), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UpcomingLapse
+	for rows.Next() {
+		var r UpcomingLapse
+		if err := rows.Scan(&r.ID, &r.UserID, &r.TelegramID, &r.Plan, &r.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // CancelSubscription отменяет автопродление пользователя: переводит автопродляемую

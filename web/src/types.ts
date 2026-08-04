@@ -50,6 +50,7 @@ export interface Me {
   is_subscribed: boolean;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла
+  sbp_recurrent: boolean; // сохраняет ли канал СБП/карта способ оплаты для автопродления — решает текст дисклеймера пейволла
   nutrition_profile: NutritionProfile; // всегда присутствует (filled=false, если профиль пуст)
   subscription?: SubscriptionInfo; // детали подписки для экрана управления; нет — подписки нет
 }

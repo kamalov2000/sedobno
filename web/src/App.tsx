@@ -645,7 +645,7 @@ export default function App() {
         />
       )}
       {view === "paywall" && (
-        <PaywallScreen onPay={onPay} onDismiss={() => setView("home")} sbpAvailable={me?.sbp_available ?? false} onSbpPay={onSbpPay} />
+        <PaywallScreen onPay={onPay} onDismiss={() => setView("home")} sbpAvailable={me?.sbp_available ?? false} sbpRecurrent={me?.sbp_recurrent ?? false} onSbpPay={onSbpPay} />
       )}
       {view === "subscription" && me && (
         <SubscriptionScreen

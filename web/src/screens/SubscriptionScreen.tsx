@@ -64,8 +64,10 @@ export default function SubscriptionScreen({ me, onBack, onChanged }: Props) {
 
       <div style={{ flex: 1 }} />
 
-      {/* Кнопка отмены — только у автопродляемой подписки (у отменённой/Stars её нет). */}
-      {sub?.auto_renew && (
+      {/* Кнопка отмены — только у автопродляемой sbp-подписки (у отменённой/разовой её нет;
+          у Stars auto_renew тоже true — рекуррент честно есть, но отменяется в настройках
+          Telegram, не здесь, см. CHANNEL_LABEL и комментарий в SubBody). */}
+      {sub?.auto_renew && sub.provider === "sbp" && (
         <div style={{ flex: "none", paddingBottom: 12 }}>
           {!confirming ? (
             <>
@@ -122,14 +124,26 @@ function SubBody({ sub }: { sub: SubscriptionInfo }) {
     rows.push({ label: "Доступ до", value: fmtDate(sub.expires_at) });
   }
 
+  // Баннер разведён по status, не по auto_renew: у Stars auto_renew теперь всегда true
+  // (рекуррент честно есть, ведёт его Telegram — см. store.CurrentSubscription), так что
+  // ветки ниже для Stars никогда не сработают, и это осознанно — там продлится само.
+  const cancelledBanner = sub.status === "cancelled";
+  // Разовая покупка sbp: рекуррент был выключен в момент оплаты (§14.1 SBPRecurrentEnabled),
+  // карты у нас и не было, автопродления не будет НИКОГДА (не «пользователь выключил»).
+  const oneTimeBanner = sub.status === "active" && sub.provider === "sbp" && !sub.auto_renew;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {/* Про удалённую карту — только для sbp: у Stars сохранённой карты у нас и не было
-          (рекуррент ведёт Telegram), обещать её удаление там нечестно. */}
-      {!sub.auto_renew && (
+      {cancelledBanner && (
         <div style={{ fontSize: 12.5, color: "var(--text3)", background: "var(--bg-soft)", borderRadius: 11, padding: "10px 13px", marginBottom: 12, lineHeight: 1.45 }}>
           Автопродление выключено{sub.provider === "sbp" ? ", сохранённая карта удалена" : ""}.
           Доступ сохранится до конца оплаченного периода.
+        </div>
+      )}
+      {oneTimeBanner && (
+        <div style={{ fontSize: 12.5, color: "var(--text3)", background: "var(--bg-soft)", borderRadius: 11, padding: "10px 13px", marginBottom: 12, lineHeight: 1.45 }}>
+          Разовая оплата: автопродления нет, карта не сохраняется.
+          Доступ действует до {fmtDate(sub.expires_at)} — дальше нужно будет оформить подписку заново.
         </div>
       )}
       {rows.map((r) => (

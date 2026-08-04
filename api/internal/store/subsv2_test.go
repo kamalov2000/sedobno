@@ -89,6 +89,29 @@ func TestCurrentSubscription_ДетальДляЭкрана(t *testing.T) {
 	}
 }
 
+// Stars: рекуррент ведёт Telegram, не наш планировщик — next_charge_at в БД всегда NULL
+// (см. sub_activate_stars_insert). Экран подписки НЕ должен читать это как «автопродление
+// выключено» (прямое враньё в другую сторону, Telegram спишет сам): CurrentSubscription
+// обязана вернуть AutoRenew=true и оценку NextCharge=ExpiresAt для строк provider='stars'.
+func TestCurrentSubscription_StarsАвтопродлениеЧестное(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 4210)
+	if _, err := s.ActivateSubscription(ctx, starsInput(uid, "chg-cur-stars", starsPeriod, 150)); err != nil {
+		t.Fatalf("ActivateSubscription: %v", err)
+	}
+
+	d, err := s.CurrentSubscription(ctx, uid)
+	if err != nil || d == nil {
+		t.Fatalf("CurrentSubscription: %v (d=%v)", err, d)
+	}
+	if d.Provider != "stars" || !d.AutoRenew {
+		t.Fatalf("Stars-подписка должна отдавать auto_renew=true: %+v", d)
+	}
+	if d.NextCharge == nil || !d.NextCharge.Equal(d.ExpiresAt) {
+		t.Fatalf("NextCharge должен оцениваться как ExpiresAt: %+v", d)
+	}
+}
+
 // Отмена стирает сохранённый способ оплаты. Экран подписки обещает пользователю
 // «сохранённая карта удаляется» — и по этому экрану ЮKassa согласует автоплатежи,
 // так что обещание проверяем в БД, а не на глаз. Остановки планировщика мало:
