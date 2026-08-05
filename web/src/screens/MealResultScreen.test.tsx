@@ -615,3 +615,26 @@ describe("MealResultScreen — приём, оценённый по описан�
     expect((createManualMeal.mock.calls[0][0] as { source?: string }).source).toBe("text");
   });
 });
+
+// Знак «≈» у предположенной добавки раньше объяснялся только через title= и aria-label —
+// на телефоне не всплывает ни то, ни другое, и знак оставался необъяснённым символом.
+describe("легенда знака «≈»", () => {
+  const withAssumed = () => {
+    const r = makeMealResult();
+    return { ...r, dishes: [{ ...r.dishes[0], pieces: [{ kind: "oil_veg", count: 1, assumed: true }] }] };
+  };
+  const withoutAssumed = () => {
+    const r = makeMealResult();
+    return { ...r, dishes: [{ ...r.dishes[0], pieces: [{ kind: "oil_veg", count: 1, assumed: false }] }] };
+  };
+
+  it("предположенная добавка — легенда видна текстом, а не тултипом", () => {
+    render(<MealResultScreen result={withAssumed() as never} isSubscribed onDone={noop} onRetake={noop} />);
+    expect(screen.getByText(/добавку предположили/)).toBeTruthy();
+  });
+
+  it("добавка не предположена — легенды нет, лишней строки не показываем", () => {
+    render(<MealResultScreen result={withoutAssumed() as never} isSubscribed onDone={noop} onRetake={noop} />);
+    expect(screen.queryByText(/добавку предположили/)).toBeNull();
+  });
+});

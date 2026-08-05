@@ -756,11 +756,24 @@ function PieceChips({ dish, onCount }: { dish: MealItem; onCount: (kind: string,
   // даже когда модель их не вернула. Прочие блюда — как есть.
   const pieces = displayPieces(dish.pieces);
   if (pieces.length === 0) return null;
+  // Легенда нужна, только если знак реально виден: он ставится у предположенной добавки
+  // и только на активном чипсе (у снятого count=0 знака нет).
+  const hasAssumed = pieces.some((p) => (p.assumed ?? false) && p.count > 0);
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "-2px 8px 0", padding: "8px 12px 10px", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-soft)" }}>
-      {pieces.map((p) => (
-        <PieceChip key={p.kind} kind={p.kind} count={p.count} assumed={p.assumed ?? false} onSet={(n) => onCount(p.kind, n)} />
-      ))}
+    <div style={{ margin: "-2px 8px 0", padding: "8px 12px 10px", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 12px 12px", background: "var(--bg-soft)" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {pieces.map((p) => (
+          <PieceChip key={p.kind} kind={p.kind} count={p.count} assumed={p.assumed ?? false} onSet={(n) => onCount(p.kind, n)} />
+        ))}
+      </div>
+      {/* Видимая легенда вместо тултипа: раньше «≈» объяснялся только через title= и
+          aria-label — на телефоне не всплывает ни то, ни другое, и знак оставался
+          необъяснённым символом рядом с цифрой. */}
+      {hasAssumed && (
+        <div style={{ fontSize: 11.5, color: "var(--text3)", lineHeight: 1.4, marginTop: 7 }}>
+          «≈» — добавку предположили: на фото её не видно. Не было — уберите знаком «−».
+        </div>
+      )}
     </div>
   );
 }
