@@ -255,3 +255,33 @@ describe("DiaryScreen — бюджеты приёмов", () => {
     expect(screen.queryByText(/\/ 735/)).toBeNull();
   });
 });
+
+// Вход в расчёт нормы обязан быть виден и в ПУСТОЙ день: новичок открывает дневник
+// именно пустым (скан состава сам сюда не попадает), а карточка сумм — единственное
+// место, откуда открывается мастер профиля. Регресс: до 05.08.2026 она пряталась
+// за !empty, и человек мог не узнать, что норма вообще существует.
+describe("DiaryScreen — вход в норму на пустом дне", () => {
+  // Профиль НЕ передаём — это и есть состояние новичка.
+  const noProfileProps = {
+    onBack: noop,
+    loadWeek: weekData,
+    loadWeight: noWeight,
+    saveWater: noWater,
+    loadDay: async () => makeEmptyDiary(),
+  };
+
+  it("пустой день без профиля: карточка сумм и «Рассчитать мою норму» на месте", async () => {
+    render(<DiaryScreen {...noProfileProps} onOpenWizard={noop} />);
+    expect(await screen.findByText("Рассчитать мою норму")).toBeTruthy();
+    expect(screen.getByText("съедено за день")).toBeTruthy();
+    // Подсказка «Пока пусто» никуда не делась — она объясняет, что делать дальше.
+    expect(screen.getByText("Пока пусто")).toBeTruthy();
+  });
+
+  it("тап по карточке на пустом дне открывает мастер профиля", async () => {
+    const onOpenWizard = vi.fn();
+    render(<DiaryScreen {...noProfileProps} onOpenWizard={onOpenWizard} />);
+    fireEvent.click(await screen.findByText("Рассчитать мою норму"));
+    expect(onOpenWizard).toHaveBeenCalledTimes(1);
+  });
+});
