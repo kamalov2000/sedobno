@@ -332,7 +332,7 @@ function DayView({
           единственный вход в расчёт нормы, а новичок открывает дневник как раз пустым:
           скан состава сам сюда не попадает. Спрятанная карточка означала, что человек
           может пользоваться приложением и не узнать, что норма вообще есть. */}
-      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} onOpenWizard={onOpenWizard} />)}
+      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} empty={empty} onOpenWizard={onOpenWizard} />)}
 
       {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
           поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
@@ -477,17 +477,32 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
 }
 
 // Карточка сумм (профиль не заполнен) + вход в расчёт нормы.
-function SumsCard({ total, onOpenWizard }: { total: MealDaily; onOpenWizard: () => void }) {
+//
+// Пустой день — отдельная верстка: крупный «0 ккал» там ничего не сообщает («съедено 0»
+// человек и так знает) и читается уныло. Вместо цифры — то, ради чего карточка на пустом
+// дне вообще показывается: предложение посчитать норму.
+function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boolean; onOpenWizard: () => void }) {
   return (
     <div style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px", marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 0.9, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{fmtInt(total.kcal)}</span>
-        <span style={{ fontSize: 15, fontWeight: 500, color: "var(--cal-num)" }}>ккал</span>
-      </div>
-      <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>съедено за день</div>
-      <div style={{ marginTop: 16 }}>
-        <MacroSegments total={total} height={8} trackBg="var(--bg)" />
-      </div>
+      {empty ? (
+        <>
+          <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)", lineHeight: 1.3 }}>Сколько вам нужно в день?</div>
+          <div style={{ fontSize: 13.5, color: "var(--text2)", marginTop: 6, lineHeight: 1.5, textWrap: "pretty" }}>
+            Посчитаем норму по росту, весу и цели — и дневник будет показывать, сколько ещё можно съесть.
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+            <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 0.9, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{fmtInt(total.kcal)}</span>
+            <span style={{ fontSize: 15, fontWeight: 500, color: "var(--cal-num)" }}>ккал</span>
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>съедено за день</div>
+          <div style={{ marginTop: 16 }}>
+            <MacroSegments total={total} height={8} trackBg="var(--bg)" />
+          </div>
+        </>
+      )}
       <button type="button" onClick={onOpenWizard} style={{ width: "100%", height: 40, marginTop: 16, background: "none", border: "1px solid var(--cal-border)", borderRadius: 11, color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
         Рассчитать мою норму
         <i className="ti ti-arrow-right" aria-hidden="true" style={{ fontSize: 16 }} />

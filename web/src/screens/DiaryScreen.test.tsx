@@ -270,12 +270,22 @@ describe("DiaryScreen — вход в норму на пустом дне", () =
     loadDay: async () => makeEmptyDiary(),
   };
 
-  it("пустой день без профиля: карточка сумм и «Рассчитать мою норму» на месте", async () => {
+  it("пустой день без профиля: призыв посчитать норму вместо крупного нуля", async () => {
     render(<DiaryScreen {...noProfileProps} onOpenWizard={noop} />);
     expect(await screen.findByText("Рассчитать мою норму")).toBeTruthy();
-    expect(screen.getByText("съедено за день")).toBeTruthy();
+    expect(screen.getByText("Сколько вам нужно в день?")).toBeTruthy();
+    // Крупной цифры «съедено за день» на пустом дне быть не должно — «0» там пустой звук.
+    expect(screen.queryByText("съедено за день")).toBeNull();
     // Подсказка «Пока пусто» никуда не делась — она объясняет, что делать дальше.
     expect(screen.getByText("Пока пусто")).toBeTruthy();
+  });
+
+  it("непустой день без профиля: по-прежнему крупная сумма съеденного", async () => {
+    render(<DiaryScreen {...noProfileProps} onOpenWizard={noop} loadDay={async () => makeDiary("under")} />);
+    expect(await screen.findByText("съедено за день")).toBeTruthy();
+    expect(screen.queryByText("Сколько вам нужно в день?")).toBeNull();
+    // Вход в норму остаётся в обоих состояниях.
+    expect(screen.getByText("Рассчитать мою норму")).toBeTruthy();
   });
 
   it("тап по карточке на пустом дне открывает мастер профиля", async () => {
