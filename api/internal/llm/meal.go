@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -65,6 +66,38 @@ type MealPiece struct {
 	Kind    string `json:"kind"`
 	Count   int    `json:"count"`
 	Assumed bool   `json:"assumed,omitempty"`
+}
+
+// UnmarshalJSON принимает ДРОБНЫЙ count и округляет его до целого.
+//
+// Схема просит целое число единиц, но модель нет-нет да и вернёт «полложки»:
+// {"kind":"butter","count":0.5} — и строгий разбор в int валил ВЕСЬ приём с
+// «невалидный JSON разбора блюда», то есть человек терял разбор целиком из-за одной
+// необязательной добавки (поймано на проде 05.08.2026). Округление здесь честнее
+// отказа: пол-ложки масла — это ±20 ккал в блюде, а упавший разбор — это ноль.
+func (p *MealPiece) UnmarshalJSON(b []byte) error {
+	// Свой тип, иначе UnmarshalJSON вызвал бы сам себя.
+	var raw struct {
+		Kind    string  `json:"kind"`
+		Count   float64 `json:"count"`
+		Assumed bool    `json:"assumed"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	p.Kind = raw.Kind
+	p.Assumed = raw.Assumed
+	// Отрицательное количество бессмысленно; 0.5 → 1, чтобы предположенная добавка
+	// не исчезла молча из-за округления вниз.
+	if raw.Count <= 0 {
+		p.Count = 0
+		return nil
+	}
+	p.Count = int(math.Round(raw.Count))
+	if p.Count == 0 {
+		p.Count = 1
+	}
+	return nil
 }
 
 // MealMacros — суммарные КБЖУ приёма (сумма по dishes).
