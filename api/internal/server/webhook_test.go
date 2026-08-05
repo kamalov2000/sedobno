@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -265,5 +266,29 @@ func TestWebhook_PreCheckoutRejectsBadPayload(t *testing.T) {
 	defer spy.mu.Unlock()
 	if spy.body["ok"] != false {
 		t.Fatalf("ok=%v, ждали false для чужого payload", spy.body["ok"])
+	}
+}
+
+// Приветствие на /start должно обещать ОБА сценария — иначе человек, пришедший
+// с лендинга за калориями, читает в первом же сообщении бота только про составы.
+// Регресс: до 05.08.2026 текст говорил «проверяю составы продуктов по фото этикетки».
+func TestStartGreeting_CoversBothScenarios(t *testing.T) {
+	for _, hasWebApp := range []bool{true, false} {
+		text := startGreeting(hasWebApp)
+		for _, want := range []string{"этикетки", "тарелки", "калории", "состав"} {
+			if !strings.Contains(strings.ToLower(text), want) {
+				t.Errorf("hasWebApp=%v: в приветствии нет «%s»:\n%s", hasWebApp, want, text)
+			}
+		}
+	}
+}
+
+// Числа бесплатных проверок в приветствии обязаны идти из констант, а не из литералов:
+// иначе правка freeScanLimit молча делает первое сообщение бота лживым.
+func TestStartGreeting_QuotaFromConstants(t *testing.T) {
+	text := startGreeting(true)
+	want := fmt.Sprintf("%d проверок составов и %d разборов еды", freeScanLimit, freeMealLimit)
+	if !strings.Contains(text, want) {
+		t.Fatalf("в приветствии нет «%s»:\n%s", want, text)
 	}
 }

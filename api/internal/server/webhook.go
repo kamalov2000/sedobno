@@ -261,6 +261,31 @@ func (s *Server) forwardSupport(ctx context.Context, msg *tgMessage, body string
 	_ = s.tg.SendMessage(ctx, msg.Chat.ID, "Спасибо, передал разработчику 🙌", nil)
 }
 
+// startGreeting — текст приветствия на /start. Отдельной функцией (а не инлайном в
+// handleStart), чтобы формулировку можно было проверить тестом без БД и Bot API.
+//
+// Приветствие обещает ОБА сценария, теми же словами, что и лендинг («этикетка или
+// тарелка»): человек приходит со страницы, где продают и калории, и если первое
+// сообщение бота говорит только про составы — обещание рвётся на первом же касании.
+// Числа лимитов подставляем из констант, не литералами: иначе правка freeScanLimit
+// тихо сделает приветствие лживым (та же болезнь, что была у «из 10» во фронте).
+func startGreeting(hasWebApp bool) string {
+	// Про обратную связь говорим прямо в приветствии и даём кнопку — не команду:
+	// печатать /support неочевидно, поэтому вход в поддержку висит кнопкой под
+	// приветствием (и под любой подсказкой, см. supportHint).
+	const feedbackNote = "\n\nЧто-то не так или есть идея — нажми «" + supportButtonText + "» ниже, я прочитаю."
+	intro := fmt.Sprintf(
+		"Привет! Я «Съедобно».\n\n"+
+			"📋 Фото этикетки — прочитаю состав, поставлю оценку 0–100 и покажу, к чему присмотреться.\n"+
+			"🍲 Фото тарелки — посчитаю калории и БЖУ порции.\n\n"+
+			"Бесплатно: %d проверок составов и %d разборов еды.",
+		freeScanLimit, freeMealLimit)
+	if !hasWebApp {
+		return intro + "\n\nПриложение скоро будет доступно здесь." + feedbackNote
+	}
+	return intro + "\n\nНажми кнопку ниже, чтобы открыть приложение." + feedbackNote
+}
+
 // handleStart — приветствие + кнопка открытия mini-app (если задан WEBAPP_URL).
 func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
 	if msg.From != nil {
@@ -268,15 +293,9 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
 		}
 	}
-	// Про обратную связь говорим прямо в приветствии и даём кнопку — не команду:
-	// печатать /support неочевидно, поэтому вход в поддержку висит кнопкой под
-	// приветствием (и под любой подсказкой, см. supportHint).
-	const feedbackNote = "\n\nЧто-то не так или есть идея — нажми «" + supportButtonText + "» ниже, я прочитаю."
-	text := "Привет! Я «Съедобно» — проверяю составы продуктов по фото этикетки. Нажми кнопку ниже, чтобы открыть приложение." + feedbackNote
-	if s.cfg.WebAppURL == "" {
-		text = "Привет! Я «Съедобно» — проверяю составы продуктов по фото этикетки. Приложение скоро будет доступно здесь." + feedbackNote
-	}
-	markup := tg.StartMarkup("Проверить продукт", s.cfg.WebAppURL, supportButtonText, callbackSupport)
+	text := startGreeting(s.cfg.WebAppURL != "")
+	// Подпись кнопки тоже нейтральна к режиму: «Проверить продукт» звало только в сканер.
+	markup := tg.StartMarkup("Открыть приложение", s.cfg.WebAppURL, supportButtonText, callbackSupport)
 	if msg.Chat != nil {
 		if err := s.tg.SendMessage(ctx, msg.Chat.ID, text, markup); err != nil {
 			s.log.Warn("webhook: приветствие /start", "err", err)
