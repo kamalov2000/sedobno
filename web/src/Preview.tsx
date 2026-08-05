@@ -25,7 +25,7 @@ const asyncNoop = async () => {};
 
 const emptyProfile = { filled: false };
 const filledProfile = { filled: true, sex: "male" as const, birth_year: 1994, height_cm: 180, weight_kg: 80, activity_level: "moderate" as const, goal: "lose" as const, daily_kcal_target: 2345, daily_protein_g: 144, daily_fat_g: 65, daily_carb_g: 296 };
-const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, is_subscribed: false, sbp_available: true, sbp_recurrent: true, nutrition_profile: emptyProfile };
+const meFree: Me = { scans_left: 8, free_scans_used: 2, meals_left: 7, free_meals_used: 3, free_scan_limit: 10, free_meal_limit: 10, is_subscribed: false, sbp_available: true, sbp_recurrent: true, nutrition_profile: emptyProfile };
 const meSub: Me = { scans_left: -1, free_scans_used: 0, meals_left: -1, free_meals_used: 0, is_subscribed: true, sbp_available: true, sbp_recurrent: true, subscription_expires_at: "2026-08-16T10:00:00Z", nutrition_profile: filledProfile, subscription: { provider: "sbp", plan: "monthly", status: "active", expires_at: "2026-08-16T10:00:00Z", next_charge_at: "2026-08-16T10:00:00Z", auto_renew: true } };
 const meSubCancelled: Me = { ...meSub, subscription: { provider: "sbp", plan: "annual", status: "cancelled", expires_at: "2027-07-22T10:00:00Z", auto_renew: false } };
 // Разовая карта: SBP_RECURRENT_ENABLED=false в момент покупки — способ не сохранён,

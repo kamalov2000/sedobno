@@ -38,6 +38,10 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
   const accent = meal ? "var(--cal)" : "var(--accent)";
   const onAccent = meal ? "var(--on-cal)" : "var(--on-accent)";
   const leftWord = meal ? "разборов еды" : "проверок";
+  // Знаменатель счётчика — с сервера (free_scan_limit/free_meal_limit), не константой:
+  // лимит задан в Go, и «из 10» в вёрстке врало бы при любой его правке. Старый бэк поля
+  // не шлёт — тогда показываем остаток без «из L», а не выдуманное число.
+  const activeLimit = meal ? me.free_meal_limit : me.free_scan_limit;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
@@ -141,11 +145,11 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           </button>
         ) : outOfActive ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-            Бесплатные {leftWord} закончились (0&nbsp;из&nbsp;10). 249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
+            Бесплатные {leftWord} закончились{activeLimit ? <> (0&nbsp;из&nbsp;{activeLimit})</> : null}. 249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
           </div>
         ) : (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>
-            Осталось {Math.max(0, activeLeft)} из 10 {leftWord}
+            Осталось {Math.max(0, activeLeft)}{activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
           </div>
         )}
 

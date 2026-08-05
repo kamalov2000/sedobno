@@ -63,3 +63,64 @@ describe("HomeScreen — вход в ручной приём", () => {
     expect(screen.getByLabelText("История проверок")).toBeTruthy();
   });
 });
+
+// Знаменатель счётчика приходит с сервера (free_scan_limit/free_meal_limit).
+// Регресс: до 05.08.2026 в вёрстке стояла литеральная «10», и правка лимита в Go
+// молча превращала счётчик в ложь.
+describe("счётчик бесплатных проверок", () => {
+  const render7of12 = (mode: "scan" | "meal") =>
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, scans_left: 7, meals_left: 7, free_scan_limit: 12, free_meal_limit: 12 }}
+        mode={mode}
+        onModeChange={noop}
+        onScan={noop}
+        onSubscribe={noop}
+        onManageSub={noop}
+        onHistory={noop}
+        onDiary={noop}
+      />,
+    );
+
+  it("берёт знаменатель из API, а не из константы", () => {
+    render7of12("scan");
+    expect(screen.getByText(/Осталось 7 из 12 проверок/)).toBeTruthy();
+    cleanup();
+    render7of12("meal");
+    expect(screen.getByText(/Осталось 7 из 12 разборов еды/)).toBeTruthy();
+  });
+
+  it("без поля с бэка показывает остаток без выдуманного знаменателя", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, scans_left: 7, free_scan_limit: undefined }}
+        mode="scan"
+        onModeChange={noop}
+        onScan={noop}
+        onSubscribe={noop}
+        onManageSub={noop}
+        onHistory={noop}
+        onDiary={noop}
+      />,
+    );
+    expect(screen.getByText(/Осталось 7\s+проверок/)).toBeTruthy();
+    expect(screen.queryByText(/из 10/)).toBeNull();
+  });
+
+  it("на исчерпанной квоте знаменатель тоже из API", () => {
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, scans_left: 0, free_scan_limit: 12 }}
+        mode="scan"
+        onModeChange={noop}
+        onScan={noop}
+        onSubscribe={noop}
+        onManageSub={noop}
+        onHistory={noop}
+        onDiary={noop}
+      />,
+    );
+    expect(screen.getByText(/\(0\s*из\s*12\)/)).toBeTruthy();
+  });
+});

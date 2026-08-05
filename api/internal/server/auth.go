@@ -37,6 +37,12 @@ type meView struct {
 	MealsLeft     int  `json:"meals_left"`
 	FreeMealsUsed int  `json:"free_meals_used"`
 	IsSubscribed  bool `json:"is_subscribed"`
+	// FreeScanLimit/FreeMealLimit — сколько бесплатных проверок даётся всего (freeScanLimit,
+	// freeMealLimit). Нужны фронту для знаменателя счётчика «осталось N из L»: раньше L был
+	// literal-ом «10» в вёрстке, и правка константы здесь молча делала счётчик лживым.
+	// Тот же приём, что у water_goal_ml и meal_budgets — норму знает сервер, не клиент.
+	FreeScanLimit int `json:"free_scan_limit"`
+	FreeMealLimit int `json:"free_meal_limit"`
 	// SubscriptionExpiresAt — когда истекает активная подписка (для бейджа на главном
 	// экране). Опущено, если активной подписки нет.
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at,omitempty"`
@@ -172,6 +178,7 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 	v := meView{
 		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
+		FreeScanLimit: freeScanLimit, FreeMealLimit: freeMealLimit,
 		IsSubscribed: u.IsSubscribed,
 		SBPAvailable: s.cfg.SBPEnabled,
 		SBPRecurrent: s.cfg.SBPRecurrentEnabled,

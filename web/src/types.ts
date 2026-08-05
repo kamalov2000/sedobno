@@ -47,6 +47,12 @@ export interface Me {
   free_scans_used: number;
   meals_left: number; // остаток разборов еды (модуль калорий); -1 = безлимит (подписчик)
   free_meals_used: number;
+  /** Сколько бесплатных проверок даётся всего — знаменатель счётчика «осталось N из L».
+   *  С сервера, НЕ константой во фронте: лимит живёт в Go (freeScanLimit/freeMealLimit),
+   *  и зашитая «10» в вёрстке начинала врать при первой же его правке. Нет поля
+   *  (старый бэк) — показываем «Осталось N», без знаменателя. */
+  free_scan_limit?: number;
+  free_meal_limit?: number;
   is_subscribed: boolean;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла

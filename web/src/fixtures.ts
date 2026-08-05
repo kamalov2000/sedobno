@@ -64,6 +64,8 @@ export function makeMe(subscription: Subscription = "active", goal: Goal = "lose
   const base = {
     free_scans_used: 2,
     free_meals_used: 2,
+    free_scan_limit: 10,
+    free_meal_limit: 10,
     sbp_available: true,
     sbp_recurrent: true,
     nutrition_profile: makeProfile(goal),
