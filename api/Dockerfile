@@ -1,5 +1,9 @@
 # --- сборка ---
-FROM golang:1.25-alpine AS build
+# Базовый слой — с зеркала Google (mirror.gcr.io), не Docker Hub: анонимные пуллы
+# с Docker Hub на VPS регулярно ловят 429 Too Many Requests при пересборке (см.
+# инцидент 04.08.2026), а mirror.gcr.io отдаёт тот же образ без этого лимита.
+# Рантайм ниже уже на gcr.io/distroless — там менять нечего.
+FROM mirror.gcr.io/library/golang:1.25-alpine AS build
 WORKDIR /src
 
 # Зависимости вендорятся (api/vendor) — сборка образа идёт без обращения к сети.
