@@ -619,14 +619,14 @@ describe("MealResultScreen — приём, оценённый по описан�
 // Знак «≈» у предположенной добавки раньше объяснялся только через title= и aria-label —
 // на телефоне не всплывает ни то, ни другое, и знак оставался необъяснённым символом.
 describe("легенда знака «≈»", () => {
-  const withAssumed = () => {
+  const withPiece = (assumed: boolean) => {
     const r = makeMealResult();
-    return { ...r, dishes: [{ ...r.dishes[0], pieces: [{ kind: "oil_veg", count: 1, assumed: true }] }] };
+    const first = r.dishes?.[0];
+    if (!first) throw new Error("фикстура makeMealResult без блюд — тест бессмыслен");
+    return { ...r, dishes: [{ ...first, pieces: [{ kind: "oil_veg", count: 1, assumed }] }] };
   };
-  const withoutAssumed = () => {
-    const r = makeMealResult();
-    return { ...r, dishes: [{ ...r.dishes[0], pieces: [{ kind: "oil_veg", count: 1, assumed: false }] }] };
-  };
+  const withAssumed = () => withPiece(true);
+  const withoutAssumed = () => withPiece(false);
 
   it("предположенная добавка — легенда видна текстом, а не тултипом", () => {
     render(<MealResultScreen result={withAssumed() as never} isSubscribed onDone={noop} onRetake={noop} />);

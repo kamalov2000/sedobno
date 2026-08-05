@@ -184,6 +184,16 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
             В дневник
           </button>
         )}
+        {/* Название не прочиталось — почти всегда потому, что в кадр попал только оборот
+            упаковки с составом, а лицевая сторона осталась за кадром. Придумывать его
+            нельзя (на онигири модель выдавала «Омлет с крабом»), поэтому подсказываем,
+            как получить: съёмка уже многокадровая. Показываем только рядом с «В дневник»
+            — именно туда название и подставляется. */}
+        {onAddToDiary && !result.product_name && (
+          <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--text3)", marginTop: -4, marginBottom: 10, lineHeight: 1.4 }}>
+            Снимите ещё и лицевую сторону, чтобы подставилось название
+          </div>
+        )}
         <PhotoStager onScan={onAgain} startLabel="Проверить ещё" startIcon="ti-scan" startHeight={52} startFontSize={15} />
         <div style={{ textAlign: "center", fontSize: 11, color: "var(--text3)", marginTop: 10 }}>
           Справочная информация, не медицинская рекомендация
