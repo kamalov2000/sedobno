@@ -223,3 +223,57 @@ func TestEscalation_NilFallbackActsAsOff(t *testing.T) {
 		}
 	}
 }
+
+// Триггер «яйцо + фрукт»: растёкшийся желток, названный апельсином/манго. Оба кейса —
+// живые, с прода 05.08.2026 (Haiku дал «апельсин», Sonnet «манго» на одном кадре).
+func TestEggFruitTrigger(t *testing.T) {
+	eggs := []llm.MealPiece{{Kind: "yolk", Count: 4}, {Kind: "white", Count: 4}}
+
+	cases := []struct {
+		name string
+		dish llm.MealItem
+		want bool
+	}{
+		{"живой кейс Haiku", llm.MealItem{Name: "яйца пашот с апельсином и миндалём", Pieces: eggs}, true},
+		{"живой кейс Sonnet", llm.MealItem{Name: "яйца пашот с манго и кунжутом", Pieces: eggs}, true},
+		{"персик", llm.MealItem{Name: "яичница с персиком", Pieces: eggs}, true},
+		{"тыква", llm.MealItem{Name: "омлет с тыквой", Pieces: eggs}, true},
+		// Яйца без фрукта — обычный разбор, эскалация не нужна.
+		{"чистая яичница", llm.MealItem{Name: "яичница (глазунья)", Pieces: eggs}, false},
+		{"авокадо с яйцом", llm.MealItem{Name: "авокадо запечённое с яйцом", Pieces: eggs}, false},
+		// Фрукт БЕЗ яиц — это просто фрукт, перепроверять нечего.
+		{"фруктовый салат", llm.MealItem{Name: "салат с апельсином и манго"}, false},
+		{"тыквенный суп", llm.MealItem{Name: "суп-пюре из тыквы"}, false},
+		// Яичные примитивы с нулевым count модель не видела — не считаем за яйца.
+		{"нулевые желтки", llm.MealItem{Name: "салат с апельсином", Pieces: []llm.MealPiece{{Kind: "yolk", Count: 0}}}, false},
+		// Ложечные добавки яйцами не являются.
+		{"масло и апельсин", llm.MealItem{Name: "блины с апельсином", Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1}}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := eggFruitTrigger([]llm.MealItem{tc.dish}) != ""
+			if got != tc.want {
+				t.Fatalf("eggFruitTrigger(%q)=%v, ждали %v", tc.dish.Name, got, tc.want)
+			}
+		})
+	}
+}
+
+// Триггер ищется по ВСЕМ блюдам приёма, а не только по первому: яичница может быть
+// вторым блюдом после гарнира.
+func TestEggFruitTrigger_ScansAllDishes(t *testing.T) {
+	dishes := []llm.MealItem{
+		{Name: "гречневая каша"},
+		{Name: "яйца пашот с апельсином", Pieces: []llm.MealPiece{{Kind: "yolk", Count: 5}}},
+	}
+	if got := eggFruitTrigger(dishes); got != "яйцо+апельсин" {
+		t.Fatalf("trigger=%q, ждали «яйцо+апельсин»", got)
+	}
+}
+
+// Пустой набор не роняет.
+func TestEggFruitTrigger_Empty(t *testing.T) {
+	if eggFruitTrigger(nil) != "" {
+		t.Fatal("сработал на пустом наборе")
+	}
+}

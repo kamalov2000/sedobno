@@ -111,9 +111,15 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.EscalationTrigger = "always"
 	}
 
-	// risky: эскалируем, только если дешёвый проход дал ok с рисковым именем блюда.
+	// risky: эскалируем, только если дешёвый проход дал ok с рисковым именем блюда —
+	// либо назвал фруктом блюдо, в котором сам же увидел яйца (растёкшийся желток
+	// принимается за апельсин/манго, см. eggFruitTrigger).
 	if p.mode == "risky" && p.fallback != nil && res.Status == StatusOK {
-		if trigger := firstRiskyName(res.Dishes, func(d llm.MealItem) string { return d.Name }); trigger != "" {
+		trigger := firstRiskyName(res.Dishes, func(d llm.MealItem) string { return d.Name })
+		if trigger == "" {
+			trigger = eggFruitTrigger(res.Dishes)
+		}
+		if trigger != "" {
 			fbMa, fbUsage, fbErr := p.callGated(ctx, p.fallback, images)
 			if fbErr != nil {
 				// Sonnet перегружен/упал — оставляем Haiku-результат: он лучше ошибки, и за
