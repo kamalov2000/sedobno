@@ -158,7 +158,7 @@ bot-setup: ## настроить команды бота /start,/support (Bot AP
 	TELEGRAM_BOT_TOKEN=$$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' $(ENV_FILE) | head -1); \
 	test -n "$$TELEGRAM_BOT_TOKEN" || { echo "нет TELEGRAM_BOT_TOKEN в $(ENV_FILE)"; exit 1; }; \
 	API="https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN"; \
-	echo "→ setMyCommands (start, support)"; \
+	echo "→ setMyCommands (start, support, stop_daily)"; \
 	curl -sS "$$API/setMyCommands" -H 'Content-Type: application/json' \
 	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"},{"command":"stop_daily","description":"Отключить итог дня"}]}'; echo; \
 	echo "Кнопку «Открыть» для всех — в BotFather: /mybots → Bot Settings → Menu Button → $$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1)"
