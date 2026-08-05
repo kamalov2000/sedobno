@@ -11,6 +11,7 @@ func TestDigestText_NoPressure(t *testing.T) {
 	texts := []string{
 		digestText(1340, 3, 2100, 4, false),
 		digestText(1340, 3, 0, 0, true),
+		digestText(1340, 3, 0, 1, false), // единичная серия + подсказка про норму
 		digestText(900, 1, 1800, 1, false),
 	}
 	// Формулировки-подгонялки: обратные отсчёты, «не потеряйте», «осталось до нормы»,
@@ -32,9 +33,31 @@ func TestDigestText_StreakIsAFact(t *testing.T) {
 	if !strings.Contains(txt, "4 дня подряд") {
 		t.Fatalf("нет факта серии:\n%s", txt)
 	}
-	// Нулевую серию не упоминаем вовсе — «0 дней подряд» звучит как укор.
-	if strings.Contains(digestText(1340, 3, 0, 0, false), "подряд") {
-		t.Fatal("нулевая серия попала в текст")
+}
+
+// Серия начинается с ДВОЙКИ. «1 день подряд» есть у каждого, кто сегодня записал, —
+// это повтор числа приёмов строкой выше, а не факт о человеке; ноль — тем более.
+// Живой текст 05.08.2026 пришёл с «1 день подряд», и это выглядело нелепо.
+func TestDigestText_StreakStartsAtTwo(t *testing.T) {
+	for _, days := range []int{0, 1} {
+		if strings.Contains(digestText(1340, 3, 0, days, false), "подряд") {
+			t.Errorf("серия %d дн. попала в текст", days)
+		}
+	}
+	if !strings.Contains(digestText(1340, 3, 0, 2, false), "2 дня подряд") {
+		t.Fatal("серия из 2 дней не показана")
+	}
+}
+
+// Без нормы итог не с чем сравнить — говорим фактом, без побуждения.
+func TestDigestText_NoTargetHint(t *testing.T) {
+	withoutTarget := digestText(1340, 3, 0, 0, false)
+	if !strings.Contains(withoutTarget, "Норма не рассчитана — можно посчитать в приложении") {
+		t.Fatalf("нет строки про норму:\n%s", withoutTarget)
+	}
+	// С рассчитанной нормой строка не нужна: норма уже в первой строке.
+	if strings.Contains(digestText(1340, 3, 2100, 0, false), "Норма не рассчитана") {
+		t.Fatal("строка про норму показана тому, у кого норма есть")
 	}
 }
 
