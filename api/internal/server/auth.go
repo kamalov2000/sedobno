@@ -47,6 +47,9 @@ type meView struct {
 	// причина вернуться завтра должна быть видна на ГЛАВНОМ экране, а не в разделе, куда
 	// надо догадаться зайти. Опущена при нулевой серии — показывать «0 дней» незачем.
 	Streak *store.Streak `json:"streak,omitempty"`
+	// DailyDigestEnabled — состояние тумблера вечернего итога (экран профиля).
+	// Всегда присутствует: фронт рисует переключатель по нему, а не по догадке.
+	DailyDigestEnabled bool `json:"daily_digest_enabled"`
 	// SubscriptionExpiresAt — когда истекает активная подписка (для бейджа на главном
 	// экране). Опущено, если активной подписки нет.
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at,omitempty"`
@@ -183,9 +186,10 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
 		FreeScanLimit: freeScanLimit, FreeMealLimit: freeMealLimit,
-		IsSubscribed: u.IsSubscribed,
-		SBPAvailable: s.cfg.SBPEnabled,
-		SBPRecurrent: s.cfg.SBPRecurrentEnabled,
+		IsSubscribed:       u.IsSubscribed,
+		DailyDigestEnabled: u.DigestEnabled,
+		SBPAvailable:       s.cfg.SBPEnabled,
+		SBPRecurrent:       s.cfg.SBPRecurrentEnabled,
 	}
 	if u.IsSubscribed {
 		if sub, err := s.store.CurrentSubscription(ctx, u.ID); err != nil {

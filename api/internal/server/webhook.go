@@ -100,6 +100,10 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		s.handleSuccessfulPayment(w, r.Context(), upd.Message)
 	case upd.Message != nil && isPrivateChat(upd.Message) && isStartCommand(upd.Message.Text):
 		s.handleStart(w, r.Context(), upd.Message)
+	// Отписка от вечернего итога — ДО общего текстового обработчика, иначе «стоп»
+	// уехало бы в поддержку как обращение.
+	case upd.Message != nil && isPrivateChat(upd.Message) && isStopDigestCommand(upd.Message.Text):
+		s.handleStopDigest(w, r.Context(), upd.Message)
 	case upd.Message != nil && isPrivateChat(upd.Message) && strings.TrimSpace(upd.Message.Text) != "":
 		s.handleText(w, r.Context(), upd.Message)
 	default:
@@ -204,6 +208,29 @@ func (s *Server) handleCallback(w http.ResponseWriter, ctx context.Context, cq *
 //  2. явная команда «/support <текст>» → обращение сразу;
 //  3. голый «/support» → включаем режим поддержки и просим прислать сообщение;
 //  4. прочий текст → подсказка с кнопкой входа в поддержку (без форварда — фильтр шума).
+//
+// handleStopDigest выключает вечерний итог по команде из бота. Подтверждаем словами и
+// говорим, как вернуть: выключение не должно ощущаться дверью без ручки с той стороны.
+func (s *Server) handleStopDigest(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
+	if msg.From == nil || msg.Chat == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	found, err := s.store.SetDigestEnabledByTelegram(ctx, msg.From.ID, false)
+	text := "Больше не буду присылать итоги дня. Включить обратно — тумблером в профиле."
+	if err != nil {
+		s.log.Warn("итог дня: отписка", "err", err, "tg", msg.From.ID)
+		text = "Не получилось сохранить — попробуйте ещё раз чуть позже."
+	} else if !found {
+		// Человек не завёл аккаунт, но пишет «стоп»: ничего не рассылаем и так.
+		text = "Итоги дня вам и не приходят."
+	}
+	if err := s.tg.SendMessage(ctx, msg.Chat.ID, text, nil); err != nil {
+		s.log.Warn("итог дня: подтверждение отписки", "err", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) handleText(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
 	if msg.From == nil || msg.Chat == nil {
 		w.WriteHeader(http.StatusOK)
@@ -327,6 +354,26 @@ func isPrivateChat(msg *tgMessage) bool {
 func isStartCommand(text string) bool {
 	t := strings.TrimSpace(text)
 	return t == "/start" || strings.HasPrefix(t, "/start ") || strings.HasPrefix(t, "/start@")
+}
+
+// isStopDigestCommand распознаёт отписку от вечернего итога. Команда /stop_daily — но
+// на рассылку люди отвечают боту словом: «стоп», «хватит», «отписаться». Раз механика
+// сама пишет первой, её выключение обязано срабатывать от того, что человек напишет
+// естественно, а не только от того, что он должен был запомнить.
+//
+// Совпадение ТОЧНОЕ, по всему сообщению: «стоп» отдельным словом — почти наверняка
+// отписка, а «стоп, а сколько там калорий» — обращение в поддержку, и перехватывать
+// его нельзя.
+func isStopDigestCommand(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	t = strings.TrimSuffix(t, ".")
+	t = strings.TrimSuffix(t, "!")
+	switch t {
+	case "/stop_daily", "стоп", "хватит", "отписаться", "отписка", "stop":
+		return true
+	}
+	// «/stop_daily@имя_бота» — как Telegram оформляет команду в группах.
+	return strings.HasPrefix(t, "/stop_daily@")
 }
 
 // supportCommand распознаёт обращение в поддержку и вычленяет его текст. Возвращает

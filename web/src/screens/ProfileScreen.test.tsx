@@ -4,6 +4,13 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import ProfileScreen from "./ProfileScreen";
 import type { NutritionProfile } from "../types";
 
+// Сетевой слой мокаем: тумблер обязан менять состояние ТОЛЬКО по ответу сервера.
+const patchDigestEnabled = vi.fn(async (enabled: boolean) => enabled);
+vi.mock("../api", async (orig) => ({
+  ...(await orig<typeof import("../api")>()),
+  patchDigestEnabled: (enabled: boolean) => patchDigestEnabled(enabled),
+}));
+
 afterEach(cleanup);
 const noop = () => {};
 
@@ -40,5 +47,28 @@ describe("ProfileScreen", () => {
     onEditField.mockClear();
     fireEvent.click(screen.getByText("Похудеть")); // строка «Цель»
     expect(onEditField).toHaveBeenCalledWith(4);
+  });
+});
+
+// Вечерний итог — единственное, что бот шлёт сам, поэтому выключатель обязан быть на
+// видном месте, а не только за командой, которую надо помнить.
+describe("тумблер вечернего итога", () => {
+  it("виден и отражает состояние с сервера", () => {
+    render(<ProfileScreen profile={FILLED} onBack={noop} onEditField={noop} digestEnabled onDigestChange={noop} />);
+    const sw = screen.getByRole("switch", { name: "Итог дня вечером" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("выключение уходит на сервер и поднимается наверх", async () => {
+    const onDigestChange = vi.fn();
+    render(<ProfileScreen profile={FILLED} onBack={noop} onEditField={noop} digestEnabled onDigestChange={onDigestChange} />);
+    fireEvent.click(screen.getByRole("switch", { name: "Итог дня вечером" }));
+    await vi.waitFor(() => expect(onDigestChange).toHaveBeenCalledWith(false));
+    expect(patchDigestEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it("бэк без поля — тумблера нет вовсе", () => {
+    render(<ProfileScreen profile={FILLED} onBack={noop} onEditField={noop} />);
+    expect(screen.queryByRole("switch")).toBeNull();
   });
 });

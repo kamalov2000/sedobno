@@ -465,6 +465,8 @@ export default function App() {
       {view === "profile" && me && (
         <ProfileScreen
           profile={me.nutrition_profile}
+          digestEnabled={me.daily_digest_enabled}
+          onDigestChange={(enabled) => setMe((m) => (m ? { ...m, daily_digest_enabled: enabled } : m))}
           onBack={() => setView("meal_diary")}
           onEditField={(step) => {
             setProfileEditStep(step);

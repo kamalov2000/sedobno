@@ -160,7 +160,7 @@ bot-setup: ## настроить команды бота /start,/support (Bot AP
 	API="https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN"; \
 	echo "→ setMyCommands (start, support)"; \
 	curl -sS "$$API/setMyCommands" -H 'Content-Type: application/json' \
-	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"}]}'; echo; \
+	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"},{"command":"stop_daily","description":"Отключить итог дня"}]}'; echo; \
 	echo "Кнопку «Открыть» для всех — в BotFather: /mybots → Bot Settings → Menu Button → $$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1)"
 
 # ВАЖНО (миграции): api в compose зависит от migrate (service_completed_successfully),

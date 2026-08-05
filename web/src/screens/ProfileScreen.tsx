@@ -1,5 +1,8 @@
+import { useState } from "react";
 import type { NutritionProfile } from "../types";
 import { ACTIVITY, GOALS } from "./ProfileWizard";
+import { patchDigestEnabled } from "../api";
+import { haptic, notify } from "../telegram";
 
 // Экран 03 · Профиль и цель. Карточка дневной нормы сверху + список «Ваши данные»
 // (пол/возраст/рост/вес/активность/цель), тап по строке открывает точечную правку
@@ -13,6 +16,10 @@ interface Props {
   /** Открыть точечную правку одного поля (индекс шага визарда: 0 пол · 1 год ·
    *  2 рост/вес · 3 активность · 4 цель). */
   onEditField: (step: 0 | 1 | 2 | 3 | 4) => void;
+  /** Вечерний итог дня: текущее состояние тумблера и уведомление наверх о его смене
+   *  (App держит снимок /me, из которого рисуется весь остальной интерфейс). */
+  digestEnabled?: boolean;
+  onDigestChange?: (enabled: boolean) => void;
 }
 
 const NBSP = " ";
@@ -28,7 +35,7 @@ function yearsWord(n: number): string {
 
 const SEX_LABEL: Record<string, string> = { male: "Мужской", female: "Женский" };
 
-export default function ProfileScreen({ profile, onBack, onEditField }: Props) {
+export default function ProfileScreen({ profile, onBack, onEditField, digestEnabled, onDigestChange }: Props) {
   const nowYear = new Date().getFullYear();
   const age = profile.birth_year ? nowYear - profile.birth_year : null;
   const activity = ACTIVITY.find((a) => a.key === profile.activity_level);
@@ -91,11 +98,57 @@ export default function ProfileScreen({ profile, onBack, onEditField }: Props) {
           ))}
         </div>
 
+        {/* Вечерний итог — единственное, что бот шлёт сам, поэтому выключатель живёт на
+            видном месте, а не за командой, которую надо помнить. Команда /stop_daily
+            (и просто «стоп» в ответ боту) остаётся вторым путём. */}
+        {digestEnabled != null && onDigestChange && (
+          <DigestToggle enabled={digestEnabled} onChange={onDigestChange} />
+        )}
+
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>
           <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: 15, color: "var(--text3)", flex: "none", marginTop: 1 }} />
           <span style={{ fontSize: 11.5, color: "var(--text2)", lineHeight: 1.4 }}>Норма{NBSP}— расчётный ориентир по формуле, а не медицинская рекомендация.</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Тумблер вечернего итога. Состояние — с сервера: локально переключаем только после
+// успешного ответа, иначе выключенный на глаз итог продолжал бы приходить.
+function DigestToggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    if (busy) return;
+    haptic("light");
+    setBusy(true);
+    try {
+      onChange(await patchDigestEnabled(!enabled));
+    } catch {
+      notify("error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ marginTop: 18, border: "1px solid var(--border)", borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, opacity: busy ? 0.6 : 1 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, color: "var(--text)" }}>Итог дня вечером</div>
+        <div style={{ fontSize: 11.5, color: "var(--text2)", lineHeight: 1.4, marginTop: 2 }}>
+          Сколько съедено за день. Приходит, только если вы что-то записали.
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Итог дня вечером"
+        onClick={toggle}
+        disabled={busy}
+        style={{ flex: "none", width: 46, height: 27, borderRadius: 99, border: "none", padding: 3, cursor: busy ? "default" : "pointer", background: enabled ? "var(--cal)" : "var(--border)", display: "flex", justifyContent: enabled ? "flex-end" : "flex-start", alignItems: "center", transition: "background 0.15s" }}
+      >
+        <span style={{ width: 21, height: 21, borderRadius: "50%", background: "var(--bg)", display: "block" }} />
+      </button>
     </div>
   );
 }

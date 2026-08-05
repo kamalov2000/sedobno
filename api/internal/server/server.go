@@ -116,6 +116,10 @@ func (s *Server) Router() http.Handler {
 
 			// Профиль питания и дневная норма (feature/calories).
 			r.Patch("/profile/nutrition", s.handleProfileNutrition)
+			// Тумблер вечернего итога. Отдельным роутом, а не полем в профиле питания:
+			// это настройка уведомлений, а не часть расчёта нормы, и слать её вместе
+			// с ростом-весом значило бы пересчитывать КБЖУ на каждое переключение.
+			r.Patch("/profile/digest", s.handleProfileDigest)
 
 			r.Get("/me", s.handleMe)
 

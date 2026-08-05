@@ -185,3 +185,27 @@ func goalConflict(p store.NutritionProfile) string {
 	}
 	return ""
 }
+
+// handleProfileDigest — PATCH /api/profile/digest. Тумблер вечернего итога дня.
+// Тело: {"enabled": true|false}. Возвращает актуальное состояние — фронт рисует
+// переключатель по ответу, а не по своей оптимистичной догадке.
+func (s *Server) handleProfileDigest(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+		return
+	}
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil || req.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "ожидается {\"enabled\": true|false}")
+		return
+	}
+	if err := s.store.SetDigestEnabled(r.Context(), claims.UserID, *req.Enabled); err != nil {
+		s.log.Error("итог дня: сохранение тумблера", "err", err, "user", claims.UserID)
+		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"daily_digest_enabled": *req.Enabled})
+}

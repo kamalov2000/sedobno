@@ -361,6 +361,19 @@ export async function patchProfileNutrition(body: NutritionProfilePatch): Promis
   return res.json();
 }
 
+/** PATCH /api/profile/digest — тумблер вечернего итога дня. Возвращает состояние с
+ *  сервера: переключатель рисуется по ответу, а не по оптимистичной догадке клиента. */
+export async function patchDigestEnabled(enabled: boolean): Promise<boolean> {
+  const res = await apiFetch("/api/profile/digest", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  const data = (await res.json()) as { daily_digest_enabled: boolean };
+  return data.daily_digest_enabled;
+}
+
 // --- Вес и вода (спринт 2). Бесплатные: ни квот, ни пейволла. ---
 
 /** Локальный день пользователя. Сервер верит клиенту (иначе таймзоны ломают границу
