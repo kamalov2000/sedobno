@@ -45,8 +45,23 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
-      {/* Шапка: дневник (с точкой) + история справа сверху. */}
+      {/* Шапка: серия (если есть) + дневник (с точкой) + история справа сверху. */}
       <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 2, marginTop: 12, marginRight: -4 }}>
+        {/* Серия — единственный повод вернуться завтра, который у нас есть, и до сих пор
+            она была видна только внутри дневника. Здесь она встречает человека сразу.
+            Огонёк гаснет, пока сегодня пусто (today_logged=false) — «серия жива, но
+            сегодня ещё не отмечено», ровно как в дневнике. Тап ведёт туда же. */}
+        {(me.streak?.days ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={onDiary}
+            aria-label={`Серия: ${me.streak!.days} дн. подряд`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, marginRight: "auto", padding: "5px 10px", border: "1px solid var(--border)", borderRadius: 99, background: "none", cursor: "pointer", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, fontWeight: 500, color: "var(--text2)" }}
+          >
+            <i className="ti ti-flame" aria-hidden="true" style={{ fontSize: 15, color: me.streak!.today_logged ? "var(--cal)" : "var(--text3)" }} />
+            {me.streak!.days} дн. подряд
+          </button>
+        )}
         <button type="button" onClick={onDiary} aria-label="Дневник питания" style={{ position: "relative", background: "none", border: "none", padding: 6, cursor: "pointer", display: "flex", color: "var(--text2)" }}>
           <i className="ti ti-notebook" aria-hidden="true" style={{ fontSize: 22 }} />
           {todayHasMeals && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: "var(--cal)", border: "1.5px solid var(--bg)" }} />}

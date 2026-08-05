@@ -124,3 +124,49 @@ describe("счётчик бесплатных проверок", () => {
     expect(screen.getByText(/\(0\s*из\s*12\)/)).toBeTruthy();
   });
 });
+
+// Серия — единственный имеющийся повод вернуться завтра, и до 05.08.2026 она была
+// видна только внутри дневника, куда надо догадаться зайти.
+describe("серия на главном", () => {
+  const withStreak = (streak?: { days: number; today_logged: boolean }) =>
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, streak }}
+        mode="scan"
+        onModeChange={noop}
+        onScan={noop}
+        onSubscribe={noop}
+        onManageSub={noop}
+        onHistory={noop}
+        onDiary={noop}
+      />,
+    );
+
+  it("серия есть — видна на главном", () => {
+    withStreak({ days: 3, today_logged: true });
+    expect(screen.getByText("3 дн. подряд")).toBeTruthy();
+  });
+
+  it("нулевой серии нет на экране — «0 дней» не мотивация, а шум", () => {
+    withStreak(undefined);
+    expect(screen.queryByText(/дн\. подряд/)).toBeNull();
+  });
+
+  it("тап по серии ведёт в дневник", () => {
+    const onDiary = vi.fn();
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, streak: { days: 5, today_logged: false } }}
+        mode="scan"
+        onModeChange={noop}
+        onScan={noop}
+        onSubscribe={noop}
+        onManageSub={noop}
+        onHistory={noop}
+        onDiary={onDiary}
+      />,
+    );
+    fireEvent.click(screen.getByText("5 дн. подряд"));
+    expect(onDiary).toHaveBeenCalledTimes(1);
+  });
+});

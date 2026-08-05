@@ -43,6 +43,10 @@ type meView struct {
 	// Тот же приём, что у water_goal_ml и meal_budgets — норму знает сервер, не клиент.
 	FreeScanLimit int `json:"free_scan_limit"`
 	FreeMealLimit int `json:"free_meal_limit"`
+	// Streak — серия дней с записями в дневнике. Здесь, а не только в ответе дневника:
+	// причина вернуться завтра должна быть видна на ГЛАВНОМ экране, а не в разделе, куда
+	// надо догадаться зайти. Опущена при нулевой серии — показывать «0 дней» незачем.
+	Streak *store.Streak `json:"streak,omitempty"`
 	// SubscriptionExpiresAt — когда истекает активная подписка (для бейджа на главном
 	// экране). Опущено, если активной подписки нет.
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at,omitempty"`
@@ -194,6 +198,15 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 			}
 		}
 	}
+	// Серия дней с дневником — best-effort, как и профиль: главный экран не должен
+	// падать из-за необязательной цифры. Нулевую серию не отдаём вовсе (omitempty):
+	// «0 дней» на главном — не мотивация, а шум.
+	if st, err := s.store.StreakFor(ctx, u.ID, mskToday()); err != nil {
+		s.log.Warn("me: подсчёт серии", "err", err, "user", u.ID)
+	} else if st.Days > 0 {
+		v.Streak = &st
+	}
+
 	// Профиль питания (best-effort — при ошибке отдаём пустой, ответ не роняем).
 	if p, err := s.store.GetNutritionProfile(ctx, u.ID); err != nil {
 		s.log.Warn("me: чтение профиля питания", "err", err, "user", u.ID)
