@@ -547,6 +547,14 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.Nutrition = nil
 	}
 
+	// Единицы калорийности — ПОСЛЕ гейта: гейт обязан сверять с transcription то, что
+	// модель реально прочитала на этикетке («640»), а не уже пересчитанное нами число.
+	// Здесь же чиним кДж, попавшие в поле ккал, и разошедшиеся с макросами значения —
+	// иначе карточка скана и дневник показывают разные цифры за один продукт.
+	if fix := reconcileNutritionUnits(res.Nutrition); fix != fixNone {
+		p.log.Warn("nutrition: калорийность с этикетки исправлена", "fix", fix)
+	}
+
 	items := scoringItems(recs)
 	res.Matched = make([]MatchedIngredient, 0, len(recs))
 	for _, r := range recs {
