@@ -42,6 +42,10 @@ interface Props {
    *  показывает строку «AI оценил», ремарку модели и плашку «на глаз», — а сохраняет
    *  приём с source="text". По умолчанию у ручного приёма чисел от модели нет. */
   origin?: "text";
+  /** Открыть мастер расчёта нормы. Передаётся ТОЛЬКО когда профиль не заполнен (решает
+   *  App) — тогда под итогом разбора появляется строка «это много или мало?». Не задан —
+   *  строки нет: у человека с нормой она бессмысленна. */
+  onOpenWizard?: () => void;
 }
 
 const GRAM_STEP = 10;
@@ -82,7 +86,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference, origin }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
   // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
@@ -511,6 +515,25 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
 
       {/* Футер */}
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
+        {/* Норма — ровно здесь, а не в дневнике: человек только что увидел «916 ккал» за
+            приём, и вопрос «а сколько мне вообще можно?» возникает сам. Раньше первый
+            ответ на него ждал в дневнике, куда ещё надо было догадаться зайти.
+            Показывается только при незаполненном профиле (проп передаёт App) и только у
+            свежего разбора: у приёма, открытого из истории, человек правит запись, а не
+            знакомится с продуктом. */}
+        {onOpenWizard && !isSaved && (
+          <button
+            type="button"
+            onClick={onOpenWizard}
+            style={{ width: "100%", background: "var(--cal-soft)", border: "1px solid var(--cal-border)", borderRadius: 12, padding: "10px 14px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}
+          >
+            <i className="ti ti-target" aria-hidden="true" style={{ fontSize: 18, color: "var(--cal-num)", flex: "none" }} />
+            <span style={{ flex: 1, fontFamily: "'Golos Text',sans-serif", fontSize: 13, color: "var(--text2)", lineHeight: 1.4 }}>
+              Это много или мало? <span style={{ color: "var(--cal-num)", fontWeight: 500 }}>Посчитать мою норму</span>
+            </span>
+            <i className="ti ti-chevron-right" aria-hidden="true" style={{ fontSize: 16, color: "var(--text3)", flex: "none" }} />
+          </button>
+        )}
         <button
           type="button"
           disabled={busy || blocked}

@@ -75,6 +75,10 @@ export default function App() {
   // Точечная правка одного поля профиля из экрана «Профиль и цель». null — визард
   // открыт как полный онбординг (первое заполнение). Число — правка одного шага.
   const [profileEditStep, setProfileEditStep] = useState<0 | 1 | 2 | 3 | 4 | null>(null);
+  /** Куда вернуть после мастера нормы. По умолчанию мастер уходит в дневник, но открытый
+   *  с ЕЩЁ НЕ СОХРАНЁННОГО разбора он бы этот разбор потерял: приём в дневник не лёг, а
+   *  экран с ним закрылся. Задан — возвращаемся на него. */
+  const [wizardReturnTo, setWizardReturnTo] = useState<View | null>(null);
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
   // Приём, оценённый по ТЕКСТОВОМУ описанию (backlog п.2): открывается тем же редактором,
   // что и ручной, но с числами от модели и source="text" при сохранении. null — обычный
@@ -475,11 +479,14 @@ export default function App() {
           onDone={(profile) => {
             setMe((m) => (m ? { ...m, nutrition_profile: profile } : m));
             // Правка одного поля возвращает на экран профиля; полный онбординг — в дневник.
-            setView(profileEditStep != null ? "profile" : "meal_diary");
+            // Но если мастер открыт с несохранённого разбора — строго обратно на него.
+            setView(wizardReturnTo ?? (profileEditStep != null ? "profile" : "meal_diary"));
+            setWizardReturnTo(null);
             setProfileEditStep(null);
           }}
           onCancel={() => {
-            setView(profileEditStep != null ? "profile" : "meal_diary");
+            setView(wizardReturnTo ?? (profileEditStep != null ? "profile" : "meal_diary"));
+            setWizardReturnTo(null);
             setProfileEditStep(null);
           }}
         />
@@ -558,6 +565,9 @@ export default function App() {
           isSubscribed={me?.is_subscribed ?? false}
           mealsLeft={me?.meals_left}
           saved={savedMeal ?? undefined}
+          // Норму предлагаем ровно в момент, когда человек увидел калорийность приёма и
+          // ему не с чем её сравнить. Профиль заполнен — проп не передаём, строки нет.
+          onOpenWizard={me && !me.nutrition_profile.filled ? () => { setProfileEditStep(null); setWizardReturnTo("meal_result"); setView("profile_wizard"); } : undefined}
           onDone={() => {
             // Правка приёма из истории возвращает в историю, а не в дневник: человек
             // листал список и правил конкретную запись — выбрасывать его после этого
@@ -615,6 +625,9 @@ export default function App() {
           isSubscribed={me?.is_subscribed ?? false}
           manual
           origin={textMeal ? "text" : undefined}
+          // Тот же призыв к расчёту нормы, что и после фото: приём, вписанный словами или
+          // руками, ставит перед человеком ровно тот же вопрос «а сколько мне можно».
+          onOpenWizard={me && !me.nutrition_profile.filled ? () => { setProfileEditStep(null); setWizardReturnTo("meal_manual"); setView("profile_wizard"); } : undefined}
           // Сохранил — показываем дневник, куда приём и лёг: это подтверждение
           // результата, а не «возврат». Отменил — возвращаем ровно туда, откуда
           // пришёл, иначе отмена работала бы как переход.

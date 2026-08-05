@@ -638,3 +638,25 @@ describe("легенда знака «≈»", () => {
     expect(screen.queryByText(/добавку предположили/)).toBeNull();
   });
 });
+
+// Норма предлагается сразу после разбора: человек увидел «916 ккал» и ему не с чем
+// сравнить. Раньше первый ответ на этот вопрос ждал в дневнике.
+describe("призыв посчитать норму", () => {
+  it("профиль не заполнен (проп передан) — строка видна и ведёт в мастер", () => {
+    const onOpenWizard = vi.fn();
+    render(<MealResultScreen result={makeMealResult()} isSubscribed onDone={noop} onRetake={noop} onOpenWizard={onOpenWizard} />);
+    fireEvent.click(screen.getByText("Посчитать мою норму"));
+    expect(onOpenWizard).toHaveBeenCalledTimes(1);
+  });
+
+  it("норма есть (проп не передан) — строки нет", () => {
+    render(<MealResultScreen result={makeMealResult()} isSubscribed onDone={noop} onRetake={noop} />);
+    expect(screen.queryByText("Посчитать мою норму")).toBeNull();
+  });
+
+  it("приём открыт из истории — призыва нет, человек правит запись", () => {
+    const saved = makeMealHistory().items[1]!; // фото-приём, как в остальных тестах файла
+    render(<MealResultScreen result={diaryItemToResult(saved, -1)} isSubscribed saved={saved} onDone={noop} onRetake={noop} onOpenWizard={noop} />);
+    expect(screen.queryByText("Посчитать мою норму")).toBeNull();
+  });
+});
