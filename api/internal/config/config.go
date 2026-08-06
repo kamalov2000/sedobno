@@ -216,8 +216,17 @@ func MustLoad() *Config {
 
 		AnthropicBaseURL:     opt("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
 		AnthropicVersion:     opt("ANTHROPIC_VERSION", "2023-06-01"),
-		AnthropicVisionModel: opt("ANTHROPIC_VISION_MODEL", "claude-haiku-4-5"),
-		AnthropicTextModel:   opt("ANTHROPIC_TEXT_MODEL", "claude-haiku-4-5"),
+		// Sonnet ВЕЗДЕ (решение владельца 06.08.2026): Haiku больше не используется ни в
+		// сканере, ни в модуле калорий. Дефолт, а не переменная в прод-.env, — чтобы Haiku
+		// не вернулся при пересоздании окружения. Следствие: обе «сильные» модели совпадают
+		// с базовой, и оба конструктора эскалации (NewExtractFallback, NewMealEscalationAnalyzer)
+		// отдают nil — эскалировать некуда, мы уже на сильной модели. Пайплайны это
+		// поддерживают by design (fallback == nil), но вместе с эскалацией у СКАНЕРА гаснут
+		// и завязанные на неё гейты, включая контрольное второе прочтение плотных этикеток
+		// (self-consistency). Если оно понадобится на Sonnet — это отдельная правка: гейт
+		// упирается в guard «модель эскалации == базовой → nil», а не в саму модель.
+		AnthropicVisionModel: opt("ANTHROPIC_VISION_MODEL", "claude-sonnet-5"),
+		AnthropicTextModel:   opt("ANTHROPIC_TEXT_MODEL", "claude-sonnet-5"),
 
 		ExtractFallbackModel: opt("EXTRACT_FALLBACK_MODEL", "claude-sonnet-5"),
 
