@@ -1,6 +1,9 @@
 package meal
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/sostav/api/internal/llm"
@@ -76,6 +79,194 @@ func TestAsEggDish_ПервичнаяДогадкаИзГраммовки(t *tes
 	got0, _ := asEggDish(llm.MealItem{Name: "Яйцо"})
 	if got0.Yolks != 1 || got0.Whites != 1 {
 		t.Errorf("при grams=0 догадка=%d/%d, ждали 1/1", got0.Yolks, got0.Whites)
+	}
+}
+
+// Штуки из pieces (модель их СОСЧИТАЛА на фото) точнее догадки по граммовке: тарелку с
+// тремя глазуньями модель видит как три жёлтых пятна, а массу занижает до «двух яиц».
+func TestAsEggDish_ШтукиБерутсяИзPieces(t *testing.T) {
+	got, ok := asEggDish(llm.MealItem{
+		Name: "Яичница", Grams: 120, // догадка по массе дала бы 2 целых
+		Pieces: []llm.MealPiece{{Kind: "yolk", Count: 3}, {Kind: "white", Count: 3}},
+	})
+	if !ok {
+		t.Fatal("asEggDish не распознал яичное блюдо")
+	}
+	if got.Yolks != 3 || got.Whites != 3 {
+		t.Errorf("счётчики=%d/%d, ждали 3/3 (из pieces, а не 2/2 из граммовки)", got.Yolks, got.Whites)
+	}
+	if got.Kcal != 234 {
+		t.Errorf("ккал=%v, ждали 234 (3 целых яйца)", got.Kcal)
+	}
+}
+
+// Правка через PATCH перебивает pieces: явные счётчики пользователя — самый надёжный
+// источник, тапом он уже сказал, сколько там яиц.
+func TestAsEggDish_ЯвныеСчётчикиСильнееPieces(t *testing.T) {
+	got, _ := asEggDish(llm.MealItem{
+		Name: "Яичница", Yolks: 1, Whites: 1,
+		Pieces: []llm.MealPiece{{Kind: "yolk", Count: 5}, {Kind: "white", Count: 5}},
+	})
+	if got.Yolks != 1 || got.Whites != 1 {
+		t.Errorf("счётчики=%d/%d, ждали 1/1 (правка пользователя)", got.Yolks, got.Whites)
+	}
+}
+
+// Блюдо уже помечено dish_kind=eggs (пришло из PATCH), а имя пользователь сменил на
+// неяичное — пересчёт из штук всё равно обязан состояться, иначе числа клиента уедут в
+// дневник без серверной проверки.
+func TestAsEggDish_ПереименованноеБлюдоОстаётсяСчётчиком(t *testing.T) {
+	got, ok := asEggDish(llm.MealItem{Name: "Завтрак", DishKind: DishKindEggs, Yolks: 2, Whites: 2, Kcal: 9999})
+	if !ok || got.Kcal != 156 {
+		t.Errorf("ok=%v ккал=%v, ждали пересчёт 156 из штук", ok, got.Kcal)
+	}
+}
+
+func TestEggHeadedName(t *testing.T) {
+	cases := map[string]bool{
+		// яйца — ОСНОВА, добавка через « с » головы не меняет
+		"Яйца отварные с солью": true,
+		"яичница с помидорами":  true,
+		"Яйца пашот с зеленью":  true,
+		"Яичница":               true,
+		"Яйца всмятку":          true,
+		// яйцо — ДОБАВКА к другой основе
+		"салат с яйцом":      false,
+		"авокадо с яйцом":    false,
+		"тост с яйцом пашот": false,
+		// не яичные вовсе
+		"Омлет с молоком": false, // омлет исключён и здесь: в нём молоко и масло
+		"гречка":          false,
+		"":                false,
+	}
+	for name, want := range cases {
+		if got := eggHeadedName(name); got != want {
+			t.Errorf("eggHeadedName(%q)=%v, ждали %v", name, got, want)
+		}
+	}
+}
+
+// ГЛАВНЫЙ КЕЙС (прод 05.08.2026, 943 ккал вместо 783): блюдо названо яйцами, его eyeball-база
+// совпадает с яйцами из pieces — значит это одни и те же яйца. Считаем их РОВНО ОДИН раз.
+func TestSanitizeDishes_ЯйцаНеВходятИВБазуИВПримитивы(t *testing.T) {
+	dishes, total := SanitizeDishes([]llm.MealItem{
+		// « с » мешает isEggDish увидеть счётчик, поэтому раньше складывались оба вклада.
+		{Name: "Яйца отварные с солью", Grams: 110, Kcal: 155, ProteinG: 12.6, FatG: 10.6, CarbG: 1.2,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}}},
+	})
+	if len(dishes) != 1 {
+		t.Fatalf("блюд=%d, ждали 1", len(dishes))
+	}
+	if dishes[0].DishKind != DishKindEggs {
+		t.Errorf("kind=%q, ждали eggs (база и примитивы — одни и те же яйца)", dishes[0].DishKind)
+	}
+	if hasEggPieces(dishes[0].Pieces) {
+		t.Errorf("яичные примитивы остались рядом со счётчиком: %+v", dishes[0].Pieces)
+	}
+	if total.Kcal != 156 {
+		t.Errorf("тотал=%v, ждали 156 (два яйца ОДИН раз, а не 311)", total.Kcal)
+	}
+}
+
+// Ложечная добавка при этом не теряется: яйца жарятся на масле, и его вклад не дублируется.
+func TestSanitizeDishes_ПриСхлопыванииЯицМаслоОстаётся(t *testing.T) {
+	dishes, total := SanitizeDishes([]llm.MealItem{
+		{Name: "Яичница с солью", Grams: 110, Kcal: 156,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+	})
+	if len(dishes[0].Pieces) != 1 || dishes[0].Pieces[0].Kind != "oil_veg" {
+		t.Fatalf("примитивы=%+v, ждали только масло", dishes[0].Pieces)
+	}
+	if total.Kcal != 156+45 {
+		t.Errorf("тотал=%v, ждали 201 (2 яйца + ложка масла)", total.Kcal)
+	}
+}
+
+// Обратная сторона: у составного блюда с настоящим гарниром база на яйца НЕ похожа, и
+// сервер её не трогает — иначе редкий перебор сменился бы систематическим недобором.
+func TestSanitizeDishes_ГарнирНеСъедаетсяПроверкой(t *testing.T) {
+	dishes, total := SanitizeDishes([]llm.MealItem{
+		{Name: "Яичница с картошкой", Grams: 300, Kcal: 450, ProteinG: 10, FatG: 20, CarbG: 50,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 3}, {Kind: "white", Count: 3}}},
+	})
+	if dishes[0].DishKind == DishKindEggs {
+		t.Fatal("блюдо с гарниром схлопнуто в счётчик яиц — картошка потеряна")
+	}
+	if dishes[0].Kcal != 450 {
+		t.Errorf("база=%v, ждали 450 нетронутыми", dishes[0].Kcal)
+	}
+	if total.Kcal != 684 {
+		t.Errorf("тотал=%v, ждали 684 (картошка 450 + 3 яйца 234)", total.Kcal)
+	}
+}
+
+// Проверка идемпотентна: тот же массив, прогнанный через санитизацию второй раз (путь
+// PATCH — клиент возвращает блюда обратно), не меняет чисел ещё раз.
+func TestSanitizeDishes_СхлопываниеЯицИдемпотентно(t *testing.T) {
+	first, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "Яйца отварные с солью", Grams: 110, Kcal: 155,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}}},
+	})
+	second, total := SanitizeDishes(first)
+	if second[0].Kcal != first[0].Kcal || total.Kcal != 156 {
+		t.Errorf("второй прогон дал %v (тотал %v), ждали те же 156", second[0].Kcal, total.Kcal)
+	}
+}
+
+// Неразрешимый случай (гарнир) не уходит наружу молча: он пишется в лог api, чтобы риск
+// двойного счёта можно было пересчитать по логам, а не ждать жалобы. Схлопнутое блюдо —
+// уже не риск, и лог им не засоряется.
+func TestLogEggPiecesAmbiguity(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ambiguous, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "Яичница с картошкой", Grams: 300, Kcal: 450, ProteinG: 10, FatG: 20, CarbG: 50,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 3}, {Kind: "white", Count: 3}}},
+	})
+	logEggPiecesAmbiguity(ambiguous, log)
+	if !strings.Contains(buf.String(), "двойной счёт") {
+		t.Errorf("неразрешимый случай не попал в лог: %q", buf.String())
+	}
+
+	buf.Reset()
+	collapsed, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "Яйца отварные с солью", Grams: 110, Kcal: 155,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}}},
+	})
+	logEggPiecesAmbiguity(collapsed, log)
+	if buf.Len() != 0 {
+		t.Errorf("схлопнутое блюдо не должно писать в лог: %q", buf.String())
+	}
+
+	// Штатный ответ по контракту промпта (живой Sonnet 06.08.2026): база нулевая, все яйца
+	// в примитивах. Удваивать нечего — предупреждения быть не должно, иначе лог заполнят
+	// ровно правильные разборы.
+	buf.Reset()
+	byContract, _ := SanitizeDishes([]llm.MealItem{
+		{Name: "яичница глазунья с кунжутом и соусом", Grams: 0, Kcal: 0,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 5}, {Kind: "white", Count: 5}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+	})
+	logEggPiecesAmbiguity(byContract, log)
+	if buf.Len() != 0 {
+		t.Errorf("нулевая база с яйцами в pieces — это контракт, а не риск: %q", buf.String())
+	}
+}
+
+// Живой ответ Sonnet 06.08.2026 на тарелку с пятью глазуньями и гречкой, целиком: правило
+// «яичное блюдо — всегда через pieces» соблюдено (база нулевая), и сервер обязан посчитать
+// пять яиц по примитивам. До правки штук-из-pieces такой ответ у блюда с яичным ИМЕНЕМ дал
+// бы одно яйцо (78 ккал вместо 390) — догадка по нулевой граммовке.
+func TestSanitizeDishes_ЖивойОтветПятьГлазуний(t *testing.T) {
+	_, total := SanitizeDishes([]llm.MealItem{
+		{Name: "яичница глазунья с кунжутом и соусом", Grams: 0, Kcal: 0,
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 5}, {Kind: "white", Count: 5}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+		{Name: "гречка отварная с зеленью и соусом", Grams: 200, Kcal: 210, ProteinG: 7, FatG: 2, CarbG: 42,
+			Pieces: []llm.MealPiece{{Kind: "butter", Count: 1, Assumed: true}}},
+	})
+	// 5 целых яиц 390 + масло 45 + гречка 210 + сливочное 37 = 682.
+	if total.Kcal != 682 {
+		t.Errorf("тотал=%v, ждали 682 (5 яиц 390 + масло 45 + гречка 210 + сливочное 37)", total.Kcal)
 	}
 }
 

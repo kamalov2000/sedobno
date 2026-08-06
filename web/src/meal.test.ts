@@ -189,18 +189,28 @@ describe("детерминированные примитивы блюда (piec
     expect(pieceCountLabel("yolk", 4)).toBe("×4"); // штучный, не ложечный
   });
 
-  it("displayPieces достраивает пару Желток/Белок: [yolk×4] → два чипса (4 и 0)", () => {
-    const shown = displayPieces([{ kind: "yolk", count: 4 }]);
-    expect(shown).toEqual([{ kind: "yolk", count: 4 }, { kind: "white", count: 0 }]);
-    // и наоборот: только белки → добавляется yolk×0, порядок Желток→Белок
-    expect(displayPieces([{ kind: "white", count: 4 }])).toEqual([
-      { kind: "yolk", count: 0 }, { kind: "white", count: 4 },
+  it("displayPieces рисует весь ряд: что модель не вернула — чипс с count=0", () => {
+    // Блюдо совсем без примитивов: ряд всё равно полный, все нули — забытое моделью
+    // масло есть чем дописать.
+    expect(displayPieces(undefined)).toEqual([
+      { kind: "yolk", count: 0 }, { kind: "white", count: 0 },
+      { kind: "oil_veg", count: 0 }, { kind: "butter", count: 0 }, { kind: "sugar", count: 0 },
     ]);
-    // не-яичные блюда не трогаются
-    expect(displayPieces([{ kind: "oil_veg", count: 1 }])).toEqual([{ kind: "oil_veg", count: 1 }]);
-    // яйца впереди, ложечные после
+    // Числа модели попадают на свои места, порядок ряда фиксированный.
     expect(displayPieces([{ kind: "oil_veg", count: 1 }, { kind: "yolk", count: 2 }])).toEqual([
-      { kind: "yolk", count: 2 }, { kind: "white", count: 0 }, { kind: "oil_veg", count: 1 },
+      { kind: "yolk", count: 2 }, { kind: "white", count: 0 },
+      { kind: "oil_veg", count: 1 }, { kind: "butter", count: 0 }, { kind: "sugar", count: 0 },
+    ]);
+    // assumed переживает достройку ряда (чипс рисуется знаком «≈»).
+    expect(displayPieces([{ kind: "butter", count: 1, assumed: true }])[3])
+      .toEqual({ kind: "butter", count: 1, assumed: true });
+  });
+
+  it("displayPieces у блюда-счётчика (яичница) даёт только ложечные — яйца в счётчике штук", () => {
+    // Штучные чипсы у dish_kind=eggs были бы обманом: сервер их снимает (keepAddonPieces),
+    // и тапы по ним молча пропали бы при сохранении.
+    expect(displayPieces([{ kind: "yolk", count: 3 }, { kind: "oil_veg", count: 1 }], true)).toEqual([
+      { kind: "oil_veg", count: 1 }, { kind: "butter", count: 0 }, { kind: "sugar", count: 0 },
     ]);
   });
 

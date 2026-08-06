@@ -89,7 +89,7 @@ var yolkFruitSubstrings = []string{
 // hasEggPieces — модель вынесла в примитивы желток или белок, то есть яйца на фото увидела.
 func hasEggPieces(pieces []llm.MealPiece) bool {
 	for _, p := range pieces {
-		if p.Count > 0 && (p.Kind == "yolk" || p.Kind == "white") {
+		if p.Count > 0 && isEggPieceKind(p.Kind) {
 			return true
 		}
 	}

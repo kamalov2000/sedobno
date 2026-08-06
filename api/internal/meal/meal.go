@@ -105,7 +105,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.LatencyMs = time.Since(start).Milliseconds()
 		return res, err // ErrBusy или ошибка модели — решает хендлер
 	}
-	applyAnalysis(res, ma, true)
+	applyAnalysis(res, ma, true, p.log)
 	if alwaysStrong {
 		res.Escalated = true
 		res.EscalationTrigger = "always"
@@ -129,7 +129,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 					"err", fbErr, "trigger", trigger)
 			} else {
 				strong := &Result{Provider: p.fallback.Name(), Status: StatusError}
-				applyAnalysis(strong, fbMa, true)
+				applyAnalysis(strong, fbMa, true, p.log)
 				strong.Usage = fbUsage
 				// Стоимость — за ОБА вызова: заплатили и Haiku, и Sonnet.
 				strong.CostRUB = res.CostRUB + p.fallback.CostRUB(fbUsage, llm.Usage{})
@@ -176,7 +176,7 @@ func (p *Pipeline) RunText(ctx context.Context, text string) (*Result, error) {
 	// assumeAddons=false: в тексте флаг модели осмыслен — «жареная картошка» она пометит
 	// как предположение (assumed=true), а названное человеком («с ложкой масла») — как
 	// факт. На фото различать нечего, там ложечные добавки — всегда догадка.
-	applyAnalysis(res, ma, false)
+	applyAnalysis(res, ma, false, p.log)
 	if alwaysStrong {
 		res.Escalated = true
 		res.EscalationTrigger = "always"
@@ -215,7 +215,10 @@ func (p *Pipeline) callTextGated(ctx context.Context, a llm.MealAnalyzer, text s
 // assumeAddons — детерминированно пометить ложечные добавки как предположенные (путь фото,
 // см. markAddonsAssumed). Для текстового входа false: там флаг модели различает названное
 // человеком и додуманное ею.
-func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
+//
+// log — только для наблюдения за яичным двойным счётом (nil допустим): случай, который
+// серверная проверка разобрать не может, должен быть виден в логе, а не теряться.
+func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool, log *slog.Logger) {
 	res.Confidence = clamp01(ma.Confidence)
 	res.Note = strings.TrimSpace(ma.Note)
 	switch {
@@ -240,9 +243,35 @@ func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
 		if assumeAddons {
 			markAddonsAssumed(dishes)
 		}
+		logEggPiecesAmbiguity(dishes, log)
 		res.Dishes = dishes
 		res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
 		res.Status = StatusOK
+	}
+}
+
+// logEggPiecesAmbiguity пишет в лог блюда, где яйца НАЗВАНЫ основой («яичница с картошкой»)
+// и одновременно лежат в примитивах, но база на те же яйца не похожа — то есть сервер не
+// смог решить, входят яйца в базу или нет (baseIsSameEggs), и оставил как есть. Это ровно
+// тот остаточный риск двойного счёта, который проверкой чисел не берётся; наружу он уходит
+// молча, поэтому пусть хотя бы будет виден в логе api и считается по нему.
+//
+// Нулевая база в лог НЕ идёт, хотя формально подходит под «яйца названы основой и лежат в
+// примитивах». Это штатный ответ по контракту промпта: «яичница глазунья с кунжутом» с
+// grams/КБЖУ=0 и pieces yolk 5 / white 5 — живой ответ Sonnet 06.08.2026. Удваивать там
+// нечего, и предупреждать не о чем: иначе лог заполнится ровно правильными разборами, а
+// строка перестанет что-либо значить.
+func logEggPiecesAmbiguity(dishes []llm.MealItem, log *slog.Logger) {
+	if log == nil {
+		return
+	}
+	for _, d := range dishes {
+		if d.DishKind == DishKindEggs || d.Kcal <= 0 || !eggHeadedName(d.Name) || !hasEggPieces(d.Pieces) {
+			continue
+		}
+		yolks, whites := eggPieceCounts(d.Pieces)
+		log.Warn("meal: яйца названы основой блюда и лежат в примитивах — возможен двойной счёт",
+			"dish", d.Name, "base_kcal", d.Kcal, "base_grams", d.Grams, "yolks", yolks, "whites", whites)
 	}
 }
 
@@ -271,15 +300,17 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		// Пустое блюдо (ни массы, ни КБЖУ) — распознавательный шум, не показываем. Не
 		// отбрасываем яичное блюдо (asEggDish посчитает из штук) и блюдо со счётными
 		// единицами (у него весь вклад — в pieces, база может быть нулевой).
-		if !isEggDish(d.Name) && len(d.Pieces) == 0 && d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
+		if !isEggDish(d.Name) && d.DishKind != DishKindEggs && len(d.Pieces) == 0 &&
+			d.Grams == 0 && d.Kcal == 0 && d.ProteinG == 0 && d.FatG == 0 && d.CarbG == 0 {
 			continue
 		}
 
 		if egg, ok := asEggDish(d); ok {
-			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам. Штучные pieces у такого
-			// блюда выбрасываем — иначе яйца посчитались бы дважды (и как dish_kind, и как
-			// pieces). Но ложечные добавки (масло — яичница жарится на нём) сохраняем: их
-			// вклад не дублируется, а терять его нельзя.
+			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам — в том числе из штук,
+			// сосчитанных моделью в pieces. Штучные pieces у такого блюда выбрасываем — иначе
+			// яйца посчитались бы дважды (и как dish_kind, и как pieces). Но ложечные добавки
+			// (масло — яичница жарится на нём) сохраняем: их вклад не дублируется, а терять
+			// его нельзя.
 			egg.Pieces = keepAddonPieces(egg.Pieces)
 			out = append(out, egg)
 			continue

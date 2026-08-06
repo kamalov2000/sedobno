@@ -77,6 +77,35 @@ func TestNormPieces(t *testing.T) {
 	}
 }
 
+// Синонимы яйца из шапки промпта («egg», «egg_white») не выбрасываются как неизвестные:
+// целое яйцо разворачивается в желток + белок, иначе сосчитанные яйца просто пропали бы.
+func TestNormPieces_СинонимыЯйца(t *testing.T) {
+	got := normPieces([]llm.MealPiece{{Kind: "egg", Count: 2}, {Kind: "egg_white", Count: 1}})
+	byKind := map[string]int{}
+	for _, p := range got {
+		byKind[p.Kind] = p.Count
+	}
+	if byKind["yolk"] != 2 || byKind["white"] != 3 {
+		t.Errorf("виды=%+v, ждали yolk 2 и white 3 (2 целых + 1 белок)", got)
+	}
+}
+
+// Один вид — один примитив: {"egg":1} и {"yolk":1} в одном блюде сливаются, а не рисуются
+// двумя чипсами «Желток» и не открывают лишний путь к двойному счёту.
+func TestNormPieces_ОдинаковыеВидыСливаются(t *testing.T) {
+	got := normPieces([]llm.MealPiece{
+		{Kind: "yolk", Count: 1, Assumed: false},
+		{Kind: "yolk", Count: 2, Assumed: true},
+		{Kind: "sugar", Count: 1, Assumed: true},
+	})
+	if len(got) != 2 {
+		t.Fatalf("примитивов=%d, ждали 2 (желток слит): %+v", len(got), got)
+	}
+	if got[0].Kind != "yolk" || got[0].Count != 3 || got[0].Assumed {
+		t.Errorf("желток=%+v, ждали yolk/3/assumed=false (одну часть модель видела)", got[0])
+	}
+}
+
 // Яичное блюдо-СЧЁТЧИК (dish_kind=eggs) не несёт яичных pieces (yolk/white) — иначе яйца дважды.
 func TestPieces_ЯичноеБлюдоНеДублируетЯйца(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{

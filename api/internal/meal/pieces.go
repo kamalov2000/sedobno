@@ -19,6 +19,17 @@ import (
 
 const maxPiecesPerKind = 50 // потолок штук/ложек одного вида — защита от мусора
 
+// Виды примитивов (значения поля kind). Именованные константы, а не строки по коду: этот
+// же набор перечислен в промптах, в реестре, в подписях UI и в проверке яичного двойного
+// счёта — опечатка в одном месте иначе тихо выбрасывает примитив как «неизвестный».
+const (
+	kindYolk   = "yolk"
+	kindWhite  = "white"
+	kindOilVeg = "oil_veg"
+	kindButter = "butter"
+	kindSugar  = "sugar"
+)
+
 // Константы ложечных добавок на 1 Ч.Л. (~5 г) — единый источник для калибровки (не магические
 // числа в литерале). Egg-константы живут в eggs.go (общий источник с egg-счётчиком).
 const (
@@ -48,18 +59,41 @@ func pieceRegistry() map[string]pieceSpec {
 	return map[string]pieceSpec{
 		// Яйцо двумя ЧАСТЯМИ: желток и белок (целое яйцо = 1 желток + 1 белок). Константы
 		// ТОЛЬКО из EggConsts — единый источник со счётчиком яичного блюда, числа не дублируем.
-		"yolk":    {Grams: e.YolkGrams, Kcal: e.YolkKcal, Protein: e.YolkProtein, Fat: e.YolkFat, Carb: e.YolkCarb},
-		"white":   {Grams: e.WhiteGrams, Kcal: e.WhiteKcal, Protein: e.WhiteProtein, Fat: e.WhiteFat, Carb: e.WhiteCarb},
-		"oil_veg": {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
-		"butter":  {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
-		"sugar":   {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
+		kindYolk:   {Grams: e.YolkGrams, Kcal: e.YolkKcal, Protein: e.YolkProtein, Fat: e.YolkFat, Carb: e.YolkCarb},
+		kindWhite:  {Grams: e.WhiteGrams, Kcal: e.WhiteKcal, Protein: e.WhiteProtein, Fat: e.WhiteFat, Carb: e.WhiteCarb},
+		kindOilVeg: {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
+		kindButter: {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
+		kindSugar:  {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
 	}
 }
 
 // PieceLabels — русские подписи для UI (kind → «Желток» и т.п.). Экспортируется, чтобы фронт
 // не хардкодил названия. Порядок для UI не важен — блюдо несёт свои pieces.
 var PieceLabels = map[string]string{
-	"yolk": "Желток", "white": "Белок", "oil_veg": "Масло", "butter": "Сливочное", "sugar": "Сахар",
+	kindYolk: "Желток", kindWhite: "Белок", kindOilVeg: "Масло", kindButter: "Сливочное", kindSugar: "Сахар",
+}
+
+// pieceKindAliases — имена, которыми модель называет яйцо мимо реестра частей. Схема в
+// шапке промпта долго перечисляла "egg"/"egg_white" (реестр при этом знает только yolk и
+// white), и неизвестный kind normPieces молча выбрасывает — то есть сосчитанные яйца
+// ПРОПАДАЛИ бы из счёта целиком. Целое яйцо разворачивается в желток + белок: это
+// единственный способ выразить его в реестре частей, и он совпадает с eggMacros.
+var pieceKindAliases = map[string][]string{
+	"egg":       {kindYolk, kindWhite},
+	"eggs":      {kindYolk, kindWhite},
+	"whole_egg": {kindYolk, kindWhite},
+	"egg_white": {kindWhite},
+	"white_egg": {kindWhite},
+	"egg_yolk":  {kindYolk},
+	"yolk_egg":  {kindYolk},
+}
+
+// resolveKinds переводит присланный kind в реестровые. Обычный kind — сам себя.
+func resolveKinds(kind string) []string {
+	if alias, ok := pieceKindAliases[kind]; ok {
+		return alias
+	}
+	return []string{kind}
 }
 
 // isAddonKind — ложечная добавка (масло/сахар), а не штучная еда. Для egg-счётчика и
@@ -67,6 +101,23 @@ var PieceLabels = map[string]string{
 func isAddonKind(kind string) bool {
 	spec, ok := pieceRegistry()[kind]
 	return ok && spec.Addon
+}
+
+// isEggPieceKind — штучная часть яйца (желток/белок) среди примитивов.
+func isEggPieceKind(kind string) bool { return kind == kindYolk || kind == kindWhite }
+
+// eggPieceCounts — сколько желтков и белков лежит в примитивах блюда. Вход предполагается
+// нормализованным (normPieces): виды приведены к реестровым и слиты по одному на вид.
+func eggPieceCounts(pieces []llm.MealPiece) (yolks, whites int) {
+	for _, p := range pieces {
+		switch p.Kind {
+		case kindYolk:
+			yolks += p.Count
+		case kindWhite:
+			whites += p.Count
+		}
+	}
+	return yolks, whites
 }
 
 // markAddonsAssumed выставляет assumed=true всем ложечным добавкам в блюдах. Вызывается
@@ -109,24 +160,36 @@ func clampPieces(n int) int {
 	return n
 }
 
-// normPieces чистит примитивы: нормализует kind, клампит count, выбрасывает неизвестные
-// (неизвестный id — игнор, не падение) и нулевые. Флаг assumed сохраняется. Порядок держим.
+// normPieces чистит примитивы: нормализует kind (включая синонимы яйца), клампит count,
+// выбрасывает неизвестные (неизвестный id — игнор, не падение) и нулевые. Одинаковые виды
+// СЛИВАЮТСЯ в один: модель возвращала и {"egg":2}, и {"yolk":2} в одном блюде, а два чипса
+// «Желток» под блюдом — это и рябь в интерфейсе, и лишний путь к двойному счёту. Флаг
+// assumed сохраняется: слитый примитив считается увиденным, если хоть одна часть увидена.
+// Порядок держим по первому появлению вида.
 func normPieces(in []llm.MealPiece) []llm.MealPiece {
 	if len(in) == 0 {
 		return nil
 	}
 	reg := pieceRegistry()
 	out := make([]llm.MealPiece, 0, len(in))
+	at := make(map[string]int, len(in)) // вид → индекс в out (для слияния)
 	for _, p := range in {
-		kind := strings.ToLower(strings.TrimSpace(p.Kind))
-		if _, ok := reg[kind]; !ok {
-			continue // неизвестный примитив — не считаем, eyeball блюда остаётся
-		}
 		n := clampPieces(p.Count)
 		if n == 0 {
 			continue
 		}
-		out = append(out, llm.MealPiece{Kind: kind, Count: n, Assumed: p.Assumed})
+		for _, kind := range resolveKinds(strings.ToLower(strings.TrimSpace(p.Kind))) {
+			if _, ok := reg[kind]; !ok {
+				continue // неизвестный примитив — не считаем, eyeball блюда остаётся
+			}
+			if i, seen := at[kind]; seen {
+				out[i].Count = clampPieces(out[i].Count + n)
+				out[i].Assumed = out[i].Assumed && p.Assumed
+				continue
+			}
+			at[kind] = len(out)
+			out = append(out, llm.MealPiece{Kind: kind, Count: n, Assumed: p.Assumed})
+		}
 	}
 	if len(out) == 0 {
 		return nil

@@ -217,20 +217,31 @@ export function pieceCountLabel(kind: string, count: number): string {
 
 // Яичные примитивы (штучные части яйца): желток и белок.
 export const EGG_PIECE_KINDS = ["yolk", "white"] as const;
-const isEggPiece = (kind: string): boolean => (EGG_PIECE_KINDS as readonly string[]).includes(kind);
 
-/** Чипсы для показа под блюдом. Если у блюда есть ХОТЬ ОДИН яичный примитив (yolk/white),
- *  показываем ОБА вида ВСЕГДА: отсутствующий — как count=0 (виден снятым чипсом, «+» добавляет).
- *  Вывод модели — только стартовые числа, а не условие существования чипса: на дисциплину
- *  vision не полагаемся (тот же урок, что с assumed — модель то отдаёт white, то нет).
- *  Яйца/Белки идут первыми в фиксированном порядке, затем остальные примитивы как есть. */
-export function displayPieces(pieces?: MealPiece[]): MealPiece[] {
+/** Полный ряд примитивов в фиксированном порядке: части яйца, затем ложечные добавки. */
+export const PIECE_ROW = [...EGG_PIECE_KINDS, ...ADDON_KINDS] as readonly string[];
+
+/** Чипсы для показа под блюдом: ВЕСЬ ряд примитивов ВСЕГДА, отсутствующие — с count=0
+ *  (снятый чипс, «+» добавляет). Вывод модели даёт только стартовые числа и не решает,
+ *  какие чипсы существуют: иначе подкрутить забытое нечем — модель не вернула масло, и
+ *  добавить его пользователю негде. Это единственная гарантия управляемости, не зависящая
+ *  от дисциплины vision (тот же урок, что с assumed: одну и ту же добавку модель то
+ *  отдаёт, то нет).
+ *
+ *  eggDish — блюдо-СЧЁТЧИК (dish_kind=eggs): у него желток и белок живут в счётчике штук,
+ *  и чипсов для них быть не должно. Не только ради ряби в интерфейсе: сервер снимает
+ *  штучные pieces у такого блюда (keepAddonPieces), так что тапы по ним молча пропали бы
+ *  при сохранении. Остаются ложечные — яичница жарится на масле. */
+export function displayPieces(pieces?: MealPiece[], eggDish = false): MealPiece[] {
   const list = pieces ?? [];
-  if (!list.some((p) => isEggPiece(p.kind))) return list;
+  const kinds = eggDish ? (ADDON_KINDS as readonly string[]) : PIECE_ROW;
   const byKind = new Map(list.map((p) => [p.kind, p] as const));
-  const eggs: MealPiece[] = EGG_PIECE_KINDS.map((k) => byKind.get(k) ?? { kind: k, count: 0 });
-  const rest = list.filter((p) => !isEggPiece(p.kind));
-  return [...eggs, ...rest];
+  const row: MealPiece[] = kinds.map((k) => byKind.get(k) ?? { kind: k, count: 0 });
+  // Вид вне ряда (реестр бэка разошёлся с фронтом) не прячем — он несёт калории. Считаем
+  // по ПОЛНОМУ ряду, а не по показанному: у блюда-счётчика желток с белком не «лишние
+  // виды», их незачем возвращать хвостом — они в счётчике штук.
+  const rest = list.filter((p) => !PIECE_ROW.includes(p.kind));
+  return [...row, ...rest];
 }
 
 /** Суммарный КБЖУ счётных единиц блюда по константам (неизвестные kind игнорируются). */

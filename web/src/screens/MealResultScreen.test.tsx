@@ -618,6 +618,40 @@ describe("MealResultScreen — приём, оценённый по описан�
 
 // Знак «≈» у предположенной добавки раньше объяснялся только через title= и aria-label —
 // на телефоне не всплывает ни то, ни другое, и знак оставался необъяснённым символом.
+// Гарантия управляемости: набор чипсов задаёт фронт, а не вывод модели. Модель забыла
+// масло в жареной картошке — дописать его должно быть чем, без переоткрытия камеры.
+describe("ряд чипсов у распознанного блюда без примитивов", () => {
+  const noPieces = () => {
+    const r = makeMealResult();
+    const first = r.dishes?.[0];
+    if (!first) throw new Error("фикстура makeMealResult без блюд — тест бессмыслен");
+    return { ...r, dishes: [{ ...first, pieces: undefined }] };
+  };
+
+  it("модель не вернула ни одного примитива — ряд всё равно на месте", () => {
+    render(<MealResultScreen result={noPieces() as never} isSubscribed onDone={noop} onRetake={noop} />);
+    for (const label of ["Желток", "Белок", "Масло", "Сливочное", "Сахар"]) {
+      expect(screen.getByLabelText(`Добавить: ${label}`)).toBeTruthy();
+    }
+    // Все чипсы сняты (count=0), поэтому легенды «≈» быть не должно.
+    expect(screen.queryByText(/добавку предположили/)).toBeNull();
+  });
+
+  it("дописанная добавка уходит в PATCH", async () => {
+    const r = noPieces();
+    const saved = {
+      id: 55, eaten_at: "2026-07-21T10:00:00Z", created_at: "2026-07-21T10:00:00Z",
+      status: "ok" as const, source: "photo", dishes: r.dishes, total: r.total, edited: false,
+    };
+    render(<MealResultScreen result={r as never} saved={saved as never} isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByLabelText("Добавить: Сливочное"));
+    fireEvent.click(screen.getByText("Сохранить изменения"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const body = patchMeal.mock.calls[0][1] as { dishes: Array<{ pieces?: Array<{ kind: string; count: number }> }> };
+    expect(body.dishes[0].pieces).toEqual([{ kind: "butter", count: 1, assumed: false }]);
+  });
+});
+
 describe("легенда знака «≈»", () => {
   const withPiece = (assumed: boolean) => {
     const r = makeMealResult();

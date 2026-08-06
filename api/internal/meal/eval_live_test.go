@@ -52,6 +52,12 @@ type dishOut struct {
 	FatG       float64 `json:"fat_g"`
 	CarbG      float64 `json:"carb_g"`
 	Confidence float64 `json:"confidence"`
+	// Штучное представление блюда. Без него по отчёту не видно двойного счёта яиц: он
+	// проявляется как «база блюда И примитивы про одни и те же яйца», а не в тотале.
+	DishKind string          `json:"dish_kind,omitempty"`
+	Yolks    int             `json:"yolks,omitempty"`
+	Whites   int             `json:"whites,omitempty"`
+	Pieces   []llm.MealPiece `json:"pieces,omitempty"`
 }
 
 type imgResult struct {
@@ -152,6 +158,7 @@ func runOne(pipe *meal.Pipeline, dir, file string) imgResult {
 		res.Dishes = append(res.Dishes, dishOut{
 			Name: d.Name, Grams: d.Grams, Kcal: d.Kcal, ProteinG: d.ProteinG,
 			FatG: d.FatG, CarbG: d.CarbG, Confidence: d.Confidence,
+			DishKind: d.DishKind, Yolks: d.Yolks, Whites: d.Whites, Pieces: d.Pieces,
 		})
 		res.TotalGrams += d.Grams
 	}

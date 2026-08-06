@@ -282,6 +282,33 @@ func TestRunText_AssumedБерётсяОтМодели(t *testing.T) {
 	}
 }
 
+// Текстовый промпт (meal_text_v1) требует у яичного блюда КБЖУ=0, а все яйца — в pieces:
+// «Яичница из 3 яиц» → grams/kcal 0 + yolk 3 + white 3. Пока сервер брал штуки из граммовки,
+// такой ответ давал ОДНО яйцо (78 ккал вместо 234) — из нуля граммов больше не выводилось.
+// Штуки должны браться из pieces, которые модель сосчитала.
+func TestRunText_ЯичноеБлюдоСчитаетсяПоШтукамИзPieces(t *testing.T) {
+	p := New(&fakeAnalyzer{res: &llm.MealAnalysis{
+		IsFood: true, Confidence: 0.9,
+		Dishes: []llm.MealItem{
+			{Name: "яичница из 3 яиц", Grams: 0, Kcal: 0, Confidence: 0.9,
+				Pieces: []llm.MealPiece{{Kind: "yolk", Count: 3}, {Kind: "white", Count: 3}}},
+		},
+	}}, nil, "off", 4, slog.Default())
+	res, err := p.RunText(context.Background(), "яичница из 3 яиц")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Dishes) != 1 {
+		t.Fatalf("блюд=%d, ждали 1", len(res.Dishes))
+	}
+	if res.Dishes[0].Yolks != 3 || res.Dishes[0].Whites != 3 {
+		t.Errorf("счётчики=%d/%d, ждали 3/3", res.Dishes[0].Yolks, res.Dishes[0].Whites)
+	}
+	if res.Total.Kcal != 234 {
+		t.Errorf("тотал=%v, ждали 234 (три яйца), а не 78 (одно из нулевой граммовки)", res.Total.Kcal)
+	}
+}
+
 // Шлюз допуска общий с фото: занятый семафор отдаёт ErrBusy, работа не начинается.
 func TestRunText_BusyНаЗанятомСемафоре(t *testing.T) {
 	entered := make(chan struct{}, 1)
