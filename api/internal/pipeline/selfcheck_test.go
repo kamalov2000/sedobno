@@ -40,9 +40,10 @@ func denseFrame(t *testing.T) []llm.Image {
 // Попутно считает вызовы и максимальную одновременность — по ней проверяется, что пара
 // вызовов действительно параллельна, а не последовательна.
 type pairProvider struct {
-	name string
-	exts []*llm.Extraction // ответы по порядку вызовов; после конца списка — последний
-	errs []error           // ошибка вызова по тому же индексу (nil — успех)
+	name  string
+	exts  []*llm.Extraction // ответы по порядку вызовов; после конца списка — последний
+	errs  []error           // ошибка вызова по тому же индексу (nil — успех)
+	usage llm.Usage         // usage, возвращаемый КАЖДЫМ вызовом (нулевой по умолчанию — как раньше)
 
 	mu          sync.Mutex
 	calls       int
@@ -51,8 +52,15 @@ type pairProvider struct {
 	hold        time.Duration // сколько «думает» каждый вызов (нужно, чтобы поймать нахлёст)
 }
 
-func (p *pairProvider) Name() string                   { return p.name }
-func (p *pairProvider) CostRUB(_, _ llm.Usage) float64 { return 0 }
+func (p *pairProvider) Name() string { return p.name }
+
+// CostRUB считает от переданного usage (а не хардкодит 0), чтобы тесты self-check БЕЗ
+// fallback могли проверить: токены парного чтения не теряются из стоимости, когда их
+// некому посчитать через p.fallback.CostRUB (см. TestSelfCheck_БезFallbackСтоимостьНеТеряется).
+func (p *pairProvider) CostRUB(vision, text llm.Usage) float64 {
+	total := vision.InputTokens + vision.OutputTokens + text.InputTokens + text.OutputTokens
+	return float64(total) * 0.001
+}
 
 func (p *pairProvider) ExtractIngredients(_ context.Context, _ []llm.Image) (*llm.Extraction, llm.Usage, error) {
 	p.mu.Lock()
@@ -83,7 +91,7 @@ func (p *pairProvider) ExtractIngredients(_ context.Context, _ []llm.Image) (*ll
 	if idx >= len(p.exts) {
 		idx = len(p.exts) - 1
 	}
-	return p.exts[idx], llm.Usage{}, nil
+	return p.exts[idx], p.usage, nil
 }
 
 func (p *pairProvider) MatchIngredients(_ context.Context, _ []string, _ []llm.Candidate) (map[string]string, llm.Usage, error) {
@@ -120,6 +128,23 @@ func newDensePipe(t *testing.T, fb llm.LLMProvider, selfConsistency bool) *Pipel
 
 func ext(ingredients ...string) *llm.Extraction {
 	return &llm.Extraction{IsLabel: true, Confidence: 0.9, Ingredients: ingredients}
+}
+
+// newDensePipeNoFallback собирает пайплайн БЕЗ отдельной сильной модели: primary — она
+// же и единственная. Ровно состояние прода после перехода на Sonnet-везде 06.08.2026
+// (см. память sostav-vision-model): NewExtractFallback возвращает nil, потому что модель
+// эскалации совпала с базовой. Self-consistency обязана в этом состоянии работать —
+// контроль читает ПАРОЙ саму primary.
+func newDensePipeNoFallback(t *testing.T, primary llm.LLMProvider, selfConsistency bool) *Pipeline {
+	t.Helper()
+	scorer, err := scoring.Load(appconfig.ScoringYAML)
+	if err != nil {
+		t.Fatalf("scoring.Load: %v", err)
+	}
+	p := New(primary, testItems(), scorer, 4, slog.Default())
+	p.SetForceEscalateFineLoss(imaging.ForceEscalateFineLoss)
+	p.SetSelfConsistency(selfConsistency)
+	return p
 }
 
 // Главный кейс: два прочтения плотной этикетки разошлись по НАБОРУ штрафных добавок
@@ -281,6 +306,87 @@ func TestSelfCheck_КонтрольноеБезСоставаЭтоРасхож�
 	}
 	if !res.ScoreApproximate {
 		t.Error("одно прочтение нашло штрафные добавки, второе не увидело состав вовсе — это расхождение")
+	}
+}
+
+// ГЛАВНЫЙ КЕЙС возврата self-consistency (владелец, 06.08.2026): контрольное прочтение
+// плотного кадра обязано работать и БЕЗ отдельной сильной модели — базовая уже Sonnet,
+// разброс на плотном мелком тексте (temperature удалён, selfcheck.go) — свойство её
+// самой, а не следствие "подняли со слабой". Форс-эскалацию (forceStrong) при этом
+// поднимать НЕ должно — это один из четырёх избыточных гейтов, решение владельца их не
+// возвращает; self-check обязан читать ПАРОЙ саму primary, не эскалируя.
+func TestSelfCheck_РаботаетБезОтдельногоFallback(t *testing.T) {
+	primary := &pairProvider{name: "sonnet-base", exts: []*llm.Extraction{
+		ext("сахар", "глутамат натрия"),
+		ext("сахар", "глутамат натрия", "гидрогенизированный жир"),
+	}}
+	p := newDensePipeNoFallback(t, primary, true)
+
+	res, err := p.Run(context.Background(), denseFrame(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls, _ := primary.stats(); calls != 2 {
+		t.Fatalf("вызовов базовой модели %d, ждали 2 (парное self-check)", calls)
+	}
+	if !res.SelfCheckRan {
+		t.Fatal("контрольное прочтение не состоялось")
+	}
+	if !res.ScoreApproximate {
+		t.Error("наборы разошлись, а балл не помечен приблизительным")
+	}
+	if res.ForcedStrong {
+		t.Error("forceStrong сработал без отдельной сильной модели — избыточный гейт не должен вернуться вместе с self-check")
+	}
+	if res.StrongAnswer {
+		t.Error("StrongAnswer=true без отдельной сильной модели — self-check самой базовой моделью не эскалация")
+	}
+	if res.Provider != "sonnet-base" {
+		t.Errorf("provider=%q, ждали базовую модель sonnet-base (self-check не подменяет источник ответа)", res.Provider)
+	}
+}
+
+// Выключенный тумблер без fallback — тот же аварийный откат, что и с fallback: один
+// обычный вызов, без парного чтения и без признака приблизительности.
+func TestSelfCheck_БезFallbackИВыключенномТумблереОдинВызов(t *testing.T) {
+	primary := &pairProvider{name: "sonnet-base", exts: []*llm.Extraction{ext("сахар", "глутамат натрия")}}
+	p := newDensePipeNoFallback(t, primary, false)
+
+	res, err := p.Run(context.Background(), denseFrame(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls, _ := primary.stats(); calls != 1 {
+		t.Errorf("вызовов %d, ждали 1 — при выключенной self-consistency повторного чтения быть не должно", calls)
+	}
+	if res.SelfCheckRan || res.ScoreApproximate {
+		t.Error("тумблер выключен — сравнения быть не должно")
+	}
+}
+
+// Токены self-check без fallback обязаны попасть в стоимость. Раньше ЛЮБОЙ повторный
+// вызов фазы 1 считался в fbUsage, а fbUsage тарифицируется ТОЛЬКО через
+// p.fallback.CostRUB (finalize) — при fallback==nil эти токены молча выпали бы из
+// CostRUB, посчитавшись лишь в res.Usage. Новый путь кладёт их в vUsage, который всегда
+// тарифицируется через p.llm.CostRUB.
+func TestSelfCheck_БезFallbackСтоимостьНеТеряется(t *testing.T) {
+	primary := &pairProvider{
+		name:  "sonnet-base",
+		exts:  []*llm.Extraction{ext("сахар"), ext("сахар")},
+		usage: llm.Usage{InputTokens: 1000, OutputTokens: 200},
+	}
+	p := newDensePipeNoFallback(t, primary, true)
+
+	res, err := p.Run(context.Background(), denseFrame(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.CostRUB <= 0 {
+		t.Errorf("CostRUB=%v, ждали >0 — токены self-check без fallback не должны выпадать из стоимости", res.CostRUB)
+	}
+	wantTokens := 2 * (1000 + 200) // оба вызова пары оплачены
+	if got := res.Usage.InputTokens + res.Usage.OutputTokens; got != wantTokens {
+		t.Errorf("usage=%d токенов, ждали %d (учтены оба вызова пары)", got, wantTokens)
 	}
 }
 

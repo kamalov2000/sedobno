@@ -156,10 +156,15 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	// (форс-эскалация, перепроверка) дефолт ВКЛЮЧЁН и живёт в коде, а не в .env, —
 	// значит по содержимому .env нельзя понять, что сейчас работает. Строка в логе это
 	// и отвечает, в том числе после аварийного переключения тумблера.
+	//
+	// self_consistency НЕ гасится отсутствием fallback (в отличие от форс-эскалации):
+	// без отдельной сильной модели контроль читает ПАРОЙ саму базовую (pipeline.go,
+	// selfCheckDue) — решение владельца 06.08.2026 вернуть self-consistency отдельно от
+	// четырёх избыточных гейтов форс-эскалации, см. sostav-vision-model.
 	log.Info("scan: пайплайн сканера",
 		"сильная_модель", fallback != nil,
 		"форс_эскалация_fine_loss", cfg.ScanForceEscalateFineLoss,
-		"self_consistency", cfg.ScanSelfConsistency && fallback != nil)
+		"self_consistency", cfg.ScanSelfConsistency)
 	return pipe, nil
 }
 

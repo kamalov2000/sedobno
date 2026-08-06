@@ -168,10 +168,16 @@ type Pipeline struct {
 	// её полностью (пайплайн ведёт себя как до правки), что нужно и тестам, и
 	// аварийному откату без пересборки — через SCAN_FORCE_ESCALATE_FINE_LOSS=0.
 	forceFineLoss float64
-	// selfConsistency — делать ли ВТОРОЕ контрольное прочтение на кадрах, которые увела
-	// на сильную модель форс-эскалация (selfcheck.go). Только на них: это ~12% сканов,
-	// и именно там модель расходится сама с собой. false — пайплайн ведёт себя как до
-	// правки (аварийный откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
+	// selfConsistency — делать ли ВТОРОЕ контрольное прочтение на плотных кадрах
+	// (selfcheck.go), то есть там, где dens.FineLoss за порогом forceFineLoss (~12%
+	// сканов) — именно там модель расходится сама с собой. Независимо от того, есть ли
+	// ОТДЕЛЬНАЯ сильная модель (fallback): при fallback!=nil контроль идёт ею (как
+	// раньше), при fallback==nil (базовая модель уже сильнейшая, Sonnet-везде с
+	// 06.08.2026) — контроль идёт ПАРОЙ вызовов самой базовой. Разброс на плотном
+	// мелком тексте — свойство самой модели без temperature (см. selfcheck.go), а не
+	// следствие того, что её «подняли» с более слабой, поэтому проверка не выключается
+	// вместе с форс-эскалацией. false — пайплайн ведёт себя как до правки (аварийный
+	// откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
 	selfConsistency bool
 	matcher         *dict.Matcher
 	scorer        *scoring.Config
@@ -215,8 +221,11 @@ func (p *Pipeline) SetExtractFallback(fb llm.LLMProvider, confMin float64) {
 func (p *Pipeline) SetForceEscalateFineLoss(v float64) { p.forceFineLoss = v }
 
 // SetSelfConsistency включает прицельную перепроверку плотных этикеток вторым
-// параллельным вызовом сильной модели (selfcheck.go). Работает только там, где уже
-// сработала форс-эскалация, и только при подключённом fallback-провайдере.
+// параллельным вызовом ТОЙ ЖЕ модели, что ответит пользователю (selfcheck.go): при
+// подключённом fallback-провайдере — им, иначе — базовой моделью. Работает только там,
+// где кадр признан плотным (SetForceEscalateFineLoss); отдельного fallback НЕ требует —
+// это единственный из бывших гейтов форс-эскалации, который остаётся полезен и когда
+// базовая модель уже сильнейшая (решение владельца 06.08.2026, см. sostav-vision-model).
 func (p *Pipeline) SetSelfConsistency(v bool) { p.selfConsistency = v }
 
 // New собирает пайплайн: строит матчер, индекс по коду и список кандидатов для
@@ -275,21 +284,37 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	res.FineLoss = dens.FineLoss
 	res.EdgeFrac = dens.EdgeFrac
 
-	// Форс-эскалация: на кадре столько мелкого текста, что дешёвая модель его не
-	// прочитает, а СОЧИНИТ (и сочинит согласованно с transcription, так что гейт
-	// промолчит). Зовём сильную модель сразу — слабый ответ на таком кадре не нужен ни
-	// пользователю, ни кэшу.
-	forceStrong := p.fallback != nil && p.forceFineLoss > 0 && dens.FineLoss >= p.forceFineLoss
+	// denseFrame — на кадре столько мелкого текста, что дешёвая модель его не прочитает,
+	// а СОЧИНИТ (и сочинит согласованно с transcription, так что гейт промолчит). Порог
+	// общий для двух РАЗНЫХ реакций ниже: форс-эскалация (эскалация на отдельную сильную
+	// модель) и self-consistency (контроль ТОЙ ЖЕ модели собой).
+	denseFrame := p.forceFineLoss > 0 && dens.FineLoss >= p.forceFineLoss
+
+	// forceStrong: зовём ОТДЕЛЬНУЮ сильную модель сразу — слабый ответ на плотном кадре
+	// не нужен ни пользователю, ни кэшу. Требует fallback: если базовая модель уже
+	// сильнейшая (fallback==nil, Sonnet-везде, решение владельца 06.08.2026),
+	// эскалировать некуда — гейт остаётся выключенным сознательно, как и три других
+	// гейта форс-эскалации ниже (lowConfidence/ShortItemsSuspicious/нутриент-ретрай),
+	// которые тоже только поднимали слабую модель до уровня сильной.
+	forceStrong := denseFrame && p.fallback != nil
 	if forceStrong {
 		res.ForcedStrong = true
 		p.log.Info("форс-эскалация: плотная мелкая этикетка",
 			"fine_loss", dens.FineLoss, "порог", p.forceFineLoss, "model", p.fallback.Name())
 	}
 
-	// control — контрольное прочтение ТОГО ЖЕ кадра той же сильной моделью (прицельный
-	// self-consistency, selfcheck.go). Заполняется только на форс-эскалации: сравнивать
-	// прочтения имеет смысл там, где детекторы уже сказали «этикетка на пределе».
-	// Сравнение — после фазы 2, когда у обоих есть набор штрафных добавок.
+	// selfCheckDue: контрольное прочтение того же плотного кадра — в отличие от
+	// forceStrong, НЕ требует отдельной сильной модели. Разброс на плотном мелком
+	// тексте — свойство модели без temperature (selfcheck.go), а не следствие того, что
+	// её «подняли» с более слабой; поэтому проверка остаётся полезной, даже когда
+	// fallback==nil и отвечает базовая модель — тогда парой читает она сама.
+	selfCheckDue := denseFrame && p.selfConsistency
+
+	// control — контрольное прочтение ТОГО ЖЕ кадра той же моделью, что ответит
+	// пользователю (прицельный self-consistency, selfcheck.go). Заполняется только при
+	// selfCheckDue: сравнивать прочтения имеет смысл там, где детекторы уже сказали
+	// «этикетка на пределе». Сравнение — после фазы 2, когда у обоих есть набор
+	// штрафных добавок.
 	var control pairExtraction
 
 	if (len(images) > 1 || forceStrong) && p.fallback != nil {
@@ -298,7 +323,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			uf  llm.Usage
 			err error
 		)
-		if forceStrong && p.selfConsistency {
+		if forceStrong && selfCheckDue {
 			// Два вызова параллельно: контрольный не добавляет латентности, только цену
 			// (+0.54 ₽ на скан в среднем по потоку — он идёт лишь на ~12% кадров).
 			var primary pairExtraction
@@ -321,6 +346,31 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		strongUsed = true
 		res.StrongAnswer = true
 		res.Provider = p.fallback.Name() // диагностика: кадр ушёл на сильную модель
+	} else if selfCheckDue {
+		// Плотный кадр, self-consistency включена, но ОТДЕЛЬНОЙ сильной модели нет —
+		// базовая (Sonnet) уже сильнейшая. Читаем ПАРОЙ той же базовой моделью: это НЕ
+		// эскалация (strongUsed/StrongAnswer/Provider не трогаем — ответ и так от
+		// базовой), а контроль сэмплинг-шума самой модели. Usage — в vUsage, не
+		// fbUsage: это вызов p.llm, и его должен учесть p.llm.CostRUB в finalize
+		// (fbUsage считается только через p.fallback.CostRUB, а fallback здесь nil —
+		// иначе эти токены выпали бы из стоимости, посчитавшись только в res.Usage).
+		var (
+			primary pairExtraction
+			uf      llm.Usage
+			err     error
+		)
+		primary, control, uf, err = p.extractPair(ctx, p.llm, images)
+		vUsage = vUsage.Add(uf)
+		if err == nil {
+			ext, err = primary.ext, primary.err
+		}
+		if err != nil {
+			if errors.Is(err, ErrBusy) {
+				return res, ErrBusy
+			}
+			p.finalize(res, vUsage, tUsage, fbUsage, start)
+			return res, err
+		}
 	} else {
 		e, u1, err := p.extractEntry(ctx, images)
 		vUsage = vUsage.Add(u1)
