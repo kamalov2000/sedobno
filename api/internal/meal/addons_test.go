@@ -87,7 +87,7 @@ func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
 			{Name: "куриное филе жареное", Grams: 180, Kcal: 300, ProteinG: 35, FatG: 16, CarbG: 2,
 				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "yolk", Count: 1, Assumed: false}}},
 		},
-	}, true, nil)
+	}, true)
 	if res.Status != StatusOK || len(res.Dishes) != 2 {
 		t.Fatalf("status=%q блюд=%d, ждали ok/2", res.Status, len(res.Dishes))
 	}

@@ -105,7 +105,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 		res.LatencyMs = time.Since(start).Milliseconds()
 		return res, err // ErrBusy или ошибка модели — решает хендлер
 	}
-	applyAnalysis(res, ma, true, p.log)
+	applyAnalysis(res, ma, true)
 	if alwaysStrong {
 		res.Escalated = true
 		res.EscalationTrigger = "always"
@@ -129,19 +129,21 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 					"err", fbErr, "trigger", trigger)
 			} else {
 				strong := &Result{Provider: p.fallback.Name(), Status: StatusError}
-				applyAnalysis(strong, fbMa, true, p.log)
+				applyAnalysis(strong, fbMa, true)
 				strong.Usage = fbUsage
 				// Стоимость — за ОБА вызова: заплатили и Haiku, и Sonnet.
 				strong.CostRUB = res.CostRUB + p.fallback.CostRUB(fbUsage, llm.Usage{})
 				strong.Escalated = true
 				strong.EscalationTrigger = trigger
 				strong.LatencyMs = time.Since(start).Milliseconds()
+				logEggPiecesAmbiguity(strong.Dishes, p.log)
 				return strong, nil
 			}
 		}
 	}
 
 	res.LatencyMs = time.Since(start).Milliseconds()
+	logEggPiecesAmbiguity(res.Dishes, p.log)
 	return res, nil
 }
 
@@ -176,12 +178,13 @@ func (p *Pipeline) RunText(ctx context.Context, text string) (*Result, error) {
 	// assumeAddons=false: в тексте флаг модели осмыслен — «жареная картошка» она пометит
 	// как предположение (assumed=true), а названное человеком («с ложкой масла») — как
 	// факт. На фото различать нечего, там ложечные добавки — всегда догадка.
-	applyAnalysis(res, ma, false, p.log)
+	applyAnalysis(res, ma, false)
 	if alwaysStrong {
 		res.Escalated = true
 		res.EscalationTrigger = "always"
 	}
 	res.LatencyMs = time.Since(start).Milliseconds()
+	logEggPiecesAmbiguity(res.Dishes, p.log)
 	return res, nil
 }
 
@@ -215,10 +218,7 @@ func (p *Pipeline) callTextGated(ctx context.Context, a llm.MealAnalyzer, text s
 // assumeAddons — детерминированно пометить ложечные добавки как предположенные (путь фото,
 // см. markAddonsAssumed). Для текстового входа false: там флаг модели различает названное
 // человеком и додуманное ею.
-//
-// log — только для наблюдения за яичным двойным счётом (nil допустим): случай, который
-// серверная проверка разобрать не может, должен быть виден в логе, а не теряться.
-func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool, log *slog.Logger) {
+func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
 	res.Confidence = clamp01(ma.Confidence)
 	res.Note = strings.TrimSpace(ma.Note)
 	switch {
@@ -243,13 +243,18 @@ func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool, log *sl
 		if assumeAddons {
 			markAddonsAssumed(dishes)
 		}
-		logEggPiecesAmbiguity(dishes, log)
 		res.Dishes = dishes
 		res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
 		res.Status = StatusOK
 	}
 }
 
+// logEggPiecesAmbiguity зовётся по ИТОГОВОМУ результату каждой ветки Run/RunText, а не из
+// applyAnalysis: на эскалации applyAnalysis отрабатывает дважды, и разбор Haiku, который
+// Sonnet тут же заместил, попадал в лог наравне с тем, что реально увидел человек. На
+// живом прогоне 06.08 так и вышло — предупреждение о «яйцах пашот с апельсином» осталось
+// от прохода, отброшенного эскалацией. Считать надо доехавшее до пользователя.
+//
 // logEggPiecesAmbiguity пишет в лог блюда, где яйца НАЗВАНЫ основой («яичница с картошкой»)
 // и одновременно лежат в примитивах, но база на те же яйца не похожа — то есть сервер не
 // смог решить, входят яйца в базу или нет (baseIsSameEggs), и оставил как есть. Это ровно
