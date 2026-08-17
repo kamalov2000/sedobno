@@ -20,3 +20,33 @@
 		file_server
 	}
 }
+
+# Бета-инстанс модуля калорий: отдельный compose-проект sostav-beta в той же docker-сети
+# (своя БД, свой бот), поэтому второй Caddy не нужен — маршрут живёт здесь, рядом с прод-сайтом.
+#
+# Адрес — переменной, а не боевым хостом в открытую: этот же файл монтируется в локальном
+# стеке (make up), и зашитый beta.sedobno-pay.ru заставлял бы локальный Caddy выпрашивать
+# у ACME сертификат на домен, которого у разработчика нет. Дефолт beta.localhost Caddy
+# обслуживает внутренним сертификатом, к ACME не ходит. На проде BETA_SITE_ADDRESS задан
+# в .env (см. .env.example и deploy/BETA.md).
+#
+# Бета не поднята — сайт просто отвечает 502: прод-блок выше от этого не зависит.
+{$BETA_SITE_ADDRESS:beta.localhost} {
+	encode gzip
+
+	# API беты — на отдельный Go-контейнер (своя БД sedobno_beta).
+	handle /api/* {
+		reverse_proxy api-beta:8080
+	}
+
+	# Mini-app беты (Telegram WebApp) на /app и ассеты на /assets.
+	@miniapp path /app /app/* /assets/*
+	handle @miniapp {
+		reverse_proxy web-beta:80
+	}
+
+	# Корень поддомена → mini-app (лендинга на бете нет).
+	handle {
+		redir /app 302
+	}
+}

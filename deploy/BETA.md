@@ -36,17 +36,24 @@ cp deploy/.env.beta.example deploy/.env.beta
 # JWT_SECRET/ADMIN_KEY (свои), POSTGRES_PASSWORD, WEBAPP_URL=https://beta.<домен>/app
 ```
 
-**4. Роут поддомена в живой Caddy** (аддитивно — прод-сайт не меняется). На **прод**-дереве
-(`/opt/sostav`) добавь бета-сайт к работающему Caddyfile и перечитай конфиг:
+**4. Роут поддомена в живой Caddy.** Сам маршрут уже лежит в `deploy/Caddyfile` (сайт
+`{$BETA_SITE_ADDRESS:beta.localhost}` рядом с прод-блоком) — дописывать руками ничего не
+нужно. На **прод**-дереве (`/opt/sostav`) задай адрес в `.env` и пересоздай Caddy:
 
 ```bash
-cat /opt/sostav-beta/deploy/Caddyfile.beta >> /opt/sostav/deploy/Caddyfile
+echo 'BETA_SITE_ADDRESS=beta.<домен>' >> /opt/sostav/.env
 docker compose -f /opt/sostav/deploy/docker-compose.yml --env-file /opt/sostav/.env \
-  exec caddy caddy reload --config /etc/caddy/Caddyfile
+  up -d --no-deps caddy
 ```
 
-(Это локальная добавка на VPS, не коммит в `main`; прод-блок Caddyfile байт-в-байт прежний.
-Поменяй `beta.sedobno-pay.ru` в `Caddyfile.beta` на свой поддомен, если домен другой.)
+Именно `up -d`, а не `caddy reload`: переменная окружения читается при создании контейнера,
+и reload подхватил бы только правку самого Caddyfile. Сертификат переживает пересоздание —
+он в томе `caddy_data`, повторной валидации ACME не будет.
+
+До 17.08.2026 этот блок жил ЛОКАЛЬНОЙ правкой на VPS (`cat Caddyfile.beta >> Caddyfile`),
+и прод-дерево из-за неё было вечно грязным: `git pull --ff-only` пережил бы это только до
+первой правки Caddyfile в репозитории, а дальше деплой встал бы на шаге 1/5. Поэтому блок
+переехал в репозиторий, а `Caddyfile.beta` удалён — добавлять его обратно не нужно.
 
 **5. Поднять бету:**
 
