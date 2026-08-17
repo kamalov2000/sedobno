@@ -18,6 +18,10 @@ interface Props {
   result: MealResult; // status ok: id, dishes, total
   isSubscribed: boolean;
   mealsLeft?: number; // остаток разборов из актуального /me (единый источник правды)
+  /** Знаменатель чипа квоты — free_meal_limit из /me, как и на главном. Лимит живёт в Go,
+   *  и зашитая тут «10» врала бы при первой же его правке. Не задан (старый бэк) —
+   *  показываем один остаток, без знаменателя, а не выдуманное число. */
+  mealLimit?: number;
   onDone: () => void;
   onRetake: () => void;
   /** Приём, вписанный руками: фото не было, разбирать нечего. Экран тот же — меняется
@@ -46,6 +50,10 @@ interface Props {
    *  App) — тогда под итогом разбора появляется строка «это много или мало?». Не задан —
    *  строки нет: у человека с нормой она бессмысленна. */
   onOpenWizard?: () => void;
+  /** Остаток разборов после ТЕКСТОВОГО добавления блюда (оно уходит в тот же платный
+   *  пайплайн и списывает квоту). Экран обязан донести новое число до App: остаток живёт
+   *  в его me, и без этого счётчик на главном оставался бы прежним до перезахода. */
+  onQuotaSpent?: (mealsLeft: number) => void;
 }
 
 const GRAM_STEP = 10;
@@ -86,7 +94,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
   // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
@@ -160,6 +168,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
       if (out.kind === "paywall") {
         // Пейволл посреди правки не показываем: уход на другой экран стёр бы всё, что
         // человек уже поправил в этом приёме. Подсказываем запасной путь — он бесплатный.
+        onQuotaSpent?.(0);
         setAddError("Бесплатные разборы закончились. Можно вписать блюдо цифрами — это без лимита.");
         return;
       }
@@ -168,6 +177,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
         return;
       }
       const data = out.data;
+      // Остаток — из ответа, до разбора статуса: сервер прислал актуальное число в любом
+      // исходе 200 (за not_food он квоту не списывает и вернёт прежний остаток).
+      onQuotaSpent?.(data.meals_left);
       const got = data.status === "ok" ? (data.dishes ?? []) : [];
       if (got.length === 0) {
         setAddError(data.message || "Не понял, что это за блюдо. Напишите проще: что съели и сколько.");
@@ -334,7 +346,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, onDo
 
   const n = dishes.length;
   const left = mealsLeft ?? result.meals_left; // из me; фолбэк на result (витрина)
-  const chip = isSubscribed || left < 0 ? "БЕЗЛИМИТ" : `КАЛОРИИ ${Math.max(0, left)}/10`;
+  const chip = isSubscribed || left < 0 ? "БЕЗЛИМИТ" : `КАЛОРИИ ${Math.max(0, left)}${mealLimit ? `/${mealLimit}` : ""}`;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>

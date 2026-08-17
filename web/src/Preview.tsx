@@ -218,7 +218,7 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "06 · ПОДПИСКА · Stars (автопродление, без кнопки отмены)", node: <SubscriptionScreen me={meSubStars} onBack={noop} onChanged={asyncNoop} /> },
   { title: "06 · ИСТОРИЯ · с записями", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyLoad} /> },
   { title: "06 · ИСТОРИЯ · пустая", node: <HistoryScreen onBack={noop} onOpen={noop} load={historyEmpty} /> },
-  { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} onDone={noop} onRetake={noop} /> },
+  { title: "07 · КАЛОРИИ · разбор еды", node: <MealResultScreen result={mockMeal} isSubscribed={false} mealLimit={meFree.free_meal_limit} onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · яйца (счётчик штук)", node: <MealResultScreen result={mockEggMeal} isSubscribed onDone={noop} onRetake={noop} /> },
   { title: "07 · КАЛОРИИ · добавить приём словами", node: <AddMealTextScreen onBack={noop} onAnalyzed={noop} onPaywall={noop} onManual={noop} analyze={async () => ({ kind: "result", data: mockTextMeal })} /> },
   { title: "07 · КАЛОРИИ · оценка по описанию", node: <MealResultScreen result={mockTextMeal} manual origin="text" isSubscribed={false} onDone={noop} onRetake={noop} /> },

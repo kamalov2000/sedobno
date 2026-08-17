@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
@@ -94,6 +94,30 @@ export default function App() {
     void getMeals().then((d) => setTodayHasMeals(d.items.length > 0)).catch(() => {});
   }, [phase]);
 
+  // Остаток бесплатных попыток на главном — с сервера при КАЖДОМ возврате на него.
+  //
+  // Ответы разборов остаток приносят сами (applyScansLeft/applyMealsLeft ниже), и счётчик
+  // не ждёт лишнего запроса. Но списывает квоту не только тот вызов, ответ которого держит
+  // App: текстовое добавление блюда живёт внутри экрана разбора, а второе открытие
+  // мини-аппа списывает у того же пользователя мимо этой вкладки. Любой такой путь оставлял
+  // на главном прежнее число до перезахода. Один GET /api/me на возврат домой закрывает их
+  // все разом — и те, что появятся позже.
+  const homeShown = useRef(0);
+  useEffect(() => {
+    if (phase !== "ready" || view !== "home") return;
+    homeShown.current += 1;
+    if (homeShown.current === 1) return; // первый показ: профиль только что пришёл с /auth
+    void getMe().then(setMe).catch(() => {
+      /* остаток обновим при следующем возврате — молча, экран не трогаем */
+    });
+  }, [phase, view]);
+
+  // Единая точка применения остатка квот из ответов разборов. Отдельная от setMe, чтобы
+  // не расползлась: списывающих вызовов уже четыре (фото-скан, фото-еда, текстовый разбор
+  // из дневника и он же из редактора приёма), и каждый обязан донести новое число сюда.
+  const applyScansLeft = useCallback((scans_left: number) => setMe((m) => (m ? { ...m, scans_left } : m)), []);
+  const applyMealsLeft = useCallback((meals_left: number) => setMe((m) => (m ? { ...m, meals_left } : m)), []);
+
   const boot = useCallback(async () => {
     setPhase("booting");
     setBootError("");
@@ -168,7 +192,7 @@ export default function App() {
     try {
       const outcome = await analyzeMeal(files);
       if (outcome.kind === "paywall") {
-        setMe((m) => (m ? { ...m, meals_left: 0 } : m));
+        applyMealsLeft(0);
         setView("paywall");
         return;
       }
@@ -179,7 +203,7 @@ export default function App() {
         return;
       }
       const data = outcome.data;
-      setMe((m) => (m ? { ...m, meals_left: data.meals_left } : m));
+      applyMealsLeft(data.meals_left);
       if (data.status === "ok") {
         notify("success");
         setTodayHasMeals(true); // приём сохранён — сегодня точно есть записи
@@ -201,7 +225,7 @@ export default function App() {
       setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
       setView("error");
     }
-  }, []);
+  }, [applyMealsLeft]);
 
   const onScan = useCallback(async (files: File[]) => {
     if (mode === "meal") {
@@ -214,7 +238,7 @@ export default function App() {
     try {
       const outcome = await scanPhoto(files);
       if (outcome.kind === "paywall") {
-        setMe((m) => (m ? { ...m, scans_left: 0 } : m));
+        applyScansLeft(0);
         setView("paywall");
         return;
       }
@@ -225,7 +249,7 @@ export default function App() {
         return;
       }
       const data = outcome.data;
-      setMe((m) => (m ? { ...m, scans_left: data.scans_left } : m));
+      applyScansLeft(data.scans_left);
       if (data.status === "ok") {
         notify("success");
         setResult(data);
@@ -259,7 +283,7 @@ export default function App() {
       setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
       setView("error");
     }
-  }, [mode, runMeal]);
+  }, [mode, runMeal, applyScansLeft]);
 
   // Оплата подписки: создаём Stars-инвойс → tg.openInvoice → по "paid" обновляем профиль.
   const onPay = useCallback(async () => {
@@ -566,6 +590,8 @@ export default function App() {
           result={mealResult}
           isSubscribed={me?.is_subscribed ?? false}
           mealsLeft={me?.meals_left}
+          mealLimit={me?.free_meal_limit}
+          onQuotaSpent={applyMealsLeft}
           saved={savedMeal ?? undefined}
           // Норму предлагаем ровно в момент, когда человек увидел калорийность приёма и
           // ему не с чем её сравнить. Профиль заполнен — проп не передаём, строки нет.
@@ -604,12 +630,12 @@ export default function App() {
           }}
           onAnalyzed={(data) => {
             // Квота за текстовый разбор списана так же, как за фото — обновляем остаток.
-            setMe((m) => (m ? { ...m, meals_left: data.meals_left } : m));
+            applyMealsLeft(data.meals_left);
             setTextMeal(data);
             setView("meal_manual");
           }}
           onPaywall={() => {
-            setMe((m) => (m ? { ...m, meals_left: 0 } : m));
+            applyMealsLeft(0);
             setView("paywall");
           }}
           onManual={() => {
@@ -625,6 +651,7 @@ export default function App() {
         <MealResultScreen
           result={textMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
+          onQuotaSpent={applyMealsLeft}
           manual
           origin={textMeal ? "text" : undefined}
           // Тот же призыв к расчёту нормы, что и после фото: приём, вписанный словами или

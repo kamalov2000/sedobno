@@ -580,6 +580,38 @@ describe("MealResultScreen — добавление блюда словами", 
     expect(screen.getByText("В дневник")).toBeTruthy();
   });
 
+  // Регрессия 17.08.2026: счётчик бесплатных разборов на главном не менялся после
+  // добавления блюда словами. Списывает его сервер (тот же платный пайплайн, что и фото),
+  // а остаток живёт в me у App — экран обязан донести новое число наверх. Без этого
+  // правильное значение появлялось только после перезахода в мини-апп.
+  it("остаток разборов из ответа уходит наверх — и когда блюдо добавилось, и когда квота кончилась", async () => {
+    const spent = vi.fn();
+    analyzeMealText.mockImplementation(async () => ({
+      kind: "result",
+      data: {
+        status: "ok",
+        dishes: [{ name: "борщ", grams: 300, kcal: 210, protein_g: 8, fat_g: 9, carb_g: 24, confidence: 0.6 }],
+        total: { kcal: 210, protein_g: 8, fat_g: 9, carb_g: 24 },
+        meals_left: 3,
+      },
+    }) as never);
+
+    render(<MealResultScreen result={makeMealResult()} isSubscribed={false} mealsLeft={4} onQuotaSpent={spent} onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    fireEvent.change(screen.getByLabelText("Описание блюда"), { target: { value: "борщ тарелка" } });
+    fireEvent.click(screen.getByText("Оценить"));
+    await waitFor(() => expect(spent).toHaveBeenCalledWith(3));
+
+    // Пейволл — тоже факт о квоте: разборов не осталось, и главный экран должен знать
+    // это сразу, а не после перезахода.
+    spent.mockClear();
+    analyzeMealText.mockImplementation(async () => ({ kind: "paywall" }) as never);
+    fireEvent.click(screen.getByText("Добавить блюдо"));
+    fireEvent.change(screen.getByLabelText("Описание блюда"), { target: { value: "ещё борщ" } });
+    fireEvent.click(screen.getByText("Оценить"));
+    await waitFor(() => expect(spent).toHaveBeenCalledWith(0));
+  });
+
   it("пустое описание не отправляется в модель", () => {
     renderScreen();
     fireEvent.click(screen.getByText("Добавить блюдо"));
@@ -587,6 +619,31 @@ describe("MealResultScreen — добавление блюда словами", 
     expect(submit.disabled).toBe(true);
     fireEvent.click(submit);
     expect(analyzeMealText).not.toHaveBeenCalled();
+  });
+});
+
+// Тот же регресс, что вычистили на главном 05.08.2026 (HomeScreen.test.tsx: «счётчик
+// бесплатных проверок»), но в чипе квоты на экране разбора: знаменатель стоял литералом
+// «/10», и правка freeMealLimit в Go молча превращала чип в ложь.
+describe("MealResultScreen — чип квоты", () => {
+  const renderChip = (props: { mealsLeft?: number; mealLimit?: number }) =>
+    render(<MealResultScreen result={makeMealResult(false, 7)} isSubscribed={false} onDone={noop} onRetake={noop} {...props} />);
+
+  it("берёт знаменатель из API, а не из константы", () => {
+    renderChip({ mealsLeft: 7, mealLimit: 12 });
+    expect(screen.getByText("КАЛОРИИ 7/12")).toBeTruthy();
+  });
+
+  it("без поля с бэка показывает остаток без выдуманного знаменателя", () => {
+    renderChip({ mealsLeft: 7 });
+    expect(screen.getByText("КАЛОРИИ 7")).toBeTruthy();
+    // Именно в чипе: «ккал/100 г» у блюд к знаменателю квоты отношения не имеет.
+    expect(screen.queryByText(/КАЛОРИИ \d+\//)).toBeNull();
+  });
+
+  it("подписчику — «БЕЗЛИМИТ», знаменатель ни при чём", () => {
+    render(<MealResultScreen result={makeMealResult()} isSubscribed mealsLeft={-1} mealLimit={12} onDone={noop} onRetake={noop} />);
+    expect(screen.getByText("БЕЗЛИМИТ")).toBeTruthy();
   });
 });
 
