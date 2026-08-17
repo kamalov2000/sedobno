@@ -188,6 +188,7 @@ export default function App() {
   const runMeal = useCallback(async (files: File[]) => {
     setSavedMeal(null);
     setMealResult(null);
+    setReturnTo(null);
     setView("loading");
     try {
       const outcome = await analyzeMeal(files);
@@ -207,7 +208,21 @@ export default function App() {
       if (data.status === "ok") {
         notify("success");
         setTodayHasMeals(true); // приём сохранён — сегодня точно есть записи
-        setMealResult(data);
+        if (data.already_in_diary && data.meal) {
+          // Этот кадр уже разбирался сегодня: сервер не завёл второй приём, а вернул
+          // существующий. Открываем его как СОХРАНЁННЫЙ — с правками пользователя и с
+          // кнопками правки, а не как свежий разбор, который предлагалось бы «добавить»
+          // (второй раз он бы и не добавился, но обещание на кнопке было бы ложным).
+          // returnTo="home": человек пришёл сюда с камеры, а не из списка приёмов.
+          setSavedMeal(data.meal);
+          // Флаг переносим руками: diaryItemToResult собирает результат из ПРИЁМА, и про
+          // обстоятельства этого ответа он не знает — без него экран молча выглядел бы
+          // как обычная правка приёма из истории.
+          setMealResult({ ...diaryItemToResult(data.meal, data.meals_left), already_in_diary: true });
+          setReturnTo("home");
+        } else {
+          setMealResult(data);
+        }
         setView("meal_result");
       } else if (data.status === "label_detected") {
         // В кадре упаковка с этикеткой — отдельный экран с переходом на сканер состава.
@@ -593,6 +608,9 @@ export default function App() {
           mealLimit={me?.free_meal_limit}
           onQuotaSpent={applyMealsLeft}
           saved={savedMeal ?? undefined}
+          // Кадр уже разбирался сегодня — экран говорит об этом вслух, иначе «ПРИЁМ В
+          // ДНЕВНИКЕ» вместо ожидаемого разбора читается как сбой.
+          alreadyInDiary={mealResult.already_in_diary}
           // Норму предлагаем ровно в момент, когда человек увидел калорийность приёма и
           // ему не с чем её сравнить. Профиль заполнен — проп не передаём, строки нет.
           onOpenWizard={me && !me.nutrition_profile.filled ? () => { setProfileEditStep(null); setWizardReturnTo("meal_result"); setView("profile_wizard"); } : undefined}
@@ -600,13 +618,16 @@ export default function App() {
             // Правка приёма из истории возвращает в историю, а не в дневник: человек
             // листал список и правил конкретную запись — выбрасывать его после этого
             // на другой экран значит терять место, до которого он долистал.
-            const back = savedMeal ? "meal_history" : "meal_diary";
+            // Решает именно «откуда пришли» (returnTo), а не «сохранён ли приём»: с
+            // повторным кадром приём тоже сохранён, но пришли на него с камеры, и
+            // история приёмов там ни при чём.
+            const back = returnTo === "meal_history" ? "meal_history" : "meal_diary";
             setSavedMeal(null);
             setReturnTo(null);
             setView(back);
           }}
           onRetake={() => {
-            const back = savedMeal ? "meal_history" : "home";
+            const back = returnTo ?? (savedMeal ? "meal_history" : "home");
             setSavedMeal(null);
             setReturnTo(null);
             setView(back);

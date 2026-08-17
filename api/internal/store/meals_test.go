@@ -489,3 +489,92 @@ func TestMealEscalationStats(t *testing.T) {
 		t.Errorf("второй триггер=%+v, ждали креветк/1", sum.ByTrigger[1])
 	}
 }
+
+// Поиск приёма по кадру — основа правила «один кадр даёт один приём за день»
+// (17.08.2026: одно и то же фото, присланное пять раз, положило в дневник пять
+// одинаковых приёмов; квота при этом не списывалась — разбор брался из кэша, — и
+// счётчик выглядел сломанным).
+//
+// Проверяем границы, на которых правило обязано ломаться в нужную сторону: тот же кадр
+// ЗАВТРА — законный новый приём, чужой кадр и чужой пользователь — не находятся.
+func TestFindMealByImageSHA_ТотЖеКадрТолькоВПределахДня(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2101)
+	other := mkUser(t, s, ctx, 2102)
+
+	const sha = "aaaa1111bbbb2222"
+	day := "2026-08-17"
+	mk := func(userID int64, sha, localDate string) int64 {
+		row := okMealRow(userID, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), 400)
+		row.ImageSHA = sha
+		row.LocalDate = localDate
+		id, err := s.InsertMeal(ctx, row)
+		if err != nil {
+			t.Fatalf("InsertMeal: %v", err)
+		}
+		return id
+	}
+
+	id := mk(uid, sha, day)
+	mk(uid, "ccccdddd", day)   // другой кадр того же дня
+	mk(uid, sha, "2026-08-16") // тот же кадр, но вчера
+	mk(other, sha, day)        // тот же кадр у другого пользователя
+
+	got, found, err := s.FindMealByImageSHA(ctx, uid, sha, day)
+	if err != nil {
+		t.Fatalf("FindMealByImageSHA: %v", err)
+	}
+	if !found || got.ID != id {
+		t.Fatalf("found=%v id=%d, ждали true/%d — свой кадр за свой день", found, got.ID, id)
+	}
+
+	// Тот же кадр завтра — новый приём (вчерашний салат съеден снова), находиться не должен.
+	if _, found, err := s.FindMealByImageSHA(ctx, uid, sha, "2026-08-18"); err != nil || found {
+		t.Fatalf("found=%v err=%v — кадр из другого дня не должен находиться", found, err)
+	}
+	// Кадра, которого не было, тоже нет.
+	if _, found, err := s.FindMealByImageSHA(ctx, uid, "eeee9999", day); err != nil || found {
+		t.Fatalf("found=%v err=%v — незнакомый кадр не должен находиться", found, err)
+	}
+}
+
+// Дубли, накопленные ДО правила, отдают последний: он тот, который пользователь правил.
+// И приём без кадра (ручной/словами) не должен всплывать в поиске по кадру.
+func TestFindMealByImageSHA_ПоследнийИзДублейИБезКадра(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 2103)
+	const sha = "ffff0000"
+	day := "2026-08-17"
+	at := time.Date(2026, 8, 17, 9, 0, 0, 0, time.UTC)
+
+	var last int64
+	for i := 0; i < 3; i++ {
+		row := okMealRow(uid, at, 300)
+		row.ImageSHA = sha
+		row.LocalDate = day
+		id, err := s.InsertMeal(ctx, row)
+		if err != nil {
+			t.Fatalf("InsertMeal: %v", err)
+		}
+		last = id
+	}
+	// Ручной приём того же дня — без кадра.
+	manual := okMealRow(uid, at, 250)
+	manual.Source = "manual"
+	manual.LocalDate = day
+	if _, err := s.InsertMeal(ctx, manual); err != nil {
+		t.Fatalf("InsertMeal(manual): %v", err)
+	}
+
+	got, found, err := s.FindMealByImageSHA(ctx, uid, sha, day)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if got.ID != last {
+		t.Fatalf("id=%d, ждали %d (последний из дублей)", got.ID, last)
+	}
+	// Пустой sha не должен «находить» ручной приём (image_sha там NULL).
+	if _, found, err := s.FindMealByImageSHA(ctx, uid, "", day); err != nil || found {
+		t.Fatalf("found=%v err=%v — по пустому кадру находиться нечему", found, err)
+	}
+}

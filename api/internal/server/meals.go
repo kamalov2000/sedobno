@@ -7,6 +7,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -53,6 +55,15 @@ type mealResponse struct {
 	// MealsLeft — остаток бесплатных разборов. -1 == безлимит (подписчик). Тот же
 	// контракт «-1 = ∞», что и ScansLeft у сканера.
 	MealsLeft int `json:"meals_left"`
+	// AlreadyInDiary — этот кадр уже разобран сегодня, и приём из него в дневнике есть:
+	// второй мы не создавали, отдаём существующий (Meal). Квота при этом не списана —
+	// как и на любом попадании в кэш.
+	AlreadyInDiary bool `json:"already_in_diary,omitempty"`
+	// Meal — существующий приём целиком (тип приёма, признак правки, время): экран
+	// открывает его в режиме УЖЕ СОХРАНЁННОГО, а не свежего разбора. Плоские поля выше
+	// при этом тоже заполнены — клиент, не знающий про already_in_diary, покажет ровно
+	// тот же приём, просто без пометки.
+	Meal *mealDiaryItem `json:"meal,omitempty"`
 }
 
 // mealDiaryItem — приём пищи в дневнике (GET /meals, PATCH). Восстанавливается из
@@ -115,6 +126,9 @@ const (
 	// своей копирайт-таблицы, как labelNotFoundMessage у сканера).
 	mealNotFoodMessage = "Похоже, на фото нет готовой еды. Сфотографируйте блюдо на тарелке — как оно стоит перед вами."
 	mealLabelMessage   = "Похоже, это упаковка с составом, а не готовая еда. Для упакованных продуктов точнее сработает сканер составов."
+	// mealAlreadyInDiaryMessage — этот кадр уже разобран сегодня. Констатация, без упрёка
+	// за «повтор»: человек мог просто вернуться к приёму, и второй записи он не просил.
+	mealAlreadyInDiaryMessage = "Этот кадр уже разобран сегодня — открыли приём из дневника."
 )
 
 // handleMealCreate — POST /api/meals (multipart, поле photo, 1–3 кадра одного приёма).
@@ -146,20 +160,20 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
-	images, okImg := s.readMealImages(w, r)
+	images, okImg := s.readMealImages(w, r, u.ID)
 	if !okImg {
 		return // readMealImages уже ответил ошибкой
 	}
 
 	// Кэш разбора (analysis_cache.go): тот же файл — тот же разбор, без вызова модели
-	// и без списания квоты. В отличие от сканера составов, приём В ДНЕВНИК всё равно
-	// добавляется: повторно отправленное фото ужина — это по-прежнему «запиши мне
-	// ужин», просто считать его заново незачем.
+	// и без списания квоты. В отличие от сканера составов, приём В ДНЕВНИК добавляется:
+	// повторно отправленное фото ужина — это по-прежнему «запиши мне ужин», просто
+	// считать его заново незачем. Но ровно один раз за день (см. finishMealFromCache).
 	sha := imagesSHA(images)
 	if cached, hit := s.cachedMealResult(ctx, u.ID, sha); hit {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", map[string]any{"status": cached.Status})
 		s.log.Info("meal: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
-		s.finishMealFromCache(ctx, w, u, cached, localDateFromForm(r))
+		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r))
 		return
 	}
 
@@ -212,7 +226,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		// Локальный день клиента (опционально): без него день выводится из eaten_at по
 		// Europe/Moscow, как до спринта 2 — старые клиенты не ломаются.
 		s.cacheMealResult(ctx, u.ID, sha, res)
-		s.finishMealOK(ctx, w, u, res, localDateFromForm(r))
+		s.finishMealOK(ctx, w, u, res, sha, localDateFromForm(r))
 	}
 }
 
@@ -220,7 +234,13 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 // два: не списывается квота (модель не вызывалась — платить нечем) и не пишется
 // meal_ok (иначе воронка разборов считала бы одно фото дважды). Приём в дневнике
 // создаётся как обычный — это по-прежнему добавление еды, а не просмотр старого.
-func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, localDate string) {
+//
+// Но ровно ОДИН за день на кадр: если приём из этого же кадра сегодня уже есть, отдаём
+// его, а не заводим дубль. 17.08.2026 одно фото дало пять одинаковых приёмов за день —
+// человек пересылал тот же файл, каждый раз получал «разбор» и не понимал, почему
+// остаток бесплатных разборов не двигается (он и не должен: модель не звали). Дубли
+// врали дневнику и дневной норме, а счётчик выглядел сломанным.
+func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate string) {
 	// Не-ok разбор из кэша (упаковка/не еда) приёма не создаёт — как и в живом прогоне.
 	switch res.Status {
 	case meal.StatusLabelDetected:
@@ -235,6 +255,26 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
+	// Приём из этого кадра за сегодня уже есть — показываем его, а не создаём второй.
+	// Отдаём СОХРАНЁННУЮ строку, а не разбор из кэша: пользователь мог поправить граммовки,
+	// и показать ему исходные цифры модели значило бы молча отменить его правку на экране.
+	if existing, found, ferr := s.store.FindMealByImageSHA(ctx, u.ID, sha, localDate); ferr != nil {
+		// Поиск дубля — не повод терять приём: при ошибке идём прежним путём (создадим
+		// новый). Худшее следствие — тот самый дубль, который мы и чинили.
+		s.log.Warn("meal: поиск приёма по кадру", "err", ferr, "user", u.ID)
+	} else if found {
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_duplicate", map[string]any{"meal_id": existing.ID})
+		s.log.Info("meal: кадр уже в дневнике за сегодня", "user", u.ID, "meal", existing.ID)
+		item := toDiaryItem(existing)
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, ID: item.ID, EatenAt: &item.EatenAt,
+			Dishes: item.Dishes, Total: item.Total, Confidence: deref(item.Confidence),
+			Message: mealAlreadyInDiaryMessage, MealsLeft: remainingMeals(u),
+			AlreadyInDiary: true, Meal: &item,
+		})
+		return
+	}
+
 	itemsJSON, _ := json.Marshal(res.Dishes)
 	total := res.Total
 	conf := res.Confidence
@@ -243,6 +283,7 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: 0,
 		LocalDate: localDate, Escalated: res.Escalated, EscalationTrigger: res.EscalationTrigger,
+		ImageSHA: sha,
 	})
 	if err != nil {
 		s.log.Error("meal: сохранение приёма из кэша", "err", err, "user", u.ID)
@@ -256,7 +297,10 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 }
 
 // finishMealOK сохраняет успешный разбор в meals и атомарно списывает попытку.
-func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, localDate string) {
+//
+// sha кадра пишется в приём здесь, на ПЕРВОМ разборе: без него повторная отправка того же
+// фото (она приходит в finishMealFromCache) не нашла бы, что показать вместо дубля.
+func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate string) {
 	itemsJSON, _ := json.Marshal(res.Dishes)
 	total := res.Total
 	conf := res.Confidence
@@ -265,6 +309,7 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		Confidence: &conf, Provider: res.Provider, LatencyMs: res.LatencyMs, CostRUB: res.CostRUB,
 		LocalDate: localDate, Escalated: res.Escalated, EscalationTrigger: res.EscalationTrigger,
+		ImageSHA: sha,
 	})
 	if err != nil {
 		s.log.Error("meal: сохранение приёма", "err", err, "user", u.ID)
@@ -640,7 +685,7 @@ func (s *Server) mealBudgetShares() map[string]float64 {
 // readMealImages читает и нормализует 1–3 кадра приёма из multipart-поля photo. При
 // ошибке сам пишет ответ и возвращает ok=false. Повторяет контракт загрузки сканера
 // (те же лимиты и форматы), но изолированно — сканер не трогаем.
-func (s *Server) readMealImages(w http.ResponseWriter, r *http.Request) ([]llm.Image, bool) {
+func (s *Server) readMealImages(w http.ResponseWriter, r *http.Request, userID int64) ([]llm.Image, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxScanBodyBytes)
 	if err := r.ParseMultipartForm(multipartMemBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "приложите фото в поле photo (до 3 кадров, макс 10 МБ каждый)")
@@ -681,6 +726,14 @@ func (s *Server) readMealImages(w http.ResponseWriter, r *http.Request) ([]llm.I
 				"формат не поддерживается — пришлите JPEG, PNG или WebP")
 			return nil, false
 		}
+		// Хеш ИСХОДНЫХ байт в лог (сам файл не храним — приватность не трогаем), как в
+		// сканере составов. 17.08.2026 этого лога не хватило: разбор пять раз попал в кэш,
+		// и по логам нельзя было отличить «прислали тот же файл» от регресса 14.07, когда
+		// webview отдавал наверх не тот кадр, что снял пользователь.
+		sum := sha256.Sum256(raw)
+		s.log.Info("meal: принят кадр", "user", userID, "sha", hex.EncodeToString(sum[:6]),
+			"in_bytes", len(raw), "out_bytes", len(jpg))
+
 		images = append(images, llm.Image{Data: jpg, MIME: "image/jpeg"})
 	}
 	return images, true

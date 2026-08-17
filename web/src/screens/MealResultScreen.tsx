@@ -50,6 +50,10 @@ interface Props {
    *  App) — тогда под итогом разбора появляется строка «это много или мало?». Не задан —
    *  строки нет: у человека с нормой она бессмысленна. */
   onOpenWizard?: () => void;
+  /** Этот кадр уже разбирался сегодня: сервер вернул существующий приём вместо второго
+   *  такого же. Экран обязан сказать это вслух — иначе «ПРИЁМ В ДНЕВНИКЕ» вместо
+   *  ожидаемого свежего разбора выглядит как сбой. Работает вместе с saved. */
+  alreadyInDiary?: boolean;
   /** Остаток разборов после ТЕКСТОВОГО добавления блюда (оно уходит в тот же платный
    *  пайплайн и списывает квоту). Экран обязан донести новое число до App: остаток живёт
    *  в его me, и без этого счётчик на главном оставался бы прежним до перезахода. */
@@ -94,7 +98,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
   // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
@@ -360,6 +364,18 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.05em", color: "var(--text2)", background: "var(--chip-bg)", borderRadius: 99, padding: "4px 10px" }}>{chip}</span>
           )}
         </div>
+
+        {/* Повторный кадр: объясняем, почему вместо свежего разбора открыт приём из
+            дневника. Констатация, без упрёка за повтор — человек мог просто вернуться
+            к съеденному, и второй записи он не просил. */}
+        {alreadyInDiary && (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12, padding: "10px 12px", borderRadius: 12, background: "var(--bg-soft)", border: "1px solid var(--border)" }}>
+            <i className="ti ti-checkbox" aria-hidden="true" style={{ fontSize: 16, color: "var(--cal-num)", flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--text2)" }}>
+              Этот кадр уже разобран сегодня — открыли приём из дневника. Разбор не списан, второй записи не добавили.
+            </span>
+          </div>
+        )}
 
         {/* Карточка-герой */}
         <div style={{ marginTop: 16, borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px" }}>

@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -56,6 +57,10 @@ type MealRow struct {
 	// "always"). Только для source='photo'; ручной приём их не ставит. Метрика admin/stats.
 	Escalated         bool
 	EscalationTrigger string
+	// ImageSHA — кадр, из которого получен приём (sha нормализованных изображений, тот же
+	// ключ, что у кэша разбора). Пусто — приём не из фото. По нему FindMealByImageSHA
+	// находит уже созданный сегодня приём и не плодит дубли на повторном кадре.
+	ImageSHA string
 }
 
 // nilIfEmpty превращает пустую строку в NULL — чтобы COALESCE в INSERT отработал
@@ -116,16 +121,50 @@ func (s *Store) InsertMeal(ctx context.Context, m MealRow) (int64, error) {
 	const q = `
 INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fat_g, carb_g,
                    confidence, meal_type, provider, latency_ms, cost_estimate, local_date,
-                   escalated, escalation_trigger)
+                   escalated, escalation_trigger, image_sha)
 VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14,
         COALESCE($15::date, (COALESCE($2, now()) AT TIME ZONE 'Europe/Moscow')::date),
-        $16, NULLIF($17, ''))
+        $16, NULLIF($17, ''), NULLIF($18, ''))
 RETURNING id`
 	var id int64
 	err := s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
 		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB,
-		nilIfEmpty(m.LocalDate), m.Escalated, m.EscalationTrigger).Scan(&id)
+		nilIfEmpty(m.LocalDate), m.Escalated, m.EscalationTrigger, m.ImageSHA).Scan(&id)
 	return id, err
+}
+
+// FindMealByImageSHA ищет приём, уже созданный из ЭТОГО кадра в ЭТОТ день пользователя.
+// found=false — такого нет, кадр разбирается впервые за день.
+//
+// День берём тем же выражением, что и дневник (ListMealsByDay): клиентский local_date,
+// а при его отсутствии — московская дата eaten_at. Иначе повторный кадр, присланный
+// вечером из другого часового пояса, нашёл бы приём «не своего» дня.
+//
+// day пустой — «сегодня по Москве», и вычисляет это SQL, а не Go: московская дата уже
+// зашита в INSERT и в выборку дневника тем же выражением, и считать её третьим способом
+// (через time.LoadLocation, которому в distroless-образе нужна tzdata) значило бы завести
+// три источника правды об одной границе суток.
+//
+// Свежайший при совпадении (ORDER BY id DESC): дубли за день до этой правки уже могли
+// накопиться, и показывать разумно последний — он тот, который пользователь правил.
+func (s *Store) FindMealByImageSHA(ctx context.Context, userID int64, sha, day string) (Meal, bool, error) {
+	const q = `SELECT ` + mealCols + `
+FROM meals
+WHERE user_id = $1
+  AND image_sha = $2
+  AND COALESCE(local_date, (eaten_at AT TIME ZONE 'Europe/Moscow')::date)
+      = COALESCE($3::date, (now() AT TIME ZONE 'Europe/Moscow')::date)
+  AND status = 'ok'
+ORDER BY id DESC
+LIMIT 1`
+	m, err := scanMeal(s.pool.QueryRow(ctx, q, userID, sha, nilIfEmpty(day)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Meal{}, false, nil
+	}
+	if err != nil {
+		return Meal{}, false, err
+	}
+	return m, true, nil
 }
 
 // MealEscalationStat — строка сводки эскалаций для admin/stats: по каждому рисковому

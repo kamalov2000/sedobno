@@ -647,6 +647,37 @@ describe("MealResultScreen — чип квоты", () => {
   });
 });
 
+// Повторно присланный кадр: сервер отдаёт УЖЕ существующий приём вместо второго такого
+// же (17.08.2026 одно фото положило в дневник пять одинаковых приёмов). Экран обязан
+// объяснить, почему вместо разбора открыт приём из дневника.
+describe("MealResultScreen — кадр уже разобран сегодня", () => {
+  const savedItem = makeMealHistory().items[0];
+
+  it("показывает пояснение и не обещает второй записи", () => {
+    render(
+      <MealResultScreen
+        result={diaryItemToResult(savedItem, 7)}
+        saved={savedItem}
+        alreadyInDiary
+        isSubscribed={false}
+        onDone={noop}
+        onRetake={noop}
+      />,
+    );
+    expect(screen.getByText(/уже разобран сегодня/)).toBeTruthy();
+    expect(screen.getByText(/второй записи не добавили/)).toBeTruthy();
+    // Режим сохранённого приёма: правка существующей записи, а не «добавить ещё раз».
+    expect(screen.getByText("ПРИЁМ В ДНЕВНИКЕ")).toBeTruthy();
+  });
+
+  it("без флага пояснения нет — обычный приём из истории выглядит как раньше", () => {
+    render(
+      <MealResultScreen result={diaryItemToResult(savedItem, 7)} saved={savedItem} isSubscribed={false} onDone={noop} onRetake={noop} />,
+    );
+    expect(screen.queryByText(/уже разобран сегодня/)).toBeNull();
+  });
+});
+
 describe("MealResultScreen — приём, оценённый по описанию", () => {
   const textResult = {
     status: "ok" as const,
