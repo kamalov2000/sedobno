@@ -163,6 +163,13 @@ bot-setup: ## настроить команды бота /start,/support (Bot AP
 	  -d '{"commands":[{"command":"start","description":"Открыть приложение"},{"command":"support","description":"Написать в поддержку"},{"command":"stop_daily","description":"Отключить итог дня"}]}'; echo; \
 	echo "Кнопку «Открыть» для всех — в BotFather: /mybots → Bot Settings → Menu Button → $$(sed -n 's/^WEBAPP_URL=//p' $(ENV_FILE) | head -1)"
 
+# ВАЖНО (Caddyfile): он монтируется ОДИНОЧНЫМ ФАЙЛОМ, а `git pull` не правит файл на
+# месте — он подменяет его новым (меняется инод). Контейнер остаётся на старом иноде и
+# продолжает видеть ПРЕЖНИЙ конфиг, поэтому `caddy reload` честно рапортует успех, читая
+# то же самое. Поймано 18.08.2026: маршрут /s/* доехал до прода только после пересоздания
+# контейнера. Отсюда развилка ниже: тронули Caddyfile — пересоздаём caddy, не тронули —
+# хватает reload (landing/ смонтирован каталогом, там правки видны сразу).
+#
 # ВАЖНО (миграции): api в compose зависит от migrate (service_completed_successfully),
 # поэтому обычный `up -d api` МОЛЧА накатил бы goose. Деплой кода и изменение схемы
 # смешивать нельзя, поэтому здесь строго `up -d --no-deps`: migrate не запускается,
@@ -180,9 +187,14 @@ deploy: ## ПРОД: выкатить main (pull → фронт → образы
 	$(COMPOSE) build api web; \
 	echo "→ 4/5 рестарт изменившихся контейнеров"; \
 	$(COMPOSE) up -d --no-deps api web; \
-	$(COMPOSE) exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
-	  && echo "   caddy: конфиг перечитан (Caddyfile и landing/ смонтированы, пересборка не нужна)" \
-	  || echo "   caddy: reload пропущен (контейнер не поднят?)"; \
+	if git diff --name-only $$BEFORE $$AFTER | grep -q '^deploy/Caddyfile$$'; then \
+	  echo "   caddy: Caddyfile изменился → ПЕРЕСОЗДАЁМ контейнер"; \
+	  $(COMPOSE) up -d --no-deps --force-recreate caddy; \
+	else \
+	  $(COMPOSE) exec -T caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null \
+	    && echo "   caddy: конфиг перечитан (landing/ смонтирован каталогом — правки видны сразу)" \
+	    || echo "   caddy: reload пропущен (контейнер не поднят?)"; \
+	fi; \
 	echo "→ 5/5 проверка"; \
 	for i in 1 2 3 4 5 6 7 8 9 10; do \
 	  CODE=$$(curl -s -o /dev/null -w '%{http_code}' -m 10 "$(HEALTH_URL)" || true); \
