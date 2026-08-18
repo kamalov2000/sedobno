@@ -4,7 +4,7 @@ import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effe
 import EggCounter from "../components/EggCounter";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
-import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent } from "../api";
+import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent, ApiError } from "../api";
 import type { DishPatch } from "../api";
 import { haptic, notify, canShareToStory, shareToStory } from "../telegram";
 import { renderMealStory, mealStoryData, downloadBlob } from "../mealStoryCard";
@@ -365,9 +365,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
         downloadBlob(png, "sedobno-meal.png");
         shareEvent("share_saved");
       }
-    } catch {
+    } catch (err) {
       shareEvent("share_failed");
-      setShareError("Не получилось собрать карточку. Попробуйте ещё раз.");
+      // 429 — суточный потолок карточек на сервере. Говорим прямо, что это лимит, а не
+      // сбой: «попробуйте ещё раз» при упёртом лимите отправило бы человека по кругу.
+      const limited = err instanceof ApiError && err.status === 429;
+      setShareError(limited
+        ? "Сегодня уже много карточек — попробуйте завтра. Картинку можно сохранить файлом."
+        : "Не получилось собрать карточку. Попробуйте ещё раз.");
     } finally {
       setSharing(false);
     }

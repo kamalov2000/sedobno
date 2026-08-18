@@ -690,3 +690,39 @@ func TestLapseExpiredSubscriptions_ГраницаРовноСейчас(t *testi
 		t.Fatalf("снято %v, ожидался [%d] — подписка на границе срока должна истекать", ids, uid)
 	}
 }
+
+// Суточный потолок шер-карточек считается по событиям (share.go): без него эндпоинт
+// приёма PNG — бесплатный хостинг картинок. Проверяем ровно то, на что он опирается:
+// счёт по паре (пользователь, имя события) и по окну времени.
+func TestCountUserEventsSince_СвойПользовательСвоёИмяСвоёОкно(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7301)
+	other := mkUser(t, s, ctx, 7302)
+
+	for i := 0; i < 3; i++ {
+		if err := s.InsertEvent(ctx, &uid, "share_card_created", nil); err != nil {
+			t.Fatalf("InsertEvent: %v", err)
+		}
+	}
+	// Чужие события и события другого имени в счёт не идут.
+	if err := s.InsertEvent(ctx, &other, "share_card_created", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertEvent(ctx, &uid, "share_clicked", nil); err != nil {
+		t.Fatal(err)
+	}
+	// Старое событие — за окном.
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO events (user_id, name, created_at) VALUES ($1, 'share_card_created', now() - interval '25 hours')`,
+		uid); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := s.CountUserEventsSince(ctx, uid, "share_card_created", time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("CountUserEventsSince: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("насчитали %d, ждали 3 (свои за сутки, без чужих, без другого имени, без вчерашнего)", n)
+	}
+}

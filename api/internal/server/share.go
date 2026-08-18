@@ -39,6 +39,11 @@ const (
 	// Как часто уборщик проходит по каталогу. Чаще незачем: TTL суточный, а проверка
 	// возраста есть и на самой отдаче.
 	shareSweepEvery = 30 * time.Minute
+	// Потолок карточек на пользователя в сутки. Без него эндпоинт — бесплатный хостинг
+	// картинок: 6 МБ за загрузку, ссылка публичная и живёт сутки, и один аккаунт может
+	// лить их бесконечно. Двадцать — заведомо больше, чем нужно человеку, который делится
+	// своими приёмами (их и бывает-то несколько за день).
+	shareDailyLimit = 20
 )
 
 // shareCardResponse — ответ POST /api/share/card. URL относительный: домен клиент знает
@@ -58,6 +63,21 @@ func (s *Server) handleShareCardCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.ShareDir == "" {
 		writeError(w, http.StatusServiceUnavailable, "share_disabled", "поделиться сейчас нельзя")
+		return
+	}
+
+	// Суточный потолок — ДО чтения тела: смысл лимита в том, чтобы не принимать мегабайты,
+	// а не в том, чтобы принять и выбросить. Ошибку счётчика трактуем в пользу человека
+	// (пропускаем): карточка — не деньги, и падать из-за неё обидно.
+	since := time.Now().Add(-24 * time.Hour)
+	if n, cerr := s.store.CountUserEventsSince(r.Context(), claims.UserID, "share_card_created", since); cerr != nil {
+		s.log.Warn("share: счётчик карточек", "err", cerr, "user", claims.UserID)
+	} else if n >= shareDailyLimit {
+		_ = s.store.InsertEvent(r.Context(), &claims.UserID, "share_limit_hit", map[string]any{"count": n})
+		s.log.Info("share: суточный потолок карточек", "user", claims.UserID, "count", n)
+		w.Header().Set("Retry-After", "3600")
+		writeError(w, http.StatusTooManyRequests, "share_limit",
+			"сегодня уже много карточек — попробуйте завтра")
 		return
 	}
 

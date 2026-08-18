@@ -791,3 +791,17 @@ func (s *Store) InsertEvent(ctx context.Context, userID *int64, name string, pro
 		userID, name, raw)
 	return err
 }
+
+// CountUserEventsSince — сколько раз у пользователя случилось событие name за период.
+//
+// Заведено ради суточного потолка шер-карточек: считать по уже пишущимся событиям дешевле,
+// чем заводить под счётчик отдельную таблицу, и заодно потолок опирается ровно на то, что
+// потом видно в воронке. Индекс idx_events_user отсекает по пользователю, дальше строк
+// мало — фильтр по имени и времени идёт по ним.
+func (s *Store) CountUserEventsSince(ctx context.Context, userID int64, name string, since time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM events WHERE user_id = $1 AND name = $2 AND created_at > $3`,
+		userID, name, since).Scan(&n)
+	return n, err
+}
