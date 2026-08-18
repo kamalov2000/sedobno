@@ -4,9 +4,10 @@ import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effe
 import EggCounter from "../components/EggCounter";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
-import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText } from "../api";
+import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent } from "../api";
 import type { DishPatch } from "../api";
-import { haptic, notify } from "../telegram";
+import { haptic, notify, canShareToStory, shareToStory } from "../telegram";
+import { renderMealStory, mealStoryData, downloadBlob } from "../mealStoryCard";
 import { useRolledNumber } from "../useRoll";
 import MacroSegments from "../components/MacroSegments";
 
@@ -54,6 +55,13 @@ interface Props {
    *  такого же. Экран обязан сказать это вслух — иначе «ПРИЁМ В ДНЕВНИКЕ» вместо
    *  ожидаемого свежего разбора выглядит как сбой. Работает вместе с saved. */
   alreadyInDiary?: boolean;
+  /** Показывать ли «Поделиться». Решает App, а не экран: смысл в МОМЕНТЕ — свежий разбор
+   *  показывают, приём, открытый из истории для правки, нет. Экран этого контекста не знает. */
+  canShare?: boolean;
+  /** Кадр приёма для карточки. Никуда не отправляется — из него рисуется картинка прямо
+   *  здесь, и на сервер уходит уже она (см. mealStoryCard.ts). Нет кадра (руками/словами) —
+   *  карточка та же, но с ровным фоном. */
+  photo?: Blob | null;
   /** Остаток разборов после ТЕКСТОВОГО добавления блюда (оно уходит в тот же платный
    *  пайплайн и списывает квоту). Экран обязан донести новое число до App: остаток живёт
    *  в его me, и без этого счётчик на главном оставался бы прежним до перезахода. */
@@ -98,7 +106,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo }: Props) {
   const isSaved = saved != null;
   const initialMealType = saved?.meal_type ?? null;
   // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
@@ -119,6 +127,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   });
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   const [busy, setBusy] = useState(false);
+
+  // Шер-карточка: рендер идёт в фоне, поэтому кнопке нужно занятое состояние, а ошибке —
+  // место рядом с ней. Уводить с экрана из-за неудавшейся картинки нельзя: приём может
+  // быть ещё не сохранён, и уход стёр бы правки.
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState("");
 
   // Панель текстового добавления блюда: открыта / текст / запрос / ошибка.
   const [adding, setAdding] = useState(false);
@@ -325,6 +339,37 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
     } catch {
       notify("error");
       setBusy(false);
+    }
+  };
+
+  // Шер-карточка: рисуем здесь же из текущего состояния экрана (с правками пользователя,
+  // а не с исходной догадкой модели), в сторис отдаём ссылкой, файлом — скачиваем.
+  const onShare = async (target: "story" | "file") => {
+    if (sharing) return;
+    haptic("light");
+    shareEvent("share_clicked");
+    setSharing(true);
+    setShareError("");
+    try {
+      const png = await renderMealStory(
+        mealStoryData({ dishes, total, mealType, eatenAt: saved?.eaten_at }),
+        photo ?? null,
+      );
+      // Сторис умеет не всякий клиент (метод появился в Bot API 7.8) — в старом
+      // единственный честный путь тот же, что и у «сохранить»: отдать файл.
+      if (target === "story" && canShareToStory()) {
+        const { url } = await uploadShareCard(png);
+        shareToStory(new URL(url, window.location.origin).toString());
+        shareEvent("share_done");
+      } else {
+        downloadBlob(png, "sedobno-meal.png");
+        shareEvent("share_saved");
+      }
+    } catch {
+      shareEvent("share_failed");
+      setShareError("Не получилось собрать карточку. Попробуйте ещё раз.");
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -574,6 +619,36 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           <i className={`ti ${isSaved ? "ti-check" : "ti-plus"}`} aria-hidden="true" style={{ fontSize: 19 }} />
           {isSaved ? "Сохранить изменения" : "В дневник"}
         </button>
+        {/* Поделиться — только на СВЕЖЕМ разборе (решает App): в дневнике и истории
+            момент не тот, там человек ведёт учёт, а не показывает тарелку. */}
+        {canShare && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              disabled={sharing}
+              onClick={() => void onShare("story")}
+              style={{ flex: 1, height: 44, background: "none", border: "1px solid var(--cal-border)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}
+            >
+              <i className={`ti ${sharing ? "ti-loader-2" : "ti-share-2"}`} aria-hidden="true" style={{ fontSize: 17 }} />
+              {sharing ? "Готовим…" : "Поделиться"}
+            </button>
+            {/* Запасной путь: не Telegram-сторис, а файл — его выкладывают куда угодно.
+                Он же единственный, если клиент не умеет shareToStory. */}
+            <button
+              type="button"
+              disabled={sharing}
+              onClick={() => void onShare("file")}
+              aria-label="Сохранить картинку"
+              title="Сохранить картинку"
+              style={{ width: 44, height: 44, background: "none", border: "1px solid var(--border)", borderRadius: 12, color: "var(--text2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}
+            >
+              <i className="ti ti-download" aria-hidden="true" style={{ fontSize: 17 }} />
+            </button>
+          </div>
+        )}
+        {shareError && (
+          <p style={{ margin: "8px 0 0", fontSize: 12.5, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>{shareError}</p>
+        )}
         <button type="button" disabled={busy} onClick={onRetakeClick} style={{ width: "100%", height: 40, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, color: "var(--text2)", cursor: busy ? "default" : "pointer", marginTop: 4 }}>
           {manual ? "Отмена" : isSaved ? "Закрыть" : "Переснять"}
         </button>

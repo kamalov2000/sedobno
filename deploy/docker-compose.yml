@@ -53,6 +53,11 @@ services:
     env_file: ../.env
     expose:
       - "8080"
+    # Шер-карточки приёмов (кнопка «Поделиться»): готовые PNG, которые Telegram скачивает
+    # по временной ссылке. В томе, а не в слое контейнера, — иначе деплой посреди суток
+    # обрывал бы живые ссылки. Файлы чистит уборщик по TTL (SHARE_TTL, сутки).
+    volumes:
+      - share_cards:/data/share
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,5 +102,6 @@ services:
 
 volumes:
   pgdata:
+  share_cards:
   caddy_data:
   caddy_config:

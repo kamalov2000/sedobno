@@ -94,6 +94,11 @@ func (s *Server) Router() http.Handler {
 		// Вебхук ЮKassa — публичный (зовёт ЮKassa): своя проверка IP-allowlist + re-fetch.
 		r.Post("/payments/sbp/webhook", s.handleSBPWebhook) // ЮKassa → активация подписки
 
+		// Готовая шер-карточка приёма. Публичная НАМЕРЕННО: по этой ссылке ходит Telegram,
+		// чтобы забрать картинку в сторис, и Bearer-токена у него нет. Защита — имя из 128
+		// бит случайности и суточный срок жизни файла (см. share.go).
+		r.Get("/share/{name}", s.handleShareCardGet)
+
 		// Защищённые роуты: Bearer JWT обязателен (§8).
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -122,6 +127,10 @@ func (s *Server) Router() http.Handler {
 			r.Patch("/profile/digest", s.handleProfileDigest)
 
 			r.Get("/me", s.handleMe)
+
+			// Шер-карточка: загрузка готового PNG (рисует клиент) и телеметрия кнопки.
+			r.Post("/share/card", s.handleShareCardCreate)
+			r.Post("/share/event", s.handleShareEvent)
 
 			// Вес, вода (спринт 2). Бесплатные: ни квот, ни рейт-лимита LLM — это
 			// данные пользователя о себе, а не вызовы модели.

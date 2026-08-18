@@ -87,6 +87,10 @@ export default function App() {
   // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
   // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
   const [mealTextPrefill, setMealTextPrefill] = useState("");
+  // Кадр последнего разбора — ТОЛЬКО для шер-карточки: из него рисуется картинка на
+  // клиенте. На сервер он не уходит (лендинг обещает, что фото не сохраняем), и живёт
+  // ровно до следующего разбора или ухода в историю.
+  const [mealPhoto, setMealPhoto] = useState<File | null>(null);
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
   useEffect(() => {
@@ -189,6 +193,7 @@ export default function App() {
     setSavedMeal(null);
     setMealResult(null);
     setReturnTo(null);
+    setMealPhoto(files[0] ?? null); // первый кадр — он и попадёт на карточку
     setView("loading");
     try {
       const outcome = await analyzeMeal(files);
@@ -446,6 +451,7 @@ export default function App() {
             // GET за уже полученным приёмом добавил бы только состояние загрузки.
             setSavedMeal(item);
             setMealResult(diaryItemToResult(item, me?.meals_left ?? -1));
+            setMealPhoto(null); // кадра у сохранённого приёма нет — мы его не храним
             setReturnTo("meal_history");
             setView("meal_result");
           }}
@@ -608,6 +614,10 @@ export default function App() {
           mealLimit={me?.free_meal_limit}
           onQuotaSpent={applyMealsLeft}
           saved={savedMeal ?? undefined}
+          photo={mealPhoto}
+          // «Поделиться» — про МОМЕНТ: свежий разбор показывают, приём, открытый из
+          // истории для правки, — нет. В дневнике кнопки нет вовсе.
+          canShare={returnTo !== "meal_history"}
           // Кадр уже разбирался сегодня — экран говорит об этом вслух, иначе «ПРИЁМ В
           // ДНЕВНИКЕ» вместо ожидаемого разбора читается как сбой.
           alreadyInDiary={mealResult.already_in_diary}
@@ -673,6 +683,7 @@ export default function App() {
           result={textMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
           onQuotaSpent={applyMealsLeft}
+          canShare
           manual
           origin={textMeal ? "text" : undefined}
           // Тот же призыв к расчёту нормы, что и после фото: приём, вписанный словами или

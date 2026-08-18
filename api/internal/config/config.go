@@ -139,6 +139,15 @@ type Config struct {
 	// false (прод события не раздуваются); бета включает MEAL_DIAG_VERBOSE=true.
 	MealDiagVerbose bool
 
+	// --- Шер-карточка приёма (кнопка «Поделиться» на экране разбора) ---
+	// Карточку рисует КЛИЕНТ (фото приёма на сервер не уходит — так обещано на
+	// лендинге), сюда приходит уже готовый PNG: ему нужен публичный адрес, потому что
+	// Telegram скачивает картинку для сторис по ссылке, а не принимает байты.
+	// ShareDir — где лежат карточки (том, переживает рестарт: ссылка живёт сутки).
+	// ShareTTL — сколько ссылка действительна; после этого файл удаляется уборщиком.
+	ShareDir string
+	ShareTTL time.Duration
+
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
 	// Нужен для разбора распознавания: какое ИМЕННО изображение (после Normalize)
 	// видела модель. На проде держать выключенным (приватность/место).
@@ -299,6 +308,9 @@ func MustLoad() *Config {
 	cfg.AppEnv = opt("APP_ENV", "prod") // безопасный дефолт: неизвестное окружение = прод
 	cfg.DevAuthBypass = optBool(opt("DEV_AUTH_BYPASS", "false"))
 	cfg.MealDiagVerbose = optBool(opt("MEAL_DIAG_VERBOSE", "false"))
+
+	cfg.ShareDir = opt("SHARE_DIR", "/data/share")
+	cfg.ShareTTL = optDuration(opt("SHARE_TTL", "24h"), 24*time.Hour, &invalid, "SHARE_TTL")
 
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")

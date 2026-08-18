@@ -19,6 +19,11 @@ export interface TgWebApp {
   offEvent: (event: string, cb: () => void) => void;
   openInvoice: (url: string, cb?: (status: string) => void) => void;
   openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
+  /** Отправка картинки в сторис (Bot API 7.8+). Принимает ПУБЛИЧНУЮ ссылку на медиа —
+   *  блоб передать нельзя, поэтому карточка сперва уезжает на наш сервер. Может
+   *  отсутствовать в старых клиентах: вызывать только через canShareToStory(). */
+  shareToStory?: (mediaUrl: string, params?: { text?: string; widget_link?: { url: string; name?: string } }) => void;
+  version?: string;
   setHeaderColor?: (color: string) => void;
   HapticFeedback?: HapticFeedback;
   BackButton?: {
@@ -85,6 +90,18 @@ export function authBody(): Record<string, unknown> {
   const dev = devUserId();
   if (dev != null) return { dev_user_id: dev };
   return { init_data: "" }; // ни того ни другого — обычный путь (бэк ответит 400/401)
+}
+
+/** Умеет ли клиент класть картинку в сторис. Старые версии Telegram метода не имеют —
+ *  тогда единственный путь поделиться это «Сохранить картинку», и кнопку про сторис
+ *  показывать нельзя: она бы молча ничего не делала. */
+export function canShareToStory(): boolean {
+  return typeof tg()?.shareToStory === "function";
+}
+
+/** Положить карточку в сторис. url — публичная ссылка на PNG (наш /api/share/...). */
+export function shareToStory(url: string, text?: string): void {
+  tg()?.shareToStory?.(url, text ? { text } : undefined);
 }
 
 export function haptic(kind: "light" | "medium" | "heavy" = "light"): void {
