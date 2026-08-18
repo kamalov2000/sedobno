@@ -130,6 +130,30 @@ export function mealStoryData(args: {
   };
 }
 
+/** Подписи вокруг карточки: заголовок и описание для превью страницы /s/{token} и текст,
+ *  который подставляется в сообщение при отправке в чат.
+ *
+ *  Живут рядом с карточкой, а не на сервере: он этот приём уже не помнит — картинка
+ *  рисуется из состояния экрана вместе с правками пользователя. */
+export function storyCaptions(args: { dishes: MealItem[]; total: MealMacros; mealType?: MealType | null }): {
+  title: string;
+  desc: string;
+  share: string;
+} {
+  const kcal = Math.round(args.total.kcal);
+  const label = args.mealType ? MEAL_TYPE_LABELS[args.mealType] : "";
+  const subject = label || "Приём";
+  const names = args.dishes.map((d) => d.name.trim()).filter(Boolean);
+  const listed = names.slice(0, 3).join(", ");
+  const rest = names.length > 3 ? ` и ещё ${names.length - 3}` : "";
+  return {
+    title: `${subject} на ${kcal} ккал`,
+    desc: listed ? `${listed}${rest} — посчитано по фото в «Съедобно».` : "Калории и БЖУ посчитаны по фото тарелки.",
+    // Текст сообщения: короткий и с именем бота — по нему и приходят новые люди.
+    share: `${subject} на ${kcal} ккал — разобрал в ${BOT_NAME}`,
+  };
+}
+
 async function ensureFonts(): Promise<void> {
   if (!document.fonts) return;
   try {

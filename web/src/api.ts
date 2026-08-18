@@ -339,9 +339,13 @@ export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: 
  *  Зачем сервер, если картинка уже есть: Telegram кладёт в сторис картинку ПО ССЫЛКЕ,
  *  байты он не принимает. Ссылка неугадываемая и живёт сутки (см. share.go).
  *  Фото приёма при этом на сервер не уходит — только собранная карточка. */
-export async function uploadShareCard(png: Blob): Promise<{ url: string; expires_at: string }> {
+export async function uploadShareCard(png: Blob, meta?: { title?: string; desc?: string }): Promise<{ url: string; page_url: string; expires_at: string }> {
   const form = new FormData();
   form.append("card", png, "card.png");
+  // Подписи для превью страницы /s/{token}: что на картинке, знает только клиент —
+  // сервер этот приём уже не помнит (карточка рисуется из состояния экрана).
+  if (meta?.title) form.append("title", meta.title);
+  if (meta?.desc) form.append("desc", meta.desc);
   const res = await apiFetch("/api/share/card", { method: "POST", body: form });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
@@ -349,7 +353,7 @@ export async function uploadShareCard(png: Blob): Promise<{ url: string; expires
 
 /** Телеметрия кнопки «Поделиться». Best-effort: неудача события не должна мешать
  *  человеку поделиться, поэтому ошибки глотаем. */
-export function shareEvent(name: "share_clicked" | "share_done" | "share_saved" | "share_failed"): void {
+export function shareEvent(name: "share_clicked" | "share_sent" | "share_done" | "share_saved" | "share_failed"): void {
   void apiFetch("/api/share/event", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

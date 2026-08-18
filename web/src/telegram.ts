@@ -23,6 +23,8 @@ export interface TgWebApp {
    *  блоб передать нельзя, поэтому карточка сперва уезжает на наш сервер. Может
    *  отсутствовать в старых клиентах: вызывать только через canShareToStory(). */
   shareToStory?: (mediaUrl: string, params?: { text?: string; widget_link?: { url: string; name?: string } }) => void;
+  /** Открывает t.me-ссылку внутри Telegram (в т.ч. share/url — выбор чата). */
+  openTelegramLink?: (url: string) => void;
   version?: string;
   setHeaderColor?: (color: string) => void;
   HapticFeedback?: HapticFeedback;
@@ -90,6 +92,27 @@ export function authBody(): Record<string, unknown> {
   const dev = devUserId();
   if (dev != null) return { dev_user_id: dev };
   return { init_data: "" }; // ни того ни другого — обычный путь (бэк ответит 400/401)
+}
+
+/** Открыть t.me-ссылку ВНУТРИ Telegram (выбор чата для пересылки, профиль бота).
+ *  Отличается от openLink: тот уходит во внешний браузер, а здесь нужен сам мессенджер. */
+export function openTelegramLink(url: string): void {
+  const w = tg();
+  if (w?.openTelegramLink) w.openTelegramLink(url);
+  else window.open(url, "_blank");
+}
+
+/** Открыть обычную ссылку ВНЕ мини-аппа (внешний браузер).
+ *
+ *  Ровно этим сохраняется картинка в Telegram: навигация вебвью на файл (в том числе
+ *  клик по <a download> с blob-адресом, который webview трактует как переход) оставляет
+ *  человека на PNG внутри мини-аппа, откуда «назад» не работает и выйти нельзя —
+ *  поймано на телефоне 18.08.2026. Внешний браузер эту ловушку исключает: мини-апп
+ *  остаётся жив за спиной. try_instant_view=false — картинку не надо «читать статьёй». */
+export function openExternal(url: string): void {
+  const w = tg();
+  if (w?.openLink) w.openLink(url, { try_instant_view: false });
+  else window.open(url, "_blank", "noopener");
 }
 
 /** Умеет ли клиент класть картинку в сторис. Старые версии Telegram метода не имеют —

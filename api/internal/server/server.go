@@ -85,6 +85,11 @@ func (s *Server) Router() http.Handler {
 	// мультифото-сканы в 502. Быстрым эндпоинтам (health/webhook) запас не мешает.
 	r.Use(middleware.Timeout(60 * time.Second))
 
+	// Страница карточки приёма — вне /api намеренно: её адрес человек отправляет в чат,
+	// и /s/<токен> читается как ссылка на страницу, а не как обращение к нашему API.
+	// В Caddy для неё есть отдельный handle (deploy/Caddyfile).
+	r.Get("/s/{token}", s.handleSharePage)
+
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/health", s.handleHealth)
 		r.Post("/auth", s.handleAuth)

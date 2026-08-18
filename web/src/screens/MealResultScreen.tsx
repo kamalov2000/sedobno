@@ -6,8 +6,8 @@ import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent, ApiError } from "../api";
 import type { DishPatch } from "../api";
-import { haptic, notify, canShareToStory, shareToStory } from "../telegram";
-import { renderMealStory, mealStoryData, downloadBlob } from "../mealStoryCard";
+import { haptic, notify, canShareToStory, shareToStory, openTelegramLink, openExternal, tg } from "../telegram";
+import { renderMealStory, mealStoryData, storyCaptions, downloadBlob } from "../mealStoryCard";
 import { useRolledNumber } from "../useRoll";
 import MacroSegments from "../components/MacroSegments";
 
@@ -131,8 +131,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // Шер-карточка: рендер идёт в фоне, поэтому кнопке нужно занятое состояние, а ошибке —
   // место рядом с ней. Уводить с экрана из-за неудавшейся картинки нельзя: приём может
   // быть ещё не сохранён, и уход стёр бы правки.
-  const [sharing, setSharing] = useState(false);
+  const [sharing, setSharing] = useState<null | "send" | "story" | "save">(null);
   const [shareError, setShareError] = useState("");
+  // Одна загруженная карточка на несколько действий: три кнопки подряд не должны съесть
+  // три штуки из суточного потолка. Ключ — состояние приёма: правил блюда, значит
+  // карточка другая и её надо собрать заново.
+  const uploaded = useRef<{ key: string; url: string; pageUrl: string } | null>(null);
 
   // Панель текстового добавления блюда: открыта / текст / запрос / ошибка.
   const [adding, setAdding] = useState(false);
@@ -343,38 +347,72 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   };
 
   // Шер-карточка: рисуем здесь же из текущего состояния экрана (с правками пользователя,
-  // а не с исходной догадкой модели), в сторис отдаём ссылкой, файлом — скачиваем.
-  const onShare = async (target: "story" | "file") => {
+  // а не с исходной догадкой модели). Дальше три пути: отправить человеку, положить в
+  // сторис, сохранить файлом.
+  const buildCard = async (): Promise<Blob> =>
+    renderMealStory(mealStoryData({ dishes, total, mealType, eatenAt: saved?.eaten_at }), photo ?? null);
+
+  /** Загружает карточку и отдаёт ссылки, переиспользуя прошлую загрузку того же приёма. */
+  const publish = async (png: Blob): Promise<{ url: string; pageUrl: string }> => {
+    const key = JSON.stringify({ d: dishes, t: mealType });
+    if (uploaded.current?.key === key) return uploaded.current;
+    const caps = storyCaptions({ dishes, total, mealType });
+    const res = await uploadShareCard(png, { title: caps.title, desc: caps.desc });
+    const links = { key, url: res.url, pageUrl: res.page_url };
+    uploaded.current = links;
+    return links;
+  };
+
+  const abs = (path: string) => new URL(path, window.location.origin).toString();
+
+  const onShare = async (target: "send" | "story" | "save") => {
     if (sharing) return;
     haptic("light");
     shareEvent("share_clicked");
-    setSharing(true);
+    setSharing(target);
     setShareError("");
     try {
-      const png = await renderMealStory(
-        mealStoryData({ dishes, total, mealType, eatenAt: saved?.eaten_at }),
-        photo ?? null,
-      );
-      // Сторис умеет не всякий клиент (метод появился в Bot API 7.8) — в старом
-      // единственный честный путь тот же, что и у «сохранить»: отдать файл.
-      if (target === "story" && canShareToStory()) {
-        const { url } = await uploadShareCard(png);
-        shareToStory(new URL(url, window.location.origin).toString());
-        shareEvent("share_done");
-      } else {
+      const png = await buildCard();
+
+      // Сохранение БЕЗ сервера, когда это возможно: файл уже собран на устройстве.
+      // В обычном браузере <a download> кладёт его в загрузки и всё.
+      if (target === "save" && !tg()) {
         downloadBlob(png, "sedobno-meal.png");
         shareEvent("share_saved");
+        return;
       }
+
+      const links = await publish(png);
+
+      if (target === "send") {
+        // В чат уходит СТРАНИЦА, а не голый PNG: на файл Telegram показывает вложение
+        // без превью и без перехода к нам, и ссылка работала бы как пересылка картинки.
+        const caps = storyCaptions({ dishes, total, mealType });
+        const url = `https://t.me/share/url?url=${encodeURIComponent(abs(links.pageUrl))}&text=${encodeURIComponent(caps.share)}`;
+        openTelegramLink(url);
+        shareEvent("share_sent");
+        return;
+      }
+      if (target === "story" && canShareToStory()) {
+        shareToStory(abs(links.url)); // сторис принимает медиа, поэтому здесь картинка
+        shareEvent("share_done");
+        return;
+      }
+      // Сохранение внутри Telegram и запасной путь для клиентов без сторис: открываем
+      // картинку ВНЕШНИМ браузером. Навигировать вебвью на файл нельзя — человек
+      // остаётся на PNG внутри мини-аппа, откуда «назад» не работает (поймано 18.08).
+      openExternal(abs(links.url));
+      shareEvent("share_saved");
     } catch (err) {
       shareEvent("share_failed");
       // 429 — суточный потолок карточек на сервере. Говорим прямо, что это лимит, а не
       // сбой: «попробуйте ещё раз» при упёртом лимите отправило бы человека по кругу.
       const limited = err instanceof ApiError && err.status === 429;
       setShareError(limited
-        ? "Сегодня уже много карточек — попробуйте завтра. Картинку можно сохранить файлом."
+        ? "Сегодня уже много карточек — попробуйте завтра."
         : "Не получилось собрать карточку. Попробуйте ещё раз.");
     } finally {
-      setSharing(false);
+      setSharing(null);
     }
   };
 
@@ -624,30 +662,39 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           <i className={`ti ${isSaved ? "ti-check" : "ti-plus"}`} aria-hidden="true" style={{ fontSize: 19 }} />
           {isSaved ? "Сохранить изменения" : "В дневник"}
         </button>
-        {/* Поделиться — только на СВЕЖЕМ разборе (решает App): в дневнике и истории
-            момент не тот, там человек ведёт учёт, а не показывает тарелку. */}
+        {/* Три действия рядом. Порядок — по частоте: чаще хочется показать конкретному
+            человеку, а не всем сразу. «Сохранить» иконкой: путь запасной, для тех, кто
+            выкладывает не в Telegram. Показываем только на СВЕЖЕМ разборе (решает App):
+            в дневнике и истории момент не тот — там ведут учёт, а не показывают тарелку. */}
         {canShare && (
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button
               type="button"
-              disabled={sharing}
-              onClick={() => void onShare("story")}
-              style={{ flex: 1, height: 44, background: "none", border: "1px solid var(--cal-border)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}
+              disabled={sharing !== null}
+              onClick={() => void onShare("send")}
+              style={{ flex: 1.25, height: 44, background: "none", border: "1px solid var(--cal-border)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: sharing ? "default" : "pointer", opacity: sharing && sharing !== "send" ? 0.5 : 1 }}
             >
-              <i className={`ti ${sharing ? "ti-loader-2" : "ti-share-2"}`} aria-hidden="true" style={{ fontSize: 17 }} />
-              {sharing ? "Готовим…" : "Поделиться"}
+              <i className={`ti ${sharing === "send" ? "ti-loader-2" : "ti-send"}`} aria-hidden="true" style={{ fontSize: 16 }} />
+              {sharing === "send" ? "Готовим…" : "Отправить"}
             </button>
-            {/* Запасной путь: не Telegram-сторис, а файл — его выкладывают куда угодно.
-                Он же единственный, если клиент не умеет shareToStory. */}
             <button
               type="button"
-              disabled={sharing}
-              onClick={() => void onShare("file")}
+              disabled={sharing !== null}
+              onClick={() => void onShare("story")}
+              style={{ flex: 1, height: 44, background: "none", border: "1px solid var(--border)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, color: "var(--text2)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, cursor: sharing ? "default" : "pointer", opacity: sharing && sharing !== "story" ? 0.5 : 1 }}
+            >
+              <i className={`ti ${sharing === "story" ? "ti-loader-2" : "ti-circle-plus"}`} aria-hidden="true" style={{ fontSize: 16 }} />
+              {sharing === "story" ? "Готовим…" : "В историю"}
+            </button>
+            <button
+              type="button"
+              disabled={sharing !== null}
+              onClick={() => void onShare("save")}
               aria-label="Сохранить картинку"
               title="Сохранить картинку"
-              style={{ width: 44, height: 44, background: "none", border: "1px solid var(--border)", borderRadius: 12, color: "var(--text2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}
+              style={{ width: 44, height: 44, background: "none", border: "1px solid var(--border)", borderRadius: 12, color: "var(--text2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: sharing ? "default" : "pointer", opacity: sharing && sharing !== "save" ? 0.5 : 1 }}
             >
-              <i className="ti ti-download" aria-hidden="true" style={{ fontSize: 17 }} />
+              <i className={`ti ${sharing === "save" ? "ti-loader-2" : "ti-download"}`} aria-hidden="true" style={{ fontSize: 16 }} />
             </button>
           </div>
         )}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitDishes, storyChips, mealStoryData, STORY_DISH_ROWS } from "./mealStoryCard";
+import { splitDishes, storyChips, mealStoryData, storyCaptions, STORY_DISH_ROWS } from "./mealStoryCard";
 import type { MealItem } from "./types";
 
 // Карточка приёма для сторис. Проверяется арифметика и отбор — то, где карточка может
@@ -107,5 +107,33 @@ describe("сборка данных карточки", () => {
     expect(call(5)).toBe("5 блюд");
     expect(call(11)).toBe("11 блюд");
     expect(call(21)).toBe("21 блюдо");
+  });
+});
+
+describe("подписи вокруг карточки", () => {
+  const total = { kcal: 692.4, protein_g: 39, fat_g: 49, carb_g: 14 };
+  const dishes = [dish("гречка", 200), dish("котлета", 300), dish("салат", 100), dish("хлеб", 92)];
+
+  it("заголовок — тип приёма и калории, текст сообщения зовёт в бота", () => {
+    const c = storyCaptions({ dishes, total, mealType: "dinner" });
+    expect(c.title).toBe("Ужин на 692 ккал");
+    // Имя бота в тексте обязательно: по нему в продукт и приходят.
+    expect(c.share).toContain("@sedobno_bot");
+    expect(c.share).toContain("692 ккал");
+  });
+
+  it("без типа приёма — нейтральное «Приём»", () => {
+    expect(storyCaptions({ dishes, total }).title).toBe("Приём на 692 ккал");
+  });
+
+  it("описание перечисляет блюда и сворачивает хвост", () => {
+    const c = storyCaptions({ dishes, total, mealType: "lunch" });
+    expect(c.desc).toContain("гречка, котлета, салат");
+    expect(c.desc).toContain("и ещё 1");
+  });
+
+  it("у приёма без имён блюд описание не пустое", () => {
+    const c = storyCaptions({ dishes: [], total });
+    expect(c.desc.length).toBeGreaterThan(10);
   });
 });

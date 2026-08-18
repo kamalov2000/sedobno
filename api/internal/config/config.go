@@ -147,6 +147,10 @@ type Config struct {
 	// ShareTTL — сколько ссылка действительна; после этого файл удаляется уборщиком.
 	ShareDir string
 	ShareTTL time.Duration
+	// ShareBotURL — куда ведёт кнопка со страницы карточки. Ссылку человек отправляет
+	// в чат, и её смысл не в картинке, а в переходе к нам: получатель видит превью и
+	// одним тапом попадает в бота.
+	ShareBotURL string
 
 	// --- Дебаг (ТОЛЬКО локально): захват нормализованных кадров скана на диск ---
 	// Нужен для разбора распознавания: какое ИМЕННО изображение (после Normalize)
@@ -311,6 +315,7 @@ func MustLoad() *Config {
 
 	cfg.ShareDir = opt("SHARE_DIR", "/data/share")
 	cfg.ShareTTL = optDuration(opt("SHARE_TTL", "24h"), 24*time.Hour, &invalid, "SHARE_TTL")
+	cfg.ShareBotURL = opt("SHARE_BOT_URL", "https://t.me/sedobno_bot")
 
 	cfg.DebugSaveScans = optBool(opt("DEBUG_SAVE_SCANS", "false"))
 	cfg.DebugScanDir = opt("DEBUG_SCAN_DIR", "/debug")

@@ -11,11 +11,15 @@ package server
 import (
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/sostav/api/internal/config"
 )
@@ -120,4 +124,95 @@ func TestSweepShareCards_УдаляетТолькоПросроченное(t *t
 func TestSweepShareCards_БезКаталогаНеПадает(t *testing.T) {
 	s := &Server{cfg: testShareCfg(filepath.Join(t.TempDir(), "нет-такого"), time.Hour), log: testLogger()}
 	s.sweepShareCards()
+}
+
+// Страница карточки — то, что уходит в чат. Проверяем ровно её обязанности: превью
+// (og-теги с абсолютными адресами), переход в бота и экранирование подписей, которые
+// приходят от клиента.
+func TestSharePage_ПревьюПереходИЭкранирование(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testShareCfg(dir, time.Hour)
+	cfg.ShareBotURL = "https://t.me/sedobno_bot"
+	s := &Server{cfg: cfg, log: testLogger()}
+
+	token := strings.Repeat("ab", 16)
+	if err := os.WriteFile(filepath.Join(dir, token+".png"), []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"title":"Ужин на 692 ккал","desc":"<script>alert(1)</script> гречка"}`
+	if err := os.WriteFile(filepath.Join(dir, token+".json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body, code := getSharePage(t, s, token)
+	if code != http.StatusOK {
+		t.Fatalf("статус=%d, ждали 200", code)
+	}
+	for _, want := range []string{
+		`property="og:image" content="https://sedobno-pay.ru/api/share/` + token + `.png"`,
+		`property="og:title" content="Ужин на 692 ккал"`,
+		`href="https://t.me/sedobno_bot"`,
+		`content="1080"`, `content="1920"`, // без размеров Telegram иногда не строит превью
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на странице нет %q", want)
+		}
+	}
+	// Подпись пришла от клиента: тег должен приехать экранированным, а не работающим.
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Error("подпись клиента вставлена без экранирования")
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Error("экранированной подписи на странице нет — текст потерялся целиком")
+	}
+}
+
+// Истёкшая ссылка открывается получателем, который ни в чём не виноват: отдаём внятную
+// страницу с переходом в бота, а не голый 404.
+func TestSharePage_ИстёкшаяСсылкаОбъясняетИВедётВБота(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testShareCfg(dir, time.Hour)
+	cfg.ShareBotURL = "https://t.me/sedobno_bot"
+	s := &Server{cfg: cfg, log: testLogger()}
+
+	token := strings.Repeat("cd", 16)
+	p := filepath.Join(dir, token+".png")
+	if err := os.WriteFile(p, []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	body, code := getSharePage(t, s, token)
+	if code != http.StatusNotFound {
+		t.Fatalf("статус=%d, ждали 404", code)
+	}
+	if !strings.Contains(body, "недоступна") || !strings.Contains(body, "t.me/sedobno_bot") {
+		t.Errorf("страница истёкшей ссылки не объясняет и не ведёт в бота: %.200s", body)
+	}
+}
+
+func TestSharePage_ЧужойТокенНеЧитаетДиск(t *testing.T) {
+	s := &Server{cfg: testShareCfg(t.TempDir(), time.Hour), log: testLogger()}
+	for _, bad := range []string{"..", "../../etc/passwd", "short", strings.Repeat("z", 32)} {
+		_, code := getSharePage(t, s, bad)
+		if code != http.StatusNotFound {
+			t.Errorf("токен %q дал статус %d, ждали 404", bad, code)
+		}
+	}
+}
+
+// getSharePage дёргает страницу через chi-роутер, чтобы {token} разбирался так же,
+// как в бою (URLParam из контекста, а не подставленный руками).
+func getSharePage(t *testing.T, s *Server, token string) (string, int) {
+	t.Helper()
+	r := chi.NewRouter()
+	r.Get("/s/{token}", s.handleSharePage)
+	req := httptest.NewRequest(http.MethodGet, "/s/"+token, nil)
+	req.Host = "sedobno-pay.ru"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec.Body.String(), rec.Code
 }
