@@ -21,6 +21,8 @@ export function scaleDish(dish: MealItem, newGrams: number): MealItem {
     protein_g: round1(dish.protein_g * k),
     fat_g: round1(dish.fat_g * k),
     carb_g: round1(dish.carb_g * k),
+    // Спирт масштабируется вместе с остальными: половина бокала — половина этанола.
+    ...(dish.alcohol_g ? { alcohol_g: round1(dish.alcohol_g * k) } : {}),
   };
 }
 

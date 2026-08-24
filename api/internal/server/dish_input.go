@@ -42,6 +42,12 @@ type dishInput struct {
 	CarbG      float64 `json:"carb_g"`
 	Confidence float64 `json:"confidence"`
 
+	// AlcoholG — граммы чистого спирта в порции, из разбора. Клиент возвращает поле как
+	// есть (масштабируя вместе с граммовкой): без него санитизация сочтёт алкогольную
+	// позицию по одному Атуотеру и занизит её в разы — ровно тот дефект, ради которого
+	// поле и заведено. Ручному блюду его взять неоткуда, там остаётся 0.
+	AlcoholG float64 `json:"alcohol_g"`
+
 	// Поля ручного ввода — на 100 г. Наличие KcalPer100 и делает блюдо ручным.
 	KcalPer100    *float64 `json:"kcal_per_100"`
 	ProteinPer100 *float64 `json:"protein_per_100"`
@@ -85,8 +91,9 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 
 		item := llm.MealItem{
 			Name: name, Grams: d.Grams, Kcal: d.Kcal,
-			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, Confidence: d.Confidence,
-			Pieces: d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
+			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, AlcoholG: d.AlcoholG,
+			Confidence: d.Confidence,
+			Pieces:     d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
 		}
 
 		switch {

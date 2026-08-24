@@ -314,7 +314,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
               : {}),
             ...pieces,
           }
-        : { name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g, fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence, ...pieces };
+        : {
+            name: d.name.trim(), grams: d.grams, kcal: d.kcal, protein_g: d.protein_g,
+            fat_g: d.fat_g, carb_g: d.carb_g, confidence: d.confidence,
+            // Спирт несём обратно: без него санитизация сочтёт бокал вина по одним
+            // углеводам и уронит его калорийность на порядок.
+            ...(d.alcohol_g ? { alcohol_g: d.alcohol_g } : {}),
+            ...pieces,
+          };
     });
 
   const onSave = async () => {

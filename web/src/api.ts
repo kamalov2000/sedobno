@@ -287,6 +287,9 @@ export interface DishPatch {
   protein_g?: number;
   fat_g?: number;
   carb_g?: number;
+  /** Граммы чистого спирта в порции — возвращаем как есть, иначе сервер пересчитает
+   *  алкогольную позицию по одним макросам и занизит её в разы. */
+  alcohol_g?: number;
   confidence?: number;
   kcal_per_100?: number;
   protein_per_100?: number;

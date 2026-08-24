@@ -32,9 +32,10 @@ var ErrBusy = errors.New("пайплайн калорий перегружен, 
 
 // Пределы серверной валидации чисел из vision-ответа (оценка «на глаз» бывает мусорной).
 const (
-	maxDishGrams  = 5000.0 // разумный потолок массы одной порции, г
-	maxDishKcal   = 100000 // широкий потолок ккал (обрезаем только явный мусор)
-	kcalTolerance = 0.30   // допуск расхождения kcal с 4Б+4У+9Ж, прежде чем пересчитать
+	maxDishGrams   = 5000.0 // разумный потолок массы одной порции, г
+	maxDishKcal    = 100000 // широкий потолок ккал (обрезаем только явный мусор)
+	kcalTolerance  = 0.30   // допуск расхождения kcal с 4Б+4У+9Ж+7А, прежде чем пересчитать
+	kcalPerGramAlc = 7.0    // ккал в грамме чистого этанола (в БЖУ он не входит)
 )
 
 // Result — итог прогона пайплайна калорий.
@@ -281,7 +282,7 @@ func logEggPiecesAmbiguity(dishes []llm.MealItem, log *slog.Logger) {
 }
 
 // sanitizeDishes чистит блюда из vision-ответа: обрезает отрицательные/мусорные числа,
-// выбрасывает пустышки, согласует ккал каждого блюда с 4Б+4У+9Ж (при большом расхождении
+// выбрасывает пустышки, согласует ккал каждого блюда с 4Б+4У+9Ж+7А (при большом расхождении
 // доверяем макросам, а не ккал — их модель оценивает надёжнее) и округляет до 0.1.
 func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 	out := make([]llm.MealItem, 0, len(in))
@@ -294,6 +295,7 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d.ProteinG = clampNonNeg(d.ProteinG, maxDishGrams)
 		d.FatG = clampNonNeg(d.FatG, maxDishGrams)
 		d.CarbG = clampNonNeg(d.CarbG, maxDishGrams)
+		d.AlcoholG = clampNonNeg(d.AlcoholG, maxDishGrams)
 		d.Kcal = clampNonNeg(d.Kcal, maxDishKcal)
 		d.Confidence = clamp01(d.Confidence)
 
@@ -322,8 +324,11 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		}
 
 		// Согласование ккал с макросами: если модель дала явно несогласованную (или
-		// нулевую) калорийность, пересчитываем из БЖУ. В пределах допуска — оставляем.
-		if computed := 4*d.ProteinG + 4*d.CarbG + 9*d.FatG; computed > 0 {
+		// нулевую) калорийность, пересчитываем из БЖУ и спирта. В пределах допуска —
+		// оставляем. Этанол в формуле обязателен: он даёт 7 ккал/г и в БЖУ не входит, так
+		// что без него любой алкоголь схлопывался в свои углеводы (см. skipAlcoholRecalc).
+		computed := 4*d.ProteinG + 4*d.CarbG + 9*d.FatG + kcalPerGramAlc*d.AlcoholG
+		if computed > 0 && !skipAlcoholRecalc(d) {
 			if d.Kcal <= 0 || math.Abs(d.Kcal-computed)/computed > kcalTolerance {
 				d.Kcal = computed
 			}
@@ -340,6 +345,7 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d.ProteinG = round1(d.ProteinG)
 		d.FatG = round1(d.FatG)
 		d.CarbG = round1(d.CarbG)
+		d.AlcoholG = round1(d.AlcoholG)
 		d.Confidence = round2(d.Confidence)
 		out = append(out, d)
 	}
