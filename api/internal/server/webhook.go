@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sostav/api/internal/auth"
 	"github.com/sostav/api/internal/store"
 	"github.com/sostav/api/internal/tg"
 )
@@ -316,8 +317,15 @@ func startGreeting(hasWebApp bool) string {
 // handleStart — приветствие + кнопка открытия mini-app (если задан WEBAPP_URL).
 func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
 	if msg.From != nil {
-		if _, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, ""); err != nil {
+		// Канал посева фиксируем ЗДЕСЬ, при первом касании бота, а не только на входе в
+		// mini-app: по диплинку t.me/бот?start=tg_ovz человек сначала попадает в бот, и
+		// до мини-аппа доходят не все. Кто отвалился на приветствии — тоже пришёл с канала,
+		// и в отчёте по размещению он обязан быть виден.
+		src := startPayload(msg.Text)
+		if _, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src); err != nil {
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
+		} else if src != "" {
+			s.log.Info("webhook: /start с каналом посева", "user_tg", msg.From.ID, "source", src)
 		}
 	}
 	text := startGreeting(s.cfg.WebAppURL != "")
@@ -354,6 +362,34 @@ func isPrivateChat(msg *tgMessage) bool {
 func isStartCommand(text string) bool {
 	t := strings.TrimSpace(text)
 	return t == "/start" || strings.HasPrefix(t, "/start ") || strings.HasPrefix(t, "/start@")
+}
+
+// startPayload вычленяет канал посева из текста команды. Диплинк t.me/бот?start=tg_ovz
+// Telegram доставляет боту обычным сообщением «/start tg_ovz» — другого места, где эту
+// метку можно взять на стороне бота, нет (в mini-app она приходит иначе, в start_param
+// подписанного initData).
+//
+// Возвращает "" для голого «/start», для «/start@бот» без параметра и для всего, что не
+// прошло санитайзинг (auth.SanitizeStartParam). Пустая строка безопасна: апсерт пишет
+// источник через COALESCE и пустым существующий не затирает.
+func startPayload(text string) string {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(text), "/start")
+	if !ok {
+		return ""
+	}
+	switch {
+	case rest == "": // голый «/start» — канала нет
+		return ""
+	case rest[0] == '@': // «/start@имя_бота tg_ovz» — так команда приходит из групп
+		i := strings.IndexAny(rest, " \t\n")
+		if i < 0 {
+			return "" // упоминание бота без параметра
+		}
+		rest = rest[i:]
+	case rest[0] != ' ' && rest[0] != '\t' && rest[0] != '\n':
+		return "" // «/startxyz» — другая команда, а не наша с параметром
+	}
+	return auth.SanitizeStartParam(strings.TrimSpace(rest))
 }
 
 // isStopDigestCommand распознаёт отписку от вечернего итога. Команда /stop_daily — но

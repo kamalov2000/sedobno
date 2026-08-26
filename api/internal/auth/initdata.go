@@ -29,7 +29,20 @@ func StartParam(initData string) string {
 	if err != nil {
 		return ""
 	}
-	p := values.Get("start_param")
+	return SanitizeStartParam(values.Get("start_param"))
+}
+
+// SanitizeStartParam приводит СЫРОЙ канал посева к безопасному виду: алфавит Telegram
+// ([A-Za-z0-9_-]), длина до startParamMax. Что не прошло — пустая строка: лучше не знать
+// канал, чем записать в него мусор.
+//
+// Вынесено из StartParam, потому что каналов входа два и правило для них обязано быть
+// одним: mini-app приносит метку в start_param подписанного initData, а бот — текстом
+// команды «/start tg_ovz» (см. startPayload в webhook.go). Ни тому, ни другому входу
+// не доверяем.
+func SanitizeStartParam(p string) string {
+	// Длиннее потолка — режем, а не отбрасываем: Telegram и так ограничивает payload
+	// 64 символами, так что длинное сюда доехать не должно вовсе.
 	if len(p) > startParamMax {
 		p = p[:startParamMax]
 	}
