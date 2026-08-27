@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { pluralDaysRu } from "../plural";
 import type { Me } from "../types";
 import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
@@ -42,6 +43,19 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
   // лимит задан в Go, и «из 10» в вёрстке врало бы при любой его правке. Старый бэк поля
   // не шлёт — тогда показываем остаток без «из L», а не выдуманное число.
   const activeLimit = meal ? me.free_meal_limit : me.free_scan_limit;
+  // Доступ ограничен ДВУМЯ вещами сразу — сроком недели и потолком проверок, — и
+  // показывать надо оба. Пока висел один счётчик, человек с 29 разборами в запасе не
+  // знал, что послезавтра они всё равно перестанут работать: обещание «29 осталось»
+  // было правдой только наполовину.
+  //
+  // Поля может не быть (старый бэк) — тогда молча показываем прежнюю строку без срока,
+  // а не выдуманное число дней.
+  const trialDays = me.trial_days_left;
+  const showTrialDays = !me.is_subscribed && typeof trialDays === "number" && trialDays > 0;
+  // Неделя кончилась — это ДРУГАЯ причина, чем «выбрал потолок», и текст обязан их
+  // различать: «бесплатные разборы закончились» человеку с нетронутым счётчиком просто
+  // неправда.
+  const trialOver = !me.is_subscribed && me.trial_active === false;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "0 24px", minHeight: 0 }}>
@@ -160,11 +174,26 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           </button>
         ) : outOfActive ? (
           <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-            Бесплатные {leftWord} закончились{activeLimit ? <> (0&nbsp;из&nbsp;{activeLimit})</> : null}. 249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
+            {trialOver ? (
+              <>Неделя полного доступа закончилась.</>
+            ) : (
+              <>Бесплатные {leftWord} закончились{activeLimit ? <> (0&nbsp;из&nbsp;{activeLimit})</> : null}.</>
+            )}{" "}
+            249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
           </div>
         ) : (
-          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)" }}>
-            Осталось {Math.max(0, activeLeft)}{activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
+          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
+            {showTrialDays ? (
+              <>
+                Осталось {pluralDaysRu(trialDays)} доступа&nbsp;· {Math.max(0, activeLeft)}
+                {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
+              </>
+            ) : (
+              <>
+                Осталось {Math.max(0, activeLeft)}
+                {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
+              </>
+            )}
           </div>
         )}
 

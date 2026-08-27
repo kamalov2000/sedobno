@@ -3,6 +3,7 @@ import GrainFilter from "../components/paywall/GrainFilter";
 import Sprig from "../components/paywall/Sprig";
 import LegalLinks from "../components/LegalLinks";
 import type { SubPlan } from "../types";
+import { pluralRu } from "../plural";
 
 // Экран 05 · Пейволл (§14). Единственный экран с бренд-слоем: градиент шалфей/индиго,
 // бумажное зерно, веточка, serif Newsreader. Две карточки тарифов (месяц/год): год —
@@ -32,23 +33,6 @@ interface Props {
   // её рекуррент даёт сам Bot API и от этого флага не зависит.
   sbpRecurrent?: boolean;
   onSbpPay?: (plan: SubPlan) => Promise<void>;
-}
-
-// Русские числительные: «1 приём», «2 приёма», «5 приёмов». Склейка через «приём(ов)»
-// читается как машинный текст, а это экран, где с человеком говорят о деньгах.
-function pluralRu(n: number, one: string, few: string, many: string): string {
-  const m = Math.abs(n) % 100;
-  if (m >= 11 && m <= 14) return many;
-  switch (m % 10) {
-    case 1:
-      return one;
-    case 2:
-    case 3:
-    case 4:
-      return few;
-    default:
-      return many;
-  }
 }
 
 const BENEFITS = [

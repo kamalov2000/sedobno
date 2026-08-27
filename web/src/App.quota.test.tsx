@@ -14,6 +14,8 @@ import type { Me, ScanResult } from "./types";
 //      доходит (текстовое добавление блюда из редактора, второе открытие мини-аппа).
 // Тест на (1) намеренно роняет /api/me: иначе он проходил бы и на сломанном (1).
 
+// Знаменатель берём из фикстуры (30 с моделью недели), в утверждениях ниже
+// сверяем ВХОЖДЕНИЕ счётчика: строку теперь открывает срок доступа.
 const bootMe = { ...makeMe("quota"), scans_left: 5, free_scans_used: 5 };
 const scanOK: ScanResult = { status: "ok", score: 72, flags: [], ingredients: [], scans_left: 4 };
 
@@ -83,11 +85,11 @@ describe("остаток проверок на главном", () => {
     stubTelegram();
     render(<App />);
 
-    expect(await screen.findByText(/Осталось 5 из 10/)).toBeTruthy();
+    expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     await scanFromHome();
     await backHome();
 
-    expect(await screen.findByText(/Осталось 4 из 10/)).toBeTruthy();
+    expect((await screen.findByText(/Осталось/)).textContent).toContain("4 из 30");
   });
 
   it("при возврате на главный перезапрашивает /api/me — списания мимо этой вкладки видны", async () => {
@@ -97,11 +99,11 @@ describe("остаток проверок на главном", () => {
     stubTelegram();
     render(<App />);
 
-    expect(await screen.findByText(/Осталось 5 из 10/)).toBeTruthy();
+    expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     await scanFromHome();
     await backHome();
 
-    expect(await screen.findByText(/Осталось 2 из 10/)).toBeTruthy();
+    expect((await screen.findByText(/Осталось/)).textContent).toContain("2 из 30");
     expect(getMe).toHaveBeenCalled();
   });
 
@@ -109,7 +111,7 @@ describe("остаток проверок на главном", () => {
     stubTelegram();
     render(<App />);
 
-    expect(await screen.findByText(/Осталось 5 из 10/)).toBeTruthy();
+    expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     expect(getMe).not.toHaveBeenCalled();
   });
 });

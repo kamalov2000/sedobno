@@ -64,8 +64,13 @@ export function makeMe(subscription: Subscription = "active", goal: Goal = "lose
   const base = {
     free_scans_used: 2,
     free_meals_used: 2,
-    free_scan_limit: 10,
-    free_meal_limit: 10,
+    free_scan_limit: 30,
+    free_meal_limit: 30,
+    // Неделя полного доступа (модель с 27.08.2026). У подписчика ветки ниже её
+    // перекрывают — ему срок не показывают вовсе.
+    trial_active: true,
+    trial_days_left: 6,
+    trial_expires_at: "2026-09-03T08:04:05Z",
     sbp_available: true,
     sbp_recurrent: true,
     nutrition_profile: makeProfile(goal),

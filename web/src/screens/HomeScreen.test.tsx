@@ -83,11 +83,13 @@ describe("счётчик бесплатных проверок", () => {
     );
 
   it("берёт знаменатель из API, а не из константы", () => {
+    // Строку с 27.08.2026 открывает срок недели, поэтому сверяем ВХОЖДЕНИЕ счётчика,
+    // а не всю строку целиком: проверяем знаменатель, а не порядок слов.
     render7of12("scan");
-    expect(screen.getByText(/Осталось 7 из 12 проверок/)).toBeTruthy();
+    expect(screen.getByText(/Осталось/).textContent).toContain("7 из 12 проверок");
     cleanup();
     render7of12("meal");
-    expect(screen.getByText(/Осталось 7 из 12 разборов еды/)).toBeTruthy();
+    expect(screen.getByText(/Осталось/).textContent).toContain("7 из 12 разборов еды");
   });
 
   it("без поля с бэка показывает остаток без выдуманного знаменателя", () => {
@@ -104,8 +106,10 @@ describe("счётчик бесплатных проверок", () => {
         onDiary={noop}
       />,
     );
-    expect(screen.getByText(/Осталось 7\s+проверок/)).toBeTruthy();
-    expect(screen.queryByText(/из 10/)).toBeNull();
+    const line = screen.getByText(/Осталось/).textContent ?? "";
+    expect(line).toMatch(/7\s+проверок/);
+    // Знаменателя нет — и выдумывать его нельзя. «из 30» тут взяться неоткуда.
+    expect(line).not.toMatch(/из \d+ проверок/);
   });
 
   it("на исчерпанной квоте знаменатель тоже из API", () => {
@@ -168,5 +172,74 @@ describe("серия на главном", () => {
     );
     fireEvent.click(screen.getByText("5 дн. подряд"));
     expect(onDiary).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Доступ ограничен ДВУМЯ вещами сразу: сроком недели и потолком проверок. Пока на
+// главном висел только счётчик, человек с полным запасом разборов не знал, что через
+// два дня они всё равно перестанут работать. Одно ограничение на экране — половина
+// правды, и именно её и надо удерживать тестом.
+describe("HomeScreen — видно оба ограничения доступа", () => {
+  for (const mode of ["meal", "scan"] as const) {
+    it(`режим «${mode}»: показывает и срок недели, и остаток проверок`, () => {
+      renderHome(mode, { mealsLeft: 29 });
+      const line = screen.getByText(/Осталось/);
+      expect(line.textContent).toContain("6 дней доступа");
+      expect(line.textContent).toMatch(/из 30/);
+    });
+  }
+
+  it("склоняет дни: «1 день», а не «1 дней»", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, meals_left: 5, trial_days_left: 1 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.getByText(/Осталось/).textContent).toContain("1 день доступа");
+  });
+
+  it("подписчику срок триала не показывают — у него его нет", () => {
+    const me = makeMe("active");
+    render(
+      <HomeScreen
+        me={me}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.queryByText(/дней доступа/)).toBeNull();
+    expect(screen.getByText("Подписка активна")).toBeTruthy();
+  });
+
+  it("кончилась НЕДЕЛЯ — так и написано, а не «разборы закончились»", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, meals_left: 0, trial_active: false, trial_days_left: 0 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.getByText(/Неделя полного доступа закончилась/)).toBeTruthy();
+  });
+
+  it("кончился ПОТОЛОК внутри недели — текст про проверки, а не про неделю", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, meals_left: 0, trial_active: true, trial_days_left: 3 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.getByText(/Бесплатные разборов еды закончились|Бесплатные .* закончились/)).toBeTruthy();
+    expect(screen.queryByText(/Неделя полного доступа закончилась/)).toBeNull();
   });
 });
