@@ -13,8 +13,6 @@ import (
 
 // Лимиты и сроки (§8, §9).
 const (
-	freeScanLimit  = 10               // бесплатных сканов навсегда на telegram_id
-	freeMealLimit  = 10               // бесплатных разборов еды навсегда (модуль калорий, отдельно от сканов)
 	jwtTTL         = 30 * time.Minute // короткий JWT; фронт делает silent re-auth по 401
 	initDataMaxAge = 24 * time.Hour   // предельная давность Telegram initData
 )
@@ -43,6 +41,14 @@ type meView struct {
 	// Тот же приём, что у water_goal_ml и meal_budgets — норму знает сервер, не клиент.
 	FreeScanLimit int `json:"free_scan_limit"`
 	FreeMealLimit int `json:"free_meal_limit"`
+	// TrialExpiresAt/TrialDaysLeft/TrialActive — неделя полного доступа (модель с
+	// 27.08.2026). Фронт по ним решает, что показать: счётчик дней на главном, экран
+	// пейволла с личными числами или ничего (у подписчика). Дату отдаём саму, а не
+	// только «дней осталось»: часовой пояс клиента наш сервер не знает, и округлять
+	// сутки правильнее там, где известно местное время.
+	TrialExpiresAt *time.Time `json:"trial_expires_at,omitempty"`
+	TrialDaysLeft  int        `json:"trial_days_left"`
+	TrialActive    bool       `json:"trial_active"`
 	// Streak — серия дней с записями в дневнике. Здесь, а не только в ответе дневника:
 	// причина вернуться завтра должна быть видна на ГЛАВНОМ экране, а не в разделе, куда
 	// надо догадаться зайти. Опущена при нулевой серии — показывать «0 дней» незачем.
@@ -170,26 +176,33 @@ func (s *Server) devAuth(w http.ResponseWriter, r *http.Request, devUserID int64
 // безлимит (-1). Дату окончания подписки тянет из subscriptions (best-effort — при
 // ошибке чтения просто не отдаём поле, ответ не роняем).
 func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
-	left := -1
-	mealsLeft := -1
-	if !u.IsSubscribed {
-		left = freeScanLimit - u.FreeScansUsed
-		if left < 0 {
-			left = 0
-		}
-		mealsLeft = freeMealLimit - u.FreeMealsUsed
-		if mealsLeft < 0 {
-			mealsLeft = 0
-		}
+	// Остатки берём у ТОГО ЖЕ checkAccess, что решает пускать или нет: иначе интерфейс
+	// и хендлер начинают отвечать по-разному, и человек видит «осталось 3» на кнопке,
+	// которая отвечает пейволлом.
+	now := time.Now()
+	scanAcc := checkAccess(u, accessScan, now)
+	mealAcc := checkAccess(u, accessMeal, now)
+	left, mealsLeft := scanAcc.Left, mealAcc.Left
+	if left < 0 && !u.IsSubscribed {
+		left = 0 // отказ (срок или потолок) — остаток ноль, а не «безлимит»
+	}
+	if mealsLeft < 0 && !u.IsSubscribed {
+		mealsLeft = 0
 	}
 	v := meView{
 		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
-		FreeScanLimit: freeScanLimit, FreeMealLimit: freeMealLimit,
+		FreeScanLimit: trialScanLimit, FreeMealLimit: trialMealLimit,
+		TrialDaysLeft:      trialDaysLeft(u, now),
+		TrialActive:        !u.IsSubscribed && mealAcc.TrialActive,
 		IsSubscribed:       u.IsSubscribed,
 		DailyDigestEnabled: u.DigestEnabled,
 		SBPAvailable:       s.cfg.SBPEnabled,
 		SBPRecurrent:       s.cfg.SBPRecurrentEnabled,
+	}
+	if !u.IsSubscribed {
+		exp := u.TrialExpiresAt
+		v.TrialExpiresAt = &exp
 	}
 	if u.IsSubscribed {
 		if sub, err := s.store.CurrentSubscription(ctx, u.ID); err != nil {

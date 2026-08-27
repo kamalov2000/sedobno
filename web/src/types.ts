@@ -61,6 +61,12 @@ export interface Me {
    *  рисуется по нему. Нет поля (старый бэк) — тумблер не показываем вовсе. */
   daily_digest_enabled?: boolean;
   is_subscribed: boolean;
+  /** Неделя полного доступа (модель с 27.08.2026). trial_active — идёт ли она сейчас;
+   *  trial_days_left — сколько полных суток осталось (округление вверх, в последний день
+   *  «1», а не «0»); trial_expires_at — сама дата, RFC3339. У подписчика даты нет. */
+  trial_active?: boolean;
+  trial_days_left?: number;
+  trial_expires_at?: string;
   subscription_expires_at?: string; // RFC3339, omitempty
   sbp_available: boolean; // включён ли канал оплаты СБП/картой (§14.1) — показ второй кнопки пейволла
   sbp_recurrent: boolean; // сохраняет ли канал СБП/карта способ оплаты для автопродления — решает текст дисклеймера пейволла

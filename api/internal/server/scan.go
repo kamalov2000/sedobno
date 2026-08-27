@@ -109,8 +109,8 @@ type scanResponse struct {
 	// знака «≈» в калориях. Совпали прочтения — поля нет (норма не объявляется).
 	ScoreApproximate bool               `json:"score_approximate,omitempty"`
 	Nutrition        *scanNutritionView `json:"nutrition,omitempty"`
-	Explanation   string             `json:"explanation,omitempty"`
-	Message       string             `json:"message,omitempty"`
+	Explanation      string             `json:"explanation,omitempty"`
+	Message          string             `json:"message,omitempty"`
 	// ProductName — название продукта с упаковки. Пусто — не прочиталось (нормальный
 	// исход: на кадре мог быть только оборот). Интерфейс подписывает им результат, а
 	// при уходе в дневник — предзаполняет им название приёма.
@@ -253,11 +253,9 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
-	if !u.IsSubscribed && u.FreeScansUsed >= freeScanLimit {
-		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", nil)
-		writeJSON(w, http.StatusPaymentRequired, map[string]any{
-			"error": "limit_reached", "message": "бесплатные сканы закончились", "scans_left": 0,
-		})
+	if acc := checkAccess(u, accessScan, time.Now()); !acc.Allowed {
+		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", map[string]any{"reason": acc.Reason})
+		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "scans_left"))
 		return
 	}
 
@@ -333,14 +331,14 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		})
 
 	default: // ok — списываем одну попытку атомарно
-		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, freeScanLimit)
+		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, trialScanLimit)
 		if cerr != nil {
 			s.log.Error("scan: списание лимита", "err", cerr, "user", u.ID)
 		}
 		left := -1 // подписчик: безлимит
 		if !u.IsSubscribed {
 			if charged {
-				left = freeScanLimit - newUsed
+				left = trialScanLimit - newUsed
 			} else {
 				left = 0 // гонка увела за лимит между пре-чеком и списанием
 			}
@@ -389,8 +387,8 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 		LowConfidence:    res.LowConfidence,
 		ScoreApproximate: res.ScoreApproximate,
 		Nutrition:        nutritionView(res.Nutrition),
-		ProductName:   res.ProductName,
-		Explanation:   res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
+		ProductName:      res.ProductName,
+		Explanation:      res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
 }
 
@@ -408,11 +406,10 @@ func nutritionView(n *llm.Nutrition) *scanNutritionView {
 
 // remainingScans — остаток бесплатных сканов без списания (подписчик → -1).
 func remainingScans(u store.User) int {
-	if u.IsSubscribed {
-		return -1
-	}
-	if left := freeScanLimit - u.FreeScansUsed; left > 0 {
-		return left
+	// Через тот же checkAccess, что и гейт: остаток на экране обязан сходиться с тем,
+	// пустит ли кнопка. Кончился СРОК — остаток ноль, сколько бы сканов ни осталось.
+	if acc := checkAccess(u, accessScan, time.Now()); acc.Left > 0 || acc.Left == -1 {
+		return acc.Left
 	}
 	return 0
 }

@@ -283,12 +283,20 @@ func TestStartGreeting_CoversBothScenarios(t *testing.T) {
 	}
 }
 
-// Числа бесплатных проверок в приветствии обязаны идти из констант, а не из литералов:
-// иначе правка freeScanLimit молча делает первое сообщение бота лживым.
-func TestStartGreeting_QuotaFromConstants(t *testing.T) {
+// Срок бесплатного доступа в приветствии обязан идти из константы, а не из литерала:
+// иначе правка trialDays молча делает первое сообщение бота лживым. На смене модели
+// (10 проверок навсегда → неделя полного доступа) этот тест и ловит забытый текст.
+func TestStartGreeting_TrialFromConstants(t *testing.T) {
 	text := startGreeting(true)
-	want := fmt.Sprintf("%d проверок составов и %d разборов еды", freeScanLimit, freeMealLimit)
+	want := fmt.Sprintf("Первые %d дней", trialDays)
 	if !strings.Contains(text, want) {
 		t.Fatalf("в приветствии нет «%s»:\n%s", want, text)
+	}
+	// Прежняя модель не должна пережить смену: «10 проверок» в приветствии означало бы,
+	// что человек услышал обещание, которого продукт больше не даёт.
+	for _, stale := range []string{"10 проверок", "10 разборов", "Бесплатно:"} {
+		if strings.Contains(text, stale) {
+			t.Errorf("в приветствии осталась старая модель («%s»):\n%s", stale, text)
+		}
 	}
 }

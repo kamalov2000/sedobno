@@ -23,6 +23,7 @@ import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
+import type { PaywallReason } from "./api";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
@@ -62,6 +63,9 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [bootError, setBootError] = useState<string>("");
   const [view, setView] = useState<View>("home");
+  // Причина стены: её приносит ответ 402. Экран пейволла по ней меняет заголовок —
+  // «неделя прошла» и «упёрся в потолок» это разные положения человека.
+  const [paywallReason, setPaywallReason] = useState<PaywallReason>("trial_expired");
   const [mode, setMode] = useState<HomeMode>("scan"); // режим главного экрана: состав | калории
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
@@ -199,6 +203,7 @@ export default function App() {
       const outcome = await analyzeMeal(files);
       if (outcome.kind === "paywall") {
         applyMealsLeft(0);
+        setPaywallReason(outcome.reason);
         setView("paywall");
         return;
       }
@@ -259,6 +264,7 @@ export default function App() {
       const outcome = await scanPhoto(files);
       if (outcome.kind === "paywall") {
         applyScansLeft(0);
+        setPaywallReason(outcome.reason);
         setView("paywall");
         return;
       }
@@ -665,8 +671,9 @@ export default function App() {
             setTextMeal(data);
             setView("meal_manual");
           }}
-          onPaywall={() => {
+          onPaywall={(reason) => {
             applyMealsLeft(0);
+            setPaywallReason(reason);
             setView("paywall");
           }}
           onManual={() => {
@@ -719,7 +726,19 @@ export default function App() {
         />
       )}
       {view === "paywall" && (
-        <PaywallScreen onPay={onPay} onDismiss={() => setView("home")} sbpAvailable={me?.sbp_available ?? false} sbpRecurrent={me?.sbp_recurrent ?? false} onSbpPay={onSbpPay} />
+        <PaywallScreen
+          onPay={onPay}
+          onDismiss={() => setView("home")}
+          reason={paywallReason}
+          // Числа за неделю берём из /api/me: это те же счётчики, по которым сервер
+          // принимает решение о доступе, — расхождению взяться неоткуда.
+          mealsUsed={me?.free_meals_used ?? 0}
+          scansUsed={me?.free_scans_used ?? 0}
+          freeLimit={me?.free_meal_limit}
+          sbpAvailable={me?.sbp_available ?? false}
+          sbpRecurrent={me?.sbp_recurrent ?? false}
+          onSbpPay={onSbpPay}
+        />
       )}
       {view === "subscription" && me && (
         <SubscriptionScreen

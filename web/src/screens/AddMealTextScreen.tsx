@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { MealResult } from "../types";
 import { analyzeMealText as analyzeMealTextApi } from "../api";
+import type { PaywallReason } from "../api";
 import { MEAL_TEXT_EXAMPLES } from "../meal";
 import DishTextInput from "../components/DishTextInput";
 import { haptic, notify } from "../telegram";
@@ -21,7 +22,8 @@ interface Props {
   /** Оценка получена — открыть её в редакторе приёма. */
   onAnalyzed: (result: MealResult) => void;
   /** Бесплатные разборы кончились: это платный вызов модели, как и фото. */
-  onPaywall: () => void;
+  /** Причину стены прокидываем наверх: экран пейволла по ней меняет заголовок. */
+  onPaywall: (reason: PaywallReason) => void;
   /** Запасной путь — вписать калорийность цифрами (без модели и без квоты). */
   onManual: () => void;
   /** Заготовка описания. Приходит со скана, у которого не прочиталось КБЖУ: название
@@ -44,7 +46,7 @@ export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onMan
     try {
       const out = await analyze(text);
       if (out.kind === "paywall") {
-        onPaywall();
+        onPaywall(out.reason);
         return;
       }
       if (out.kind === "error") {

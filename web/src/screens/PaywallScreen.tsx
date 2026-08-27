@@ -13,6 +13,15 @@ const PRICE_YEAR_RUB = 2490;
 
 interface Props {
   freeLimit?: number;
+  /** Причина стены: неделя вышла («trial_expired») или выбран потолок внутри недели
+   *  («trial_quota»). Экраны разные по смыслу — склеивать их в «лимит исчерпан» нельзя:
+   *  человек, упёршийся в потолок на третий день, и человек, у которого прошла неделя,
+   *  находятся в разных ситуациях. */
+  reason?: "trial_expired" | "trial_quota";
+  /** Его собственные числа за неделю. Убеждает не текст про пользу, а уже полученная
+   *  польза: «ты разобрал 12 приёмов» — факт, который человек может проверить сам. */
+  mealsUsed?: number;
+  scansUsed?: number;
   onPay: () => Promise<void>; // Stars — только месяц (Bot API: рекуррентный период 30д)
   onDismiss: () => void;
   // Канал СБП/карта (§14.1). Без него доступен только месяц через Stars (год скрыт).
@@ -25,13 +34,40 @@ interface Props {
   onSbpPay?: (plan: SubPlan) => Promise<void>;
 }
 
+// Русские числительные: «1 приём», «2 приёма», «5 приёмов». Склейка через «приём(ов)»
+// читается как машинный текст, а это экран, где с человеком говорят о деньгах.
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const m = Math.abs(n) % 100;
+  if (m >= 11 && m <= 14) return many;
+  switch (m % 10) {
+    case 1:
+      return one;
+    case 2:
+    case 3:
+    case 4:
+      return few;
+    default:
+      return many;
+  }
+}
+
 const BENEFITS = [
   { icon: "ti-flame", text: "Разборы калорий и КБЖУ по фото" },
   { icon: "ti-list-check", text: "Проверка составов и оценка добавок" },
   { icon: "ti-notebook", text: "Дневник, неделя и шер-карточки" },
 ];
 
-export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAvailable = false, sbpRecurrent = false, onSbpPay }: Props) {
+export default function PaywallScreen({
+  freeLimit = 30,
+  reason = "trial_expired",
+  mealsUsed = 0,
+  scansUsed = 0,
+  onPay,
+  onDismiss,
+  sbpAvailable = false,
+  sbpRecurrent = false,
+  onSbpPay,
+}: Props) {
   const [plan, setPlan] = useState<SubPlan>("monthly");
   const [busy, setBusy] = useState(false); // Stars
   const [busySbp, setBusySbp] = useState(false);
@@ -79,7 +115,7 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
               borderRadius: 99,
             }}
           >
-            ПРОВЕРОК: 0 ИЗ {freeLimit}
+            {reason === "trial_quota" ? `РАЗБОРОВ: ${freeLimit} ИЗ ${freeLimit}` : "НЕДЕЛЯ ДОСТУПА ПРОЙДЕНА"}
           </span>
           <div
             lang="ru"
@@ -94,8 +130,29 @@ export default function PaywallScreen({ freeLimit = 10, onPay, onDismiss, sbpAva
               textWrap: "balance",
             }}
           >
-            Безлимит на разборы еды и составы
+            {reason === "trial_quota" ? "Разборы на этой неделе закончились" : "Неделя закончилась"}
           </div>
+          {/* Его собственный след за неделю. Показываем только непустое: «0 приёмов»
+              на экране оплаты — упрёк, а не аргумент. */}
+          {(mealsUsed > 0 || scansUsed > 0) && (
+            <div
+              style={{
+                marginTop: 12,
+                fontSize: 13.5,
+                lineHeight: 1.45,
+                color: "var(--brand-ink-soft)",
+                maxWidth: 260,
+              }}
+            >
+              За неделю ты {[
+                mealsUsed > 0 ? `разобрал ${mealsUsed} ${pluralRu(mealsUsed, "приём", "приёма", "приёмов")}` : null,
+                scansUsed > 0 ? `проверил ${scansUsed} ${pluralRu(scansUsed, "состав", "состава", "составов")}` : null,
+              ]
+                .filter(Boolean)
+                .join(" и ")}
+              .
+            </div>
+          )}
         </div>
       </div>
 

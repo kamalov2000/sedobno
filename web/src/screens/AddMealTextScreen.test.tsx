@@ -58,15 +58,17 @@ describe("AddMealTextScreen — текстовое добавление приё
     expect(onAnalyzed).not.toHaveBeenCalled();
   });
 
-  it("исчерпанная квота ведёт на пейволл: это платный вызов модели", async () => {
-    const analyze = vi.fn(async (): Promise<MealOutcome> => ({ kind: "paywall" }));
+  it("исчерпанная квота ведёт на пейволл с причиной: это платный вызов модели", async () => {
+    const analyze = vi.fn(async (): Promise<MealOutcome> => ({ kind: "paywall", reason: "trial_expired" }));
     const onPaywall = vi.fn();
     render(<AddMealTextScreen onBack={noop} onAnalyzed={noop} onPaywall={onPaywall} onManual={noop} analyze={analyze} />);
 
     fireEvent.change(screen.getByLabelText("Описание приёма"), { target: { value: "борщ, тарелка" } });
     fireEvent.click(screen.getByText("Оценить"));
 
-    await waitFor(() => expect(onPaywall).toHaveBeenCalled());
+    // Причина обязана доехать до экрана: без неё пейволл покажет «неделя прошла»
+    // тому, кто на третий день упёрся в потолок разборов.
+    await waitFor(() => expect(onPaywall).toHaveBeenCalledWith("trial_expired"));
   });
 
   it("пример подставляется тапом, запасной путь ведёт в ручной ввод", () => {

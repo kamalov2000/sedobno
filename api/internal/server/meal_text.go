@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sostav/api/internal/meal"
+	"time"
 )
 
 // Границы описания. Минимум — чтобы «а» и пустая строка не уходили в модель; максимум —
@@ -76,11 +77,10 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
-	if !u.IsSubscribed && u.FreeMealsUsed >= freeMealLimit {
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", map[string]any{"entry": "text"})
-		writeJSON(w, http.StatusPaymentRequired, map[string]any{
-			"error": "limit_reached", "message": "бесплатные разборы еды закончились", "meals_left": 0,
-		})
+	if acc := checkAccess(u, accessMeal, time.Now()); !acc.Allowed {
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown",
+			map[string]any{"entry": "text", "reason": acc.Reason})
+		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
 		return
 	}
 
@@ -116,14 +116,14 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 
 	// ok — списываем попытку (модель отработала), приём НЕ сохраняем: его создаст клиент,
 	// когда пользователь подтвердит («В дневник» → POST /meals source=text или PATCH).
-	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, freeMealLimit)
+	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, trialMealLimit)
 	if cerr != nil {
 		s.log.Error("meal-text: списание лимита", "err", cerr, "user", u.ID)
 	}
 	left := -1
 	if !u.IsSubscribed {
 		if charged {
-			left = freeMealLimit - newUsed
+			left = trialMealLimit - newUsed
 		} else {
 			left = 0
 		}

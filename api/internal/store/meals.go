@@ -19,7 +19,7 @@ import (
 func (s *Store) ChargeFreeMeal(ctx context.Context, id int64, limit int) (used int, charged bool, err error) {
 	const q = `
 UPDATE users SET free_meals_used = free_meals_used + 1
-WHERE id = $1 AND is_subscribed = false AND free_meals_used < $2
+WHERE id = $1 AND is_subscribed = false AND free_meals_used < $2 AND now() < trial_expires_at
 RETURNING free_meals_used`
 	err = s.pool.QueryRow(ctx, q, id, limit).Scan(&used)
 	if err == pgx.ErrNoRows {

@@ -105,9 +105,25 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * - error: прочие ошибки (напр. 502 scan_failed) с человекочитаемым сообщением.
  * 429 (перегрузка §15) обрабатывается внутри — ретраи с бэкоффом по Retry-After.
  */
+/** Причина стены. «trial_expired» — прошла неделя полного доступа; «trial_quota» —
+ *  внутри недели выбран потолок разборов/сканов. Экран пейволла по ней меняет заголовок:
+ *  это два разных положения человека, и одинаковый текст врал бы одному из них. */
+export type PaywallReason = "trial_expired" | "trial_quota";
+
+/** Читает причину из тела 402. Тело может не разобраться (старый бэк, прокси-заглушка) —
+ *  тогда молча считаем, что кончилась неделя: это исход по умолчанию. */
+async function paywallReason(res: Response): Promise<PaywallReason> {
+  try {
+    const body = await res.clone().json();
+    return body?.reason === "trial_quota" ? "trial_quota" : "trial_expired";
+  } catch {
+    return "trial_expired";
+  }
+}
+
 export type ScanOutcome =
   | { kind: "result"; data: ScanResult }
-  | { kind: "paywall" }
+  | { kind: "paywall"; reason: PaywallReason }
   | { kind: "error"; message: string };
 
 /**
@@ -162,7 +178,7 @@ export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
     for (const f of files) form.append("photo", f);
     const res = await apiFetch("/api/scan", { method: "POST", body: form });
 
-    if (res.status === 402) return { kind: "paywall" };
+    if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
     if (res.status === 429 && attempt < maxBusyRetries) {
       const retryAfter = Number(res.headers.get("Retry-After")) || 3;
@@ -181,7 +197,7 @@ export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
 /** Результат разбора фото еды для UI (зеркалит ScanOutcome сканера). */
 export type MealOutcome =
   | { kind: "result"; data: MealResult }
-  | { kind: "paywall" }
+  | { kind: "paywall"; reason: PaywallReason }
   | { kind: "error"; message: string };
 
 /** POST /api/meals — разбор фото приёма. Тот же паттерн, что scanPhoto: FormData поле
@@ -193,7 +209,7 @@ export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
     for (const f of files) form.append("photo", f);
     const res = await apiFetch("/api/meals", { method: "POST", body: form });
 
-    if (res.status === 402) return { kind: "paywall" };
+    if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
     if (res.status === 429 && attempt < maxBusyRetries) {
       const retryAfter = Number(res.headers.get("Retry-After")) || 3;
@@ -221,7 +237,7 @@ export async function analyzeMealText(text: string): Promise<MealOutcome> {
       body: JSON.stringify({ text }),
     });
 
-    if (res.status === 402) return { kind: "paywall" };
+    if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
     if (res.status === 429 && attempt < maxBusyRetries) {
       const retryAfter = Number(res.headers.get("Retry-After")) || 3;

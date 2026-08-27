@@ -29,7 +29,10 @@ type User struct {
 	// FreeMealsUsed — счётчик бесплатной квоты модуля калорий (feature/calories),
 	// независимый от FreeScansUsed. Премиум (IsSubscribed) даёт безлимит на оба.
 	FreeMealsUsed int
-	IsSubscribed  bool
+	// TrialExpiresAt — конец недели полного доступа (модель с 27.08.2026). Решение о
+	// доступе принимает server.checkAccess, здесь только данные.
+	TrialExpiresAt time.Time
+	IsSubscribed   bool
 	// DigestEnabled — включён ли вечерний итог дня. Читается вместе с остальным
 	// пользователем, а не отдельным запросом: /api/me зовётся часто, и лишний
 	// round-trip ради одного булева здесь не нужен.
@@ -46,21 +49,21 @@ VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
 ON CONFLICT (telegram_id) DO UPDATE
   SET username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
       acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source)
-RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled`
+RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at`
 	var u User
 	err := s.pool.QueryRow(ctx, q, tgID, username, acquisitionSource).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt)
 	return u, err
 }
 
 // GetUserByID читает пользователя по внутреннему id (пре-чек лимита в /api/scan).
 func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	const q = `
-SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled
+SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at
 FROM users WHERE id = $1`
 	var u User
 	err := s.pool.QueryRow(ctx, q, id).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt)
 	return u, err
 }
 
@@ -71,7 +74,7 @@ FROM users WHERE id = $1`
 func (s *Store) ChargeFreeScan(ctx context.Context, id int64, limit int) (used int, charged bool, err error) {
 	const q = `
 UPDATE users SET free_scans_used = free_scans_used + 1
-WHERE id = $1 AND is_subscribed = false AND free_scans_used < $2
+WHERE id = $1 AND is_subscribed = false AND free_scans_used < $2 AND now() < trial_expires_at
 RETURNING free_scans_used`
 	err = s.pool.QueryRow(ctx, q, id, limit).Scan(&used)
 	if err == pgx.ErrNoRows {
