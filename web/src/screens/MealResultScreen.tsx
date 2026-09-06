@@ -658,6 +658,17 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             <i className="ti ti-chevron-right" aria-hidden="true" style={{ fontSize: 16, color: "var(--text3)", flex: "none" }} />
           </button>
         )}
+        {/* Свежий разбор в дневник ещё НЕ попал, и по экрану это никак не читалось: цифры
+            посчитаны, всё выглядит готовым. Живой случай 06.09 — человек девять раз ввёл
+            еду словами, а в дневник у него лёг один приём: он жал «Отправить»/«В историю»
+            и уходил, потеряв восемь расчётов. Потом написал, что в приложении его часов
+            «нужно писать — и всё хорошо и понятно». Он прав: у нас был невидимый шаг. */}
+        {!isSaved && (
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, fontSize: 12.5, color: "var(--text3)", lineHeight: 1.4 }}>
+            <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: 15, flex: "none" }} />
+            <span>Пока не в дневнике — нажмите «В дневник», чтобы сохранить</span>
+          </div>
+        )}
         <button
           type="button"
           disabled={busy || blocked}

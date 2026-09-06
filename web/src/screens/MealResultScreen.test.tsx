@@ -782,3 +782,35 @@ describe("призыв посчитать норму", () => {
     expect(screen.queryByText("Посчитать мою норму")).toBeNull();
   });
 });
+
+// Свежий разбор в дневник ещё не попал, и раньше по экрану это не читалось: цифры
+// посчитаны, вид готовый. 06.09 человек девять раз ввёл еду словами и получил в дневнике
+// один приём — он делился карточкой и уходил, теряя расчёт. Состояние обязано быть видно.
+describe("MealResultScreen — видно, что приём ещё не в дневнике", () => {
+  it("на свежем разборе говорит, что он не сохранён", () => {
+    render(
+      <MealResultScreen
+        result={makeMealResult()}
+        isSubscribed={false}
+        onDone={noop}
+        onRetake={noop}
+      />,
+    );
+    expect(screen.getByText(/Пока не в дневнике/)).toBeTruthy();
+    expect(screen.getByText("В дневник")).toBeTruthy();
+  });
+
+  it("у сохранённого приёма этой строки нет — он уже там", () => {
+    const saved = makeMealHistory().items[0];
+    render(
+      <MealResultScreen
+        result={makeMealResult()}
+        isSubscribed={false}
+        saved={saved}
+        onDone={noop}
+        onRetake={noop}
+      />,
+    );
+    expect(screen.queryByText(/Пока не в дневнике/)).toBeNull();
+  });
+});
