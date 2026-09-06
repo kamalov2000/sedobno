@@ -28,7 +28,16 @@ type Config struct {
 	TelegramAPIBase       string // база Bot API (default https://api.telegram.org); переопределяется в тестах
 	TelegramWebhookSecret string // ожидаемое значение X-Telegram-Bot-Api-Secret-Token (§8, вебхук)
 	FeedbackChatID        int64  // chat_id владельца для форвардинга обратной связи (§8)
-	WebAppURL             string // https-URL mini-app для кнопки в /start (обязателен на проде)
+	// SupportContact — @username, который бот даёт человеку сразу после обращения, чтобы
+	// тот мог написать владельцу ЛИЧНО. Пусто — контакт не показываем (прежнее поведение).
+	//
+	// Зачем: ответ через поддержку доезжает тем быстрее, чем короче цепочка, а она была
+	// длинной (человек → уведомление в группу → владелец заметил → ответ руками через
+	// Bot API). Замер 06.09: один написал и получил ответ через 14 часов, к тому моменту
+	// он уже перестал пользоваться продуктом — его последнее действие было ЗА ДВЕ МИНУТЫ
+	// до обращения. Прямая личка убирает из цепочки всё лишнее.
+	SupportContact string
+	WebAppURL      string // https-URL mini-app для кнопки в /start (обязателен на проде)
 
 	LLMProvider     string // выбор провайдера vision/LLM: groq|openai|anthropic|mock
 	GroqAPIKey      string // ключ Groq (основной провайдер)
@@ -115,13 +124,13 @@ type Config struct {
 	// пуст, подписка живёт до конца оплаченного периода — ровно грандфатеринг оферты.
 	SBPRecurrentEnabled bool
 	SBPPriceRub         int          // цена месячной подписки в рублях (default 249, как на пейволле)
-	SBPAnnualPriceRub int          // цена годовой подписки в рублях (default 2490; только СБП/карта)
-	YooKassaShopID    string       // shopId для Basic-auth к API ЮKassa
-	YooKassaSecretKey string       // секретный ключ для Basic-auth к API ЮKassa
-	YooKassaAPIBase   string       // база API ЮKassa (default https://api.yookassa.ru/v3; стаб в тестах)
-	LandingURL        string       // ReturnURL: куда ЮKassa вернёт браузер после оплаты
-	LandingLinkSecret string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
-	YooKassaAllowlist []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
+	SBPAnnualPriceRub   int          // цена годовой подписки в рублях (default 2490; только СБП/карта)
+	YooKassaShopID      string       // shopId для Basic-auth к API ЮKassa
+	YooKassaSecretKey   string       // секретный ключ для Basic-auth к API ЮKassa
+	YooKassaAPIBase     string       // база API ЮKassa (default https://api.yookassa.ru/v3; стаб в тестах)
+	LandingURL          string       // ReturnURL: куда ЮKassa вернёт браузер после оплаты
+	LandingLinkSecret   string       // DEPRECATED: путь оплаты идёт mini-app → ЮKassa напрямую; не используется
+	YooKassaAllowlist   []*net.IPNet // доверенные сети вебхука ЮKassa (IP-allowlist, §14.1)
 
 	// AppEnv — маркер окружения: "dev" разрешает dev-инструменты (обход авторизации),
 	// любое другое значение (и пустое) трактуется как прод — БЕЗОПАСНЫЙ ДЕФОЛТ: боевой
@@ -227,8 +236,8 @@ func MustLoad() *Config {
 		OpenAIVisionModel: opt("OPENAI_VISION_MODEL", "gpt-4o-mini"),
 		OpenAITextModel:   opt("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
 
-		AnthropicBaseURL:     opt("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-		AnthropicVersion:     opt("ANTHROPIC_VERSION", "2023-06-01"),
+		AnthropicBaseURL: opt("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+		AnthropicVersion: opt("ANTHROPIC_VERSION", "2023-06-01"),
 		// Sonnet ВЕЗДЕ (решение владельца 06.08.2026): Haiku больше не используется ни в
 		// сканере, ни в модуле калорий. Дефолт, а не переменная в прод-.env, — чтобы Haiku
 		// не вернулся при пересоздании окружения. Следствие: обе «сильные» модели совпадают
@@ -293,6 +302,14 @@ func MustLoad() *Config {
 		} else {
 			cfg.FeedbackChatID = id
 		}
+	}
+
+	// SUPPORT_CONTACT — необязателен. Нормализуем к виду «@name»: в .env его напишут и
+	// с собакой, и без, и ссылкой — а в сообщении человеку он должен быть кликабельным.
+	if c := strings.TrimSpace(opt("SUPPORT_CONTACT", "")); c != "" {
+		c = strings.TrimPrefix(c, "https://t.me/")
+		c = strings.TrimPrefix(c, "t.me/")
+		cfg.SupportContact = "@" + strings.TrimPrefix(c, "@")
 	}
 
 	priceRaw := req("SUBSCRIPTION_STARS_PRICE")

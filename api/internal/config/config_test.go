@@ -137,3 +137,23 @@ func TestMustLoad_RequiresSelectedProviderKey(t *testing.T) {
 	}()
 	MustLoad()
 }
+
+// SUPPORT_CONTACT нормализуется к кликабельному «@name»: в .env его пишут и с собакой,
+// и без, и целой ссылкой, а в сообщении человеку он должен быть ссылкой на профиль.
+func TestSupportContactНормализация(t *testing.T) {
+	cases := map[string]string{
+		"kamalovTG":              "@kamalovTG",
+		"@kamalovTG":             "@kamalovTG",
+		"t.me/kamalovTG":         "@kamalovTG",
+		"https://t.me/kamalovTG": "@kamalovTG",
+		"  @kamalovTG  ":         "@kamalovTG",
+		"":                       "",
+	}
+	for in, want := range cases {
+		requiredEnv(t)
+		t.Setenv("SUPPORT_CONTACT", in)
+		if got := MustLoad().SupportContact; got != want {
+			t.Errorf("SUPPORT_CONTACT=%q → %q, ждали %q", in, got, want)
+		}
+	}
+}

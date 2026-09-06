@@ -243,3 +243,37 @@ describe("HomeScreen — видно оба ограничения доступа
     expect(screen.queryByText(/Неделя полного доступа закончилась/)).toBeNull();
   });
 });
+
+// Вход в оплату ВНУТРИ триала. 06.09 самый активный пользователь написал «не получается
+// оплатить подписку» — и был прав: кнопка появлялась только после того, как доступ
+// закрывался. Человек, готовый заплатить заранее, упирался в пустоту.
+describe("HomeScreen — заплатить можно, пока доступ ещё работает", () => {
+  for (const mode of ["meal", "scan"] as const) {
+    it(`режим «${mode}»: тап по остатку ведёт на пейволл`, () => {
+      const onSubscribe = vi.fn();
+      const me = makeMe("quota");
+      render(
+        <HomeScreen
+          me={{ ...me, is_subscribed: false, meals_left: 29, scans_left: 29, trial_active: true, trial_days_left: 6 }}
+          mode={mode}
+          onModeChange={noop} onScan={noop} onSubscribe={onSubscribe} onManageSub={noop}
+          onHistory={noop} onDiary={noop} onAddManual={noop}
+        />,
+      );
+      fireEvent.click(screen.getByText(/Осталось/));
+      expect(onSubscribe).toHaveBeenCalled();
+    });
+  }
+
+  it("подписчику этот вход не показывают — ему нечего оформлять", () => {
+    render(
+      <HomeScreen
+        me={makeMe("active")}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.queryByText("Оформить подписку")).toBeNull();
+  });
+});

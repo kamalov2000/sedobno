@@ -182,19 +182,40 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
           </div>
         ) : (
-          <div style={{ textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5 }}>
-            {showTrialDays ? (
-              <>
-                Осталось {pluralDaysRu(trialDays)} доступа&nbsp;· {Math.max(0, activeLeft)}
-                {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
-              </>
-            ) : (
-              <>
-                Осталось {Math.max(0, activeLeft)}
-                {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
-              </>
-            )}
-          </div>
+          // Счётчик кликабелен: это ЕДИНСТВЕННЫЙ вход в оплату, пока доступ ещё работает.
+          // Раньше кнопка «Оформить подписку» появлялась только после того, как доступ
+          // закрывался, и человек, захотевший заплатить внутри недели, упирался в пустоту:
+          // 06.09 самый активный пользователь написал в поддержку «не получается оплатить
+          // подписку» — заплатить было действительно негде. Тап по остатку ведёт на пейволл,
+          // тем же жестом, что у подписчика тап по бейджу ведёт в управление подпиской.
+          <button
+            type="button"
+            onClick={onSubscribe}
+            style={{
+              background: "none", border: "none", padding: 0, cursor: "pointer",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+              fontFamily: "inherit", textAlign: "center", fontSize: 13, color: "var(--text2)", lineHeight: 1.5,
+            }}
+          >
+            <span>
+              {showTrialDays ? (
+                <>
+                  Осталось {pluralDaysRu(trialDays)} доступа&nbsp;· {Math.max(0, activeLeft)}
+                  {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
+                </>
+              ) : (
+                <>
+                  Осталось {Math.max(0, activeLeft)}
+                  {activeLimit ? ` из ${activeLimit}` : ""} {leftWord}
+                </>
+              )}
+            </span>
+            {/* Вторая строка — тихая, вторичная: продлить можно, но никто не подгоняет. */}
+            <span style={{ fontSize: 12, color: "var(--text3)", display: "inline-flex", alignItems: "center", gap: 3 }}>
+              Оформить подписку
+              <i className="ti ti-chevron-right" aria-hidden="true" style={{ fontSize: 13 }} />
+            </span>
+          </button>
         )}
 
         {outOfActive ? (
