@@ -322,7 +322,12 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case res.Status == pipeline.StatusLabelNotFound:
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found", nil)
+		// Причину пишем в событие. Без неё «сканер не сработал» неразличимо расслаивается
+		// на три разных случая: снял не этикетку (чаще всего — еду не в той вкладке), снял
+		// не тот блок, не прочиталось. 06.09 по 14 провалам подряд нельзя было сказать,
+		// что именно чинить, — props были nil, и пришлось догадываться по косвенным.
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found",
+			map[string]any{"reason": res.Reason})
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Reason:    res.Reason,

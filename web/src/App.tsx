@@ -21,7 +21,7 @@ import { dayCardData, downloadShareCard } from "./shareCard";
 import { diaryItemToResult, scanDiaryPrefill } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
-import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
+import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, LABEL_NOT_A_LABEL_HINTS, LABEL_WRONG_BLOCK_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
 import type { PaywallReason } from "./api";
 
@@ -38,10 +38,16 @@ interface ErrorCopy {
   primaryAction?: { label: string; icon?: string; onClick: () => void };
 }
 
+// Три РАЗНЫХ провала сканера, и советы к ним разные. Раньше у двух из трёх подсказок не
+// было вовсе, и подставлялись дефолтные CAMERA_HINTS («ближе к тексту», «больше света») —
+// то есть человеку, снявшему тарелку, советовали поправить освещение. Замер 06.09: 14
+// сканов подряд у 8 человек, ни одного успешного, при этом фото ТАРЕЛКИ у тех же людей
+// отрабатывало 11 раз из 12. Проблема была не в кадре, а в том, что снимали не то.
 const LABEL_ERRORS: Record<string, ErrorCopy> = {
   not_a_label: {
     title: "Это не похоже на состав продукта",
-    subtitle: "Сфотографируйте блок «Состав» на упаковке.",
+    subtitle: "Нужен блок «Состав» на упаковке — обычно он на обороте, мелким шрифтом.",
+    hints: LABEL_NOT_A_LABEL_HINTS,
   },
   unreadable: {
     title: "Не получилось прочитать текст",
@@ -49,7 +55,8 @@ const LABEL_ERRORS: Record<string, ErrorCopy> = {
   },
   wrong_block: {
     title: "Кажется, в кадре не тот блок",
-    subtitle: "Нужен именно список ингредиентов.",
+    subtitle: "Нужен список ингредиентов, а не таблица пищевой ценности.",
+    hints: LABEL_WRONG_BLOCK_HINTS,
   },
 };
 
@@ -301,7 +308,26 @@ export default function App() {
         setView("error");
       } else {
         notify("warning");
-        setErrorCopy(LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK);
+        const copy = LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK;
+        // В кадре не этикетка — почти всегда это еда, снятая не в той вкладке. Даём
+        // прямой выход в «Калории», как зеркальный случай (этикетка во вкладке калорий)
+        // уже даёт кнопку «Открыть сканер состава». Без неё человек упирается в тупик:
+        // ему говорят, чего не хватает, но не говорят, куда идти с тем, что у него есть.
+        setErrorCopy(
+          data.reason === "not_a_label"
+            ? {
+                ...copy,
+                primaryAction: {
+                  label: "Посчитать калории по фото",
+                  icon: "ti-camera",
+                  onClick: () => {
+                    setMode("meal");
+                    setView("home");
+                  },
+                },
+              }
+            : copy,
+        );
         setView("error");
       }
     } catch (err) {
