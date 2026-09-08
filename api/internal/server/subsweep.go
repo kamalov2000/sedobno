@@ -83,6 +83,15 @@ func (s *Server) notifyUpcomingRenewals(ctx context.Context) {
 			"Напоминание: завтра продлим подписку «Съедобно» — %d ₽ спишутся автоматически. Не нужно — отмените в приложении, доступ останется до конца оплаченного периода.",
 			amountRub)
 		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			// Заблокировал бота — предупредить о списании мы уже не сможем; помечаем
+			// уведомление отработанным, чтобы не долбиться каждый час. Само СПИСАНИЕ
+			// при этом идёт своим чередом: подписка оплачена, и молча её обрывать нельзя.
+			if s.handleSendError(ctx, r.UserID, err) {
+				if merr := s.store.MarkRenewalNotified(ctx, r.ID); merr != nil {
+					s.log.Error("уведомление о продлении: пометка после блокировки", "err", merr, "sub", r.ID)
+				}
+				continue
+			}
 			s.log.Warn("уведомление о продлении: отправка", "err", err, "sub", r.ID)
 			continue // не помечаем — повторим на следующем тике
 		}
@@ -115,6 +124,12 @@ func (s *Server) notifyUpcomingLapses(ctx context.Context) {
 		"чтобы не потерять доступ, оформите подписку заново в приложении."
 	for _, r := range due {
 		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			if s.handleSendError(ctx, r.UserID, err) {
+				if merr := s.store.MarkRenewalNotified(ctx, r.ID); merr != nil {
+					s.log.Error("уведомление об окончании: пометка после блокировки", "err", merr, "sub", r.ID)
+				}
+				continue
+			}
 			s.log.Warn("уведомление об окончании разовой подписки: отправка", "err", err, "sub", r.ID)
 			continue // не помечаем — повторим на следующем тике
 		}

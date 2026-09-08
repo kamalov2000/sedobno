@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +40,27 @@ type apiResponse struct {
 	Description string          `json:"description"`
 }
 
+// ErrBotBlocked — пользователь заблокировал бота (или удалил чат). Писать ему больше
+// нельзя и НЕ НУЖНО пытаться: ошибка окончательная. Рассыльщики по этой ошибке помечают
+// пользователя заблокированным, а не оставляют его в выборке до следующего тика.
+var ErrBotBlocked = errors.New("бот заблокирован пользователем")
+
+// isBlockedResponse распознаёт «писать больше некому» по ответу Bot API. Telegram отдаёт
+// это несколькими формулировками с кодом 403 (заблокировал, удалил чат, деактивирован) —
+// смысл для нас один: адресата больше нет, повторять бессмысленно.
+func isBlockedResponse(code int, description string) bool {
+	if code != 403 {
+		return false
+	}
+	d := strings.ToLower(description)
+	for _, m := range []string{"blocked", "user is deactivated", "chat not found", "bot was kicked"} {
+		if strings.Contains(d, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // call выполняет POST-метод Bot API с JSON-параметрами и разбирает конверт ответа.
 // Возвращает сырое поле result для метод-специфичного разбора у вызывающего.
 func (c *Client) call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
@@ -66,7 +88,15 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 	}
 	if !ar.OK {
 		// Telegram кладёт человекочитаемую причину в description (напр. Unauthorized).
-		return nil, fmt.Errorf("tg %s: error_code=%d %s", method, ar.ErrorCode, ar.Description)
+		err := fmt.Errorf("tg %s: error_code=%d %s", method, ar.ErrorCode, ar.Description)
+		// Заблокировавший бота — ОКОНЧАТЕЛЬНЫЙ ответ, а не временный сбой. Рассыльщики
+		// ставят пометку об отправке только после успеха, поэтому без отдельного типа
+		// ошибки они долбились в закрытую дверь каждый тик: в логе 08.09 виден user 348,
+		// которому напоминание пытались отправить ежечасно шесть раз подряд.
+		if isBlockedResponse(ar.ErrorCode, ar.Description) {
+			return nil, fmt.Errorf("%w: %s", ErrBotBlocked, err)
+		}
+		return nil, err
 	}
 	return ar.Result, nil
 }

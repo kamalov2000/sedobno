@@ -141,6 +141,15 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	// Аналитика §10 — best-effort, не влияет на ответ.
 	_ = s.store.InsertEvent(r.Context(), &u.ID, "app_open", nil)
 
+	// Вернулся — значит разблокировал: мини-апп открывается только из чата с ботом.
+	// Снимаем отметку, иначе один раз заблокировавший навсегда выпал бы из рассылок
+	// (и из знаменателей воронок) даже после того, как передумал.
+	if u.BlockedAt != nil {
+		if err := s.store.ClearUserBlocked(r.Context(), u.ID); err != nil {
+			s.log.Warn("снятие отметки блокировки", "err", err, "user", u.ID)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, authResponse{
 		Token:     token,
 		ExpiresIn: int(jwtTTL.Seconds()),

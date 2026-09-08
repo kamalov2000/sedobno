@@ -84,7 +84,8 @@ WHERE id = $1;
 SELECT s.id, s.user_id, u.telegram_id, s.plan, s.next_charge_at
 FROM subscriptions s
 JOIN users u ON u.id = s.user_id
-WHERE s.status = 'active'
+WHERE u.blocked_at IS NULL
+  AND s.status = 'active'
   AND s.provider = 'sbp'
   AND s.provider_payment_method_id IS NOT NULL
   AND s.next_charge_at IS NOT NULL
@@ -107,7 +108,8 @@ UPDATE subscriptions SET renewal_notified_at = now() WHERE id = $1;
 SELECT s.id, s.user_id, u.telegram_id, s.plan, s.expires_at
 FROM subscriptions s
 JOIN users u ON u.id = s.user_id
-WHERE s.status = 'active'
+WHERE u.blocked_at IS NULL
+  AND s.status = 'active'
   AND s.provider = 'sbp'
   AND s.provider_payment_method_id IS NULL
   AND s.expires_at > now()

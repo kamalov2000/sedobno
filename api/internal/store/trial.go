@@ -30,6 +30,7 @@ func (s *Store) TrialReminderCandidates(ctx context.Context, within time.Duratio
 SELECT id, telegram_id, trial_expires_at, free_meals_used, free_scans_used
 FROM users
 WHERE is_subscribed = false
+  AND blocked_at IS NULL
   AND trial_reminder_sent_at IS NULL
   AND trial_expires_at > now()
   AND trial_expires_at <= now() + $1::interval
@@ -54,6 +55,25 @@ ORDER BY trial_expires_at`
 // два одновременных прохода (перезапуск в момент тика) иначе отправили бы двоим.
 func (s *Store) MarkTrialReminderSent(ctx context.Context, userID int64) error {
 	const q = `UPDATE users SET trial_reminder_sent_at = now() WHERE id = $1 AND trial_reminder_sent_at IS NULL`
+	_, err := s.pool.Exec(ctx, q, userID)
+	return err
+}
+
+// MarkUserBlocked отмечает, что человек заблокировал бота. Ставится по ОКОНЧАТЕЛЬНОЙ
+// ошибке Bot API (tg.ErrBotBlocked), а не по любому сбою отправки: сетевую ошибку надо
+// повторить, а закрытую дверь — запомнить. Идемпотентна: повторный вызов не двигает дату
+// (важна первая, по ней считается, когда человек ушёл).
+func (s *Store) MarkUserBlocked(ctx context.Context, userID int64) error {
+	const q = `UPDATE users SET blocked_at = now() WHERE id = $1 AND blocked_at IS NULL`
+	_, err := s.pool.Exec(ctx, q, userID)
+	return err
+}
+
+// ClearUserBlocked снимает отметку. Зовётся, когда человек снова заходит в приложение:
+// раз мини-апп открылся и авторизовался, бот он разблокировал — и снова наш адресат.
+// Без этого один раз заблокировавший навсегда выпадал бы из всех рассылок.
+func (s *Store) ClearUserBlocked(ctx context.Context, userID int64) error {
+	const q = `UPDATE users SET blocked_at = NULL WHERE id = $1 AND blocked_at IS NOT NULL`
 	_, err := s.pool.Exec(ctx, q, userID)
 	return err
 }

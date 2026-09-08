@@ -61,8 +61,16 @@ func (s *Server) tickTrialReminder(ctx context.Context) {
 			markup = tg.StartMarkup("Продлить доступ", s.cfg.WebAppURL, supportButtonText, callbackSupport)
 		}
 		if err := s.tg.SendMessage(ctx, c.TelegramID, text, markup); err != nil {
-			// Заблокировавший бота попадёт сюда один раз: отметку НЕ ставим, следующий
-			// тик попробует снова, и так до конца срока — после него он уже не кандидат.
+			// Бот заблокирован — повторять нечего: помечаем человека и закрываем
+			// напоминание, иначе он останется в выборке до конца триала и будет
+			// получать попытку каждый час (живой случай 08.09, user 348).
+			if s.handleSendError(ctx, c.UserID, err) {
+				if merr := s.store.MarkTrialReminderSent(ctx, c.UserID); merr != nil {
+					s.log.Warn("напоминание о триале: отметка после блокировки", "err", merr, "user", c.UserID)
+				}
+				continue
+			}
+			// Прочие сбои (сеть, 5xx) — временные: отметку НЕ ставим, следующий тик повторит.
 			s.log.Warn("напоминание о триале: отправка", "err", err, "user", c.UserID)
 			continue
 		}

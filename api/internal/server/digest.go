@@ -90,8 +90,12 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 		}
 		text := digestText(day.Kcal, day.MealsCount, c.KcalTarget, streakDays, c.LastDigest == "")
 		if err := s.tg.SendMessage(ctx, c.TelegramID, text, nil); err != nil {
-			// Заблокировавший бота попадёт сюда каждый вечер; отметку НЕ ставим, но и
-			// не ретраим внутри тика — следующий заход просто попробует снова.
+			// Бот заблокирован — исключаем из рассылок насовсем (выборка теперь его не
+			// возьмёт). Раньше такой человек попадал сюда КАЖДЫЙ вечер.
+			if s.handleSendError(ctx, c.UserID, err) {
+				continue
+			}
+			// Прочие сбои временные: отметку не ставим, следующий заход попробует снова.
 			s.log.Warn("итог дня: отправка", "err", err, "user", c.UserID)
 			continue
 		}

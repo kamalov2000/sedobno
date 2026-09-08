@@ -44,6 +44,7 @@ SELECT u.id,
   FROM users u
   JOIN meals m ON m.user_id = u.id AND m.status = 'ok'
  WHERE u.daily_digest_enabled
+   AND u.blocked_at IS NULL
    AND EXISTS (SELECT 1 FROM meals m2
                 WHERE m2.user_id = u.id AND m2.status = 'ok'
                   AND m2.created_at > now() - interval '36 hours')
