@@ -275,7 +275,10 @@ func TestWebhook_PreCheckoutRejectsBadPayload(t *testing.T) {
 func TestStartGreeting_CoversBothScenarios(t *testing.T) {
 	for _, hasWebApp := range []bool{true, false} {
 		text := startGreeting(hasWebApp)
-		for _, want := range []string{"этикетки", "тарелки", "калории", "состав"} {
+		// «тарелку», а не «тарелки»: с 08.09 текст ведёт калориями и обращается к
+		// человеку прямо («Сфотографируйте тарелку»). Проверяем присутствие обоих
+		// сценариев, а не конкретный падеж.
+		for _, want := range []string{"этикетки", "тарелк", "калории", "состав"} {
 			if !strings.Contains(strings.ToLower(text), want) {
 				t.Errorf("hasWebApp=%v: в приветствии нет «%s»:\n%s", hasWebApp, want, text)
 			}
@@ -283,20 +286,41 @@ func TestStartGreeting_CoversBothScenarios(t *testing.T) {
 	}
 }
 
-// Срок бесплатного доступа в приветствии обязан идти из константы, а не из литерала:
-// иначе правка trialDays молча делает первое сообщение бота лживым. На смене модели
-// (10 проверок навсегда → неделя полного доступа) этот тест и ловит забытый текст.
-func TestStartGreeting_TrialFromConstants(t *testing.T) {
+// Приветствие ведёт КАЛОРИЯМИ — это вывод из размещения 31.08, а не вкус: 43 разбора еды
+// против 4 успешных сканов, и 13 человек заблокировали бота, не открыв приложение ни разу.
+// Тест держит порядок: если однажды состав снова окажется первым, это будет осознанное
+// решение с правкой теста, а не тихий откат.
+func TestStartGreeting_ВедётКалориями(t *testing.T) {
 	text := startGreeting(true)
-	want := fmt.Sprintf("Первые %d дней", trialDays)
+	iMeal := strings.Index(text, "Сфотографируйте тарелку")
+	iLabel := strings.Index(text, "состав с этикетки")
+	if iMeal < 0 || iLabel < 0 {
+		t.Fatalf("приветствие потеряло один из сценариев:\n%s", text)
+	}
+	if iMeal > iLabel {
+		t.Errorf("состав встал раньше калорий — порядок первого экрана перевёрнут:\n%s", text)
+	}
+	// Дневник — то, чем люди пользуются, и он обязан быть назван прямо.
+	if !strings.Contains(text, "дневник") {
+		t.Errorf("в приветствии нет слова «дневник»:\n%s", text)
+	}
+}
+
+// Срок берётся из константы, а не из литерала: правка trialDays иначе тихо сделает
+// приветствие лживым. Для семи дней — человеческая «Неделя», для прочих — числом.
+func TestStartGreeting_СрокИзКонстанты(t *testing.T) {
+	text := startGreeting(true)
+	want := fmt.Sprintf("%d дней полного доступа", trialDays)
+	if trialDays == 7 {
+		want = "Неделя полного доступа"
+	}
 	if !strings.Contains(text, want) {
 		t.Fatalf("в приветствии нет «%s»:\n%s", want, text)
 	}
-	// Прежняя модель не должна пережить смену: «10 проверок» в приветствии означало бы,
-	// что человек услышал обещание, которого продукт больше не даёт.
-	for _, stale := range []string{"10 проверок", "10 разборов", "Бесплатно:"} {
+	// Прежние модели не должны пережить смену.
+	for _, stale := range []string{"10 проверок", "10 разборов", "Бесплатно:", "Первые 7 дней"} {
 		if strings.Contains(text, stale) {
-			t.Errorf("в приветствии осталась старая модель («%s»):\n%s", stale, text)
+			t.Errorf("в приветствии осталась старая формулировка («%s»):\n%s", stale, text)
 		}
 	}
 }
