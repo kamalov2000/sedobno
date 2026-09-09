@@ -120,11 +120,13 @@ WITH cost AS (
           UNION ALL SELECT created_at, cost_estimate FROM scans WHERE created_at >= '$SINCE') x
    GROUP BY 1
 ),
+-- Выручка берётся из sbp_payments: там она в рублях и со статусом. События
+-- (pay_ok / payment_success) суммы не несут, а Stars-оплаты пока не было ни одной —
+-- когда появится, её сюда придётся добавить отдельным источником.
 pay AS (
   SELECT date_trunc('month', created_at)::date AS m,
-         count(*) AS payments,
-         sum((props->>'amount')::numeric) FILTER (WHERE props->>'amount' IS NOT NULL) AS rub
-    FROM events WHERE name IN ('payment_success','subscription_renewed') AND created_at >= '$SINCE'
+         count(*) AS payments, sum(amount_rub) AS rub
+    FROM sbp_payments WHERE status = 'succeeded' AND created_at >= '$SINCE'
    GROUP BY 1
 )
 SELECT coalesce(cost.m, pay.m) AS "месяц",
