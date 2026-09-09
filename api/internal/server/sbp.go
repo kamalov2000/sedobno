@@ -2,12 +2,15 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sostav/api/internal/store"
 	"github.com/sostav/api/internal/yookassa"
@@ -75,7 +78,7 @@ func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 		// значение должно совпадать с тем, что уйдёт в автосписании, а платёж, сохранивший
 		// способ, и платёж, списывающий по нему, разделены месяцем и тумблером.
 		MerchantCustomerID: strconv.FormatInt(uid, 10),
-		IdempotenceKey:     randIdemKey(),
+		IdempotenceKey:     payIdemKey(uid, normPlan, time.Now()),
 	})
 	if err != nil {
 		s.log.Error("sbp pay: ЮKassa", "err", err, "user", uid)
@@ -233,6 +236,26 @@ func (s *Server) planParams(plan string) (amountRub, periodSec int, normPlan str
 		return s.cfg.SBPAnnualPriceRub, annualPeriodSec, store.PlanAnnual
 	}
 	return s.cfg.SBPPriceRub, accessPeriodSec, store.PlanMonthly
+}
+
+// payIdemKey — ключ идемпотентности СОЗДАНИЯ платежа. Не случайный: случайный означал,
+// что два тапа по кнопке «Оформить» создают в ЮKassa ДВА платежа. Ни один из них не
+// подтверждён, денег никто не теряет — но в кабинете растут висяки, а человек, увидев
+// вторую ссылку, вправе решить, что с него спишут дважды (ТЗ, APP-12: «повторный тап не
+// создаёт два платежа»).
+//
+// Ключ стабилен внутри окна: тот же пользователь + тот же тариф + та же двухминутка →
+// тот же ключ, и ЮKassa возвращает УЖЕ СОЗДАННЫЙ платёж вместо нового. Окно короткое
+// намеренно: через пару минут человек имеет полное право начать оплату заново (закрыл
+// вкладку, передумал про способ), и мешать ему нельзя.
+//
+// Хэш, а не «uid-plan-время» открытым текстом: ключ уходит стороннему сервису, и светить
+// в нём внутренние идентификаторы незачем.
+func payIdemKey(userID int64, plan string, now time.Time) string {
+	const window = 2 * time.Minute
+	bucket := now.Truncate(window).Unix()
+	sum := sha256.Sum256([]byte(fmt.Sprintf("paycreate|%d|%s|%d", userID, plan, bucket)))
+	return hex.EncodeToString(sum[:16])
 }
 
 // randIdemKey генерит ключ идемпотентности для запроса создания платежа.

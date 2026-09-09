@@ -2,7 +2,9 @@ package server
 
 import (
 	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/sostav/api/internal/config"
 )
@@ -41,5 +43,34 @@ func TestRubFromValue(t *testing.T) {
 		if got := rubFromValue(in); got != want {
 			t.Errorf("rubFromValue(%q)=%d, ждали %d", in, got, want)
 		}
+	}
+}
+
+// APP-12: повторный тап по «Оформить» не должен создавать второй платёж. Ключ
+// идемпотентности стабилен внутри короткого окна, поэтому ЮKassa возвращает уже
+// созданный платёж вместо нового. Случайный ключ (как было) означал два висяка в
+// кабинете и вторую ссылку на оплату у человека — повод решить, что спишут дважды.
+func TestPayIdemKey(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 30, 0, time.UTC)
+
+	// Два тапа подряд — один и тот же ключ.
+	if payIdemKey(42, "monthly", now) != payIdemKey(42, "monthly", now.Add(30*time.Second)) {
+		t.Error("два тапа в одном окне дали разные ключи — платёж создастся дважды")
+	}
+	// Разные люди и разные тарифы не должны схлопываться в один платёж.
+	if payIdemKey(42, "monthly", now) == payIdemKey(43, "monthly", now) {
+		t.Error("ключ не зависит от пользователя")
+	}
+	if payIdemKey(42, "monthly", now) == payIdemKey(42, "annual", now) {
+		t.Error("ключ не зависит от тарифа")
+	}
+	// Через окно человек вправе начать оплату заново — ключ обязан смениться.
+	if payIdemKey(42, "monthly", now) == payIdemKey(42, "monthly", now.Add(5*time.Minute)) {
+		t.Error("ключ не обновился через окно — повторная оплата будет невозможна")
+	}
+	// Внутренние идентификаторы наружу не светим: ключ уходит стороннему сервису.
+	key := payIdemKey(42, "monthly", now)
+	if strings.Contains(key, "42") || strings.Contains(key, "monthly") {
+		t.Errorf("ключ раскрывает внутренние данные: %s", key)
 	}
 }
