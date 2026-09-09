@@ -327,3 +327,21 @@ describe("HomeScreen — инструкция съёмки своя у кажд�
     expect(body).not.toContain("ТАРЕЛКУ");
   });
 });
+
+// Обещание скорости убрано и из приложения: p95 сканера 24,5 секунды. Тот же текст жил в
+// двух местах, и с сайта его сняли раньше, чем из мини-аппа (проверка 09.09).
+describe("HomeScreen — не обещаем скорость, которую не подтверждаем", () => {
+  it("в режиме состава нет «за несколько секунд»", () => {
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, scans_left: 29, trial_active: true, trial_days_left: 6 }}
+        mode="scan"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("несколько секунд");
+    expect(body).toContain("покажем оценку состава и основные замечания");
+  });
+});

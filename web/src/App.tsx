@@ -610,6 +610,7 @@ export default function App() {
           result={result}
           isSubscribed={me?.is_subscribed ?? false}
           scansLeft={me?.scans_left}
+          scanLimit={me?.free_scan_limit}
           onAgain={onScan}
           onAddToDiary={() => {
             setReturnTo("result");

@@ -125,3 +125,54 @@ describe("ResultScreen — объяснимость балла и проверк
     expect(body).not.toContain("Хороший продукт");
   });
 });
+
+// Живая проверка 09.09 нашла экран, который спорил сам с собой: 22 ингредиента, 7 добавок
+// низкого риска, три штрафа и балл 78 — и рядом «Проблемных ингредиентов не найдено» и
+// «Короткий состав без добавок». Причина: во флаг-карточки попадают только средний/высокий
+// риск или вычет ≥10, и когда ничего не проходит, экран падал в положительную ветку,
+// игнорируя и добавки, и вычеты.
+describe("ResultScreen — положительный блок не противоречит числам", () => {
+  const lowRiskOnly = (): ScanResult =>
+    baseResult({
+      score: 78,
+      flags: [],
+      deductions: [
+        { title: "лимонная кислота", penalty: 9 },
+        { title: "камедь рожкового дерева", penalty: 8 },
+        { title: "аскорбиновая кислота", penalty: 5 },
+      ],
+      ingredients: [
+        { raw: "лимонная кислота", code: "E330", risk: 1, position: 3, matched: true },
+        { raw: "камедь", code: "E410", risk: 1, position: 5, matched: true },
+        { raw: "молоко", risk: 0, position: 1, matched: false },
+      ],
+    });
+
+  it("при добавках и штрафах НЕ пишет «не найдено» и «без добавок»", () => {
+    render(<ResultScreen result={lowRiskOnly()} isSubscribed={false} onAgain={noop} />);
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("Проблемных ингредиентов не найдено");
+    expect(body).not.toContain("Короткий состав без добавок");
+    expect(body).toContain("Ингредиентов высокого и среднего риска не найдено");
+    expect(body).toContain("Есть добавки низкого риска");
+  });
+
+  it("действительно чистый состав по-прежнему хвалим", () => {
+    render(
+      <ResultScreen
+        result={baseResult({ score: 100, flags: [], deductions: [], ingredients: [{ raw: "молоко", risk: 0, position: 1, matched: false }] })}
+        isSubscribed={false}
+        onAgain={noop}
+      />,
+    );
+    expect(screen.getByText("Проблемных ингредиентов не найдено")).toBeTruthy();
+    expect(screen.getByText(/Короткий состав без добавок/)).toBeTruthy();
+  });
+
+  it("знаменатель проверок приходит с сервера, «из 10» не зашито", () => {
+    render(<ResultScreen result={lowRiskOnly()} isSubscribed={false} scansLeft={26} scanLimit={30} onAgain={noop} />);
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("ОСТАЛОСЬ 26 ИЗ 30 ПРОВЕРОК");
+    expect(body).not.toContain("ИЗ 10");
+  });
+});

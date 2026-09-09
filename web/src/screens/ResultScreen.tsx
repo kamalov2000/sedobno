@@ -12,6 +12,8 @@ interface Props {
   result: ScanResult;
   isSubscribed: boolean;
   onAgain: (files: File[]) => void;
+  /** Сколько проверок даётся всего (me.free_scan_limit). Нет — знаменатель не рисуем. */
+  scanLimit?: number;
   // Остаток проверок из АКТУАЛЬНОГО профиля (/me) — единый источник правды. Скан из
   // истории не несёт scans_left (бэк его не восстанавливает), поэтому чип берём из me,
   // а не из result.scans_left — иначе «0 из 10» на любом открытом из истории результате.
@@ -21,14 +23,21 @@ interface Props {
   onAddToDiary?: () => void;
 }
 
-export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft, onAddToDiary }: Props) {
+export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft, scanLimit, onAddToDiary }: Props) {
   const verdict = scoreToVerdict(result.score);
   const count = result.ingredients.length;
   const productLine = result.scan_number
     ? `ПРОВЕРКА №${result.scan_number} · ИНГРЕДИЕНТОВ: ${count}`
     : `ИНГРЕДИЕНТОВ: ${count}`;
   const left = scansLeft ?? result.scans_left; // из me; фолбэк на result (витрина/старый вызов)
-  const checksChip = isSubscribed ? "БЕЗЛИМИТ" : `ОСТАЛОСЬ ${Math.max(0, left)} ИЗ 10 ПРОВЕРОК`;
+  // Знаменатель — с сервера, а не литералом: «ИЗ 10» пережило смену модели доступа на
+  // неделю с потолком 30 и врало на каждом экране результата. Лимита нет (старый бэк) —
+  // показываем остаток без знаменателя, а не выдуманное число.
+  const checksChip = isSubscribed
+    ? "БЕЗЛИМИТ"
+    : scanLimit
+      ? `ОСТАЛОСЬ ${Math.max(0, left)} ИЗ ${scanLimit} ПРОВЕРОК`
+      : `ОСТАЛОСЬ ${Math.max(0, left)} ПРОВЕРОК`;
 
   // Правило #2: во флаг-карточки средний/высокий риск — ЛИБО крупный вычет по
   // спец-правилу §5. Иначе сахар в первых позициях (маркер risk=1, но −15 баллов)
@@ -37,6 +46,14 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
   const flags = result.flags.filter((f) => isFlagLevel(riskToLevel(f.risk)) || f.penalty >= 10);
 
   const deductions = result.deductions ?? [];
+
+  // Добавки в составе (сматченные строки словаря с ненулевым риском). Нужны, чтобы
+  // отличить ДЕЙСТВИТЕЛЬНО чистый состав от состава, где ничего не дотянуло до
+  // флаг-карточки. Раньше эти два случая склеивались, и второй показывался как первый.
+  const lowRiskCount = result.ingredients.filter((i) => i.matched && i.risk >= 1).length;
+  // Чистый состав — это когда нечего показать НИ во флагах, НИ в добавках, НИ в вычетах.
+  // Любое из трёх делает фразу «без добавок» ложной.
+  const cleanComposition = flags.length === 0 && lowRiskCount === 0 && deductions.length === 0;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -97,11 +114,27 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
           flags.map((f, i) => (
             <FlagCard key={i} name={f.title} why={f.verdict} level={flagBadgeLevel(f.risk, f.penalty)} />
           ))
-        ) : (
+        ) : cleanComposition ? (
+          // Ни добавок, ни вычетов — только тут положительный блок правдив.
           <div style={{ background: "var(--bg-soft)", borderRadius: 12, padding: 14, marginTop: 10 }}>
             <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>Проблемных ингредиентов не найдено</div>
             <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 4, lineHeight: 1.45 }}>
               Короткий состав без добавок — хороший знак.
+            </div>
+          </div>
+        ) : (
+          // Во флаг-карточки ничего не прошло, но добавки и/или вычеты ЕСТЬ. Прежде экран
+          // в этом случае писал «проблемных ингредиентов не найдено» и «короткий состав
+          // без добавок» рядом с 22 ингредиентами, семью добавками и баллом 78 (живая
+          // проверка 09.09). Говорим ровно то, что верно: крупного риска нет, мелкое есть.
+          <div style={{ background: "var(--bg-soft)", borderRadius: 12, padding: 14, marginTop: 10 }}>
+            <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
+              Ингредиентов высокого и среднего риска не найдено
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text2)", marginTop: 4, lineHeight: 1.45 }}>
+              {lowRiskCount > 0
+                ? "Есть добавки низкого риска — подробнее в составе."
+                : "Балл снижен по правилам ниже — подробнее в составе."}
             </div>
           </div>
         )}
