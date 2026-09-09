@@ -105,7 +105,9 @@ ops AS (
          bool_or(name = 'photo_picked')   AS picked,
          bool_or(name = 'upload_started') AS uploaded,
          bool_or(name IN ('meal_started','meal_text_started','scan_started')) AS accepted,
-         bool_or(name IN ('meal_ok','meal_text_ok','scan_ok')) AS ok,
+         -- Успех берём по событиям воронки: именно они несут op_id, а meal_ok/scan_ok
+         -- пишутся отдельной строкой без него (см. handleMealCreate).
+         bool_or(name IN ('meal_analysis_success','label_analysis_success')) AS ok,
          bool_or(name IN ('meal_error','meal_text_error','scan_error')) AS failed,
          bool_or(name IN ('meal_paywall_shown','paywall_shown')) AS paywall,
          bool_or(name IN ('diary_entry_saved','meal_manual')) AS saved
