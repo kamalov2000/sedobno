@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { MealResult } from "../types";
-import { analyzeMealText as analyzeMealTextApi } from "../api";
+import { analyzeMealText as analyzeMealTextApi, appEvent, startOp } from "../api";
 import type { PaywallReason } from "../api";
 import { MEAL_TEXT_EXAMPLES } from "../meal";
 import DishTextInput from "../components/DishTextInput";
@@ -43,6 +43,10 @@ export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onMan
     if (busy) return;
     setBusy(true);
     setError("");
+    // Текстовый разбор — тоже ПОПЫТКА, и у неё должен быть свой id: иначе запрос уедет
+    // с идентификатором прошлой фотографии, и в воронке два разных пути склеятся в один.
+    startOp();
+    appEvent("upload_started", { mode: "meal", entry: "text" });
     try {
       const out = await analyze(text);
       if (out.kind === "paywall") {
