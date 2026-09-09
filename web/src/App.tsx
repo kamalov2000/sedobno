@@ -73,7 +73,12 @@ export default function App() {
   // Причина стены: её приносит ответ 402. Экран пейволла по ней меняет заголовок —
   // «неделя прошла» и «упёрся в потолок» это разные положения человека.
   const [paywallReason, setPaywallReason] = useState<PaywallReason>("trial_expired");
-  const [mode, setMode] = useState<HomeMode>("scan"); // режим главного экрана: состав | калории
+  // Стартовая вкладка — КАЛОРИИ. Приложение открывалось «Составом», хотя приветствие
+  // ведёт калориями, а числа размещения 31.08 говорят то же: 43 разбора еды против 4
+  // успешных сканов, 9 человек против 2. Человек приходил за дневником и первым делом
+  // видел «Сфотографируйте состав на упаковке» — тот же мисматч, что и в /start, только
+  // на экран позже. Состав остаётся в один тап, вкладки никуда не делись.
+  const [mode, setMode] = useState<HomeMode>("meal"); // режим главного экрана: калории | состав
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");

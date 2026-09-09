@@ -608,7 +608,7 @@ body {
                           color: var(--ink);
                           font-variant-numeric: tabular-nums;
                         " id="hero-plate-num"
-                        >410</span
+                        >501</span
                       >
                       <span style="font-size: 14px; color: var(--ink2)"
                         >ккал</span
@@ -1788,7 +1788,7 @@ body {
                             line-height: 1;
                             color: var(--ink);
                           "
-                          >540</span
+                          >575</span
                         ><span style="font-size: 12px; color: var(--ink2)"
                           >ккал</span
                         >
@@ -3427,7 +3427,7 @@ body {
 // Логика из компонента дизайн-тула, перенесённая на ванильный JS: карточка героя
 // перелистывается по кругу, число добегает до значения. Разметка обеих веток
 // (этикетка/тарелка) уже в DOM — скрипт только переключает и заполняет.
-var HERO = [{"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ТВОРОЖОК", "big": 34, "word": "Плохой состав", "bg": "#FCEEED", "border": "#F2CBC8", "num": "#CC3B36", "flags": [{"name": "Сахар — 2-й в списке", "badge": "высокий", "bg": "#FBE4E3", "color": "#B93A36"}, {"name": "Пальмовое масло", "badge": "средний", "bg": "#FBF0DC", "color": "#96660F"}]}, {"kind": "plate", "kicker": "РАЗБОР ТАРЕЛКИ", "product": "ЗАВТРАК", "big": 410, "dishes": [{"name": "Овсянка на молоке", "info": "200 г · 260"}, {"name": "Яйцо варёное", "info": "2 шт · 156"}, {"name": "Кофе с молоком", "info": "150 мл · 20"}], "chips": [{"icon": "ti ti-droplet", "label": "Масло ≈ 1 ч.л."}, {"icon": "ti ti-cube", "label": "Сахар ≈ 1 ч.л."}]}, {"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ЙОГУРТ", "big": 61, "word": "Средний состав", "bg": "#FCF5E1", "border": "#EBD79F", "num": "#A4720F", "flags": [{"name": "Сахар — 3-й в списке", "badge": "средний", "bg": "#FBF0DC", "color": "#96660F"}, {"name": "Крахмал E1442", "badge": "низкий", "bg": "#EEF0E9", "color": "#5C6152"}]}, {"kind": "plate", "kicker": "РАЗБОР ТАРЕЛКИ", "product": "ОБЕД", "big": 540, "dishes": [{"name": "Рис отварной", "info": "150 г · 195"}, {"name": "Куриное филе", "info": "120 г · 200"}, {"name": "Овощи, зелень", "info": "90 г · 45"}], "chips": [{"icon": "ti ti-droplet", "label": "Масло ≈ 1 ст.л."}]}, {"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ТВОРОГ 5%", "big": 92, "word": "Хороший состав", "bg": "#EAF4EE", "border": "#BFDCCB", "num": "#1E7A50", "flags": [{"name": "Всего 2 ингредиента", "badge": "в норме", "bg": "#E7F1EA", "color": "#1E7A50"}, {"name": "Без добавок и сахара", "badge": "в норме", "bg": "#E7F1EA", "color": "#1E7A50"}]}];
+var HERO = [{"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ТВОРОЖОК", "big": 34, "word": "Плохой состав", "bg": "#FCEEED", "border": "#F2CBC8", "num": "#CC3B36", "flags": [{"name": "Сахар — 2-й в списке", "badge": "высокий", "bg": "#FBE4E3", "color": "#B93A36"}, {"name": "Пальмовое масло", "badge": "средний", "bg": "#FBF0DC", "color": "#96660F"}]}, {"kind": "plate", "kicker": "РАЗБОР ТАРЕЛКИ", "product": "ЗАВТРАК", "big": 501, "dishes": [{"name": "Овсянка на молоке", "info": "200 г · 260"}, {"name": "Яйцо варёное", "info": "2 шт · 156"}, {"name": "Кофе с молоком", "info": "150 мл · 20"}], "chips": [{"icon": "ti ti-droplet", "label": "Масло ≈ 1 ч.л."}, {"icon": "ti ti-cube", "label": "Сахар ≈ 1 ч.л."}]}, {"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ЙОГУРТ", "big": 61, "word": "Средний состав", "bg": "#FCF5E1", "border": "#EBD79F", "num": "#A4720F", "flags": [{"name": "Сахар — 3-й в списке", "badge": "средний", "bg": "#FBF0DC", "color": "#96660F"}, {"name": "Крахмал E1442", "badge": "низкий", "bg": "#EEF0E9", "color": "#5C6152"}]}, {"kind": "plate", "kicker": "РАЗБОР ТАРЕЛКИ", "product": "ОБЕД", "big": 575, "dishes": [{"name": "Рис отварной", "info": "150 г · 195"}, {"name": "Куриное филе", "info": "120 г · 200"}, {"name": "Овощи, зелень", "info": "90 г · 45"}], "chips": [{"icon": "ti ti-droplet", "label": "Масло ≈ 1 ст.л."}]}, {"kind": "label", "kicker": "РЕЗУЛЬТАТ ПРОВЕРКИ", "product": "ТВОРОГ 5%", "big": 92, "word": "Хороший состав", "bg": "#EAF4EE", "border": "#BFDCCB", "num": "#1E7A50", "flags": [{"name": "Всего 2 ингредиента", "badge": "в норме", "bg": "#E7F1EA", "color": "#1E7A50"}, {"name": "Без добавок и сахара", "badge": "в норме", "bg": "#E7F1EA", "color": "#1E7A50"}]}];
 
 function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }

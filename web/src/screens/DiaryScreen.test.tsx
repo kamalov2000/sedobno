@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import DiaryScreen from "./DiaryScreen";
 import type { MealsByDay, MealDays, NutritionProfile } from "../types";
 
@@ -293,5 +293,51 @@ describe("DiaryScreen — вход в норму на пустом дне", () =
     render(<DiaryScreen {...noProfileProps} onOpenWizard={onOpenWizard} />);
     fireEvent.click(await screen.findByText("Рассчитать мою норму"));
     expect(onOpenWizard).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Удаление единственного приёма. Проверка 08.09: список пустел сразу, а итог дня и серия
+// оставались прежними — «пустой дневник и рядом Серия: 1 день». Список фильтровался
+// оптимистично, а total и streak приходили с сервера и об удалении ещё не знали.
+describe("DiaryScreen — удаление единственного приёма", () => {
+  const oneMeal = (): MealsByDay => {
+    const d = makeDiary("under", { streakDays: 1, todayLogged: true });
+    const first = d.items[0];
+    return {
+      ...d,
+      items: [first],
+      total: { ...d.total, meals_count: 1, kcal: first.total!.kcal, protein_g: first.total!.protein_g, fat_g: first.total!.fat_g, carb_g: first.total!.carb_g },
+    };
+  };
+
+  it("после удаления серия и итог дня согласованы со списком", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => oneMeal()}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    // До удаления серия видна.
+    expect(await screen.findByTitle(/Серия/)).toBeTruthy();
+
+    fireEvent.click(screen.getAllByLabelText("Удалить приём")[0]);
+
+    // День опустел — серия про этот день больше не показывается, а не висит устаревшей.
+    await waitFor(() => expect(screen.queryByTitle(/Серия/)).toBeNull());
+    // И «Вернуть» доступно: удаление отложенное.
+    expect(screen.getByText("Вернуть")).toBeTruthy();
+  });
+
+  it("«Вернуть» восстанавливает и приём, и серию", async () => {
+    render(
+      <DiaryScreen onBack={noop} onOpenWizard={noop} profile={makeProfile()}
+        loadDay={async () => oneMeal()}
+        loadWeek={weekData} loadWeight={noWeight} saveWater={noWater} />,
+    );
+    await screen.findByTitle(/Серия/);
+    fireEvent.click(screen.getAllByLabelText("Удалить приём")[0]);
+    await waitFor(() => expect(screen.queryByTitle(/Серия/)).toBeNull());
+
+    fireEvent.click(screen.getByText("Вернуть"));
+    await waitFor(() => expect(screen.queryByTitle(/Серия/)).toBeTruthy());
   });
 });

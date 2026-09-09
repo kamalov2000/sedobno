@@ -10,15 +10,29 @@ interface Props {
   text?: string;
   /** Отступ сверху; по умолчанию 14 (между карточками экрана). */
   marginTop?: number;
+  /** Разбор правили после того, как ремарка написана: она описывает ПЕРВОНАЧАЛЬНУЮ
+   *  оценку и текущим числам может противоречить. Живой случай 08.09: пользователь
+   *  уменьшил желтки с 3 до 2, карточка честно показала 2 и 173 ккал, а ремарка внизу
+   *  продолжала говорить «по 3 шт». Числа и текст расходились, и человеку неоткуда было
+   *  понять, какому из них верить. Помечаем — вместо того чтобы прятать: в ремарке есть
+   *  и полезное (какие допущения сделаны при распознавании). */
+  stale?: boolean;
 }
 
-export default function ModelTake({ text, marginTop = 14 }: Props) {
+export default function ModelTake({ text, marginTop = 14, stale = false }: Props) {
   const t = text?.trim();
   if (!t) return null;
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "var(--bg-soft)", borderRadius: 12, padding: "12px 14px", marginTop }}>
       <i className="ti ti-sparkles" aria-hidden="true" style={{ fontSize: 16, color: "var(--cal-num)", flex: "none", marginTop: 2 }} />
-      <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--text)", textWrap: "pretty" }}>{t}</span>
+      <span style={{ fontSize: 13.5, lineHeight: 1.5, color: "var(--text)", textWrap: "pretty" }}>
+        {stale && (
+          <span style={{ display: "block", fontSize: 12, color: "var(--text3)", marginBottom: 3 }}>
+            Первоначальная оценка — до ваших правок
+          </span>
+        )}
+        {t}
+      </span>
     </div>
   );
 }

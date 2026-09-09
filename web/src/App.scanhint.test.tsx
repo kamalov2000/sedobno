@@ -36,7 +36,15 @@ const stubTelegram = () => {
 };
 
 /** Снять кадр во вкладке «Состав» и отправить на скан (кадр сначала стажится). */
+/** Приложение с 09.09 открывается вкладкой «Калории» — чтобы снять ЭТИКЕТКУ,
+ *  надо сначала переключиться на «Состав». Раньше этот шаг был не нужен: стартовой
+ *  вкладкой был сканер, и тест молча пользовался дефолтом. */
+async function goToScanTab() {
+  fireEvent.click(await screen.findByText("Состав"));
+}
+
 async function shootLabel() {
+  await goToScanTab();
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [new File([new Uint8Array([7, 7])], "label.jpg", { type: "image/jpeg" })] } });
   fireEvent.click(await screen.findByText(/Готово, проверить/));

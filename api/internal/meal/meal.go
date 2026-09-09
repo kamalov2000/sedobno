@@ -221,7 +221,9 @@ func (p *Pipeline) callTextGated(ctx context.Context, a llm.MealAnalyzer, text s
 // человеком и додуманное ею.
 func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
 	res.Confidence = clamp01(ma.Confidence)
-	res.Note = strings.TrimSpace(ma.Note)
+	// Ремарку модели чистим: она уходит человеку как есть, а модель иногда тащит в неё
+	// наш контракт («считаются сервером по pieces»). См. sanitizeNote.
+	res.Note = sanitizeNote(ma.Note)
 	switch {
 	case ma.LooksLikeLabel:
 		res.Status = StatusLabelDetected

@@ -277,3 +277,22 @@ describe("HomeScreen — заплатить можно, пока доступ е
     expect(screen.queryByText("Оформить подписку")).toBeNull();
   });
 });
+
+// Стартовая вкладка. Приложение открывалось «Составом» вопреки приветствию, которое ведёт
+// калориями (проверка 08.09: «выбран Состав, показан текст Сфотографируйте состав»).
+// Тест держит сам ДЕФОЛТ на уровне App, а не подпись экрана.
+describe("стартовая вкладка", () => {
+  it("режим «Калории» показывает камеру еды, а не сканер состава", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, meals_left: 29, trial_active: true, trial_days_left: 6 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.getByText("Сфотографировать еду")).toBeTruthy();
+    expect(screen.queryByText("Сканировать состав")).toBeNull();
+  });
+});

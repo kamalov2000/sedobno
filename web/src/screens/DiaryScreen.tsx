@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
-import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal } from "../meal";
+import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal, round1 } from "../meal";
 import { haptic } from "../telegram";
 import MacroSegments from "../components/MacroSegments";
 import WaterCard from "../components/WaterCard";
@@ -194,6 +194,30 @@ export default function DiaryScreen({
   const rawItems = data?.items ?? [];
   const items = pending ? rawItems.filter((i) => i.id !== pending.id) : rawItems;
   const dayEmpty = items.length === 0;
+
+  // Пока удаление отложено («Вернуть», 5 секунд), приём уже убран из СПИСКА, но итог дня
+  // и серия приходят с сервера и о нём ещё не знают. Экран из-за этого противоречил сам
+  // себе: пустой дневник и рядом «540 ккал» с «Серия: 1 день» (проверка 08.09). Считаем
+  // оба оптимистично — ровно так же, как список.
+  const total = (() => {
+    if (!data?.total) return data?.total;
+    if (!pending?.total) return data.total;
+    const p = pending.total;
+    return {
+      ...data.total, // day и meals_count берём как есть, вычитаем только числа приёма
+      meals_count: Math.max(0, data.total.meals_count - 1),
+      kcal: round1(data.total.kcal - p.kcal),
+      protein_g: round1(data.total.protein_g - p.protein_g),
+      fat_g: round1(data.total.fat_g - p.fat_g),
+      carb_g: round1(data.total.carb_g - p.carb_g),
+    };
+  })();
+
+  // Серию оптимистично НЕ пересчитываем: сколько дней останется в серии после удаления,
+  // знает только сервер (вчерашние записи нам тут неизвестны). Но и показывать прежнее
+  // число нельзя — оно про день, которого уже нет. Поэтому на опустевшем дне серию
+  // просто скрываем: честнее убрать, чем соврать числом. Вернул приём — вернулась и она.
+  const streak = pending && dayEmpty ? undefined : data?.streak;
   const canShare = !dayEmpty && !!onShare;
 
   return (
@@ -233,7 +257,7 @@ export default function DiaryScreen({
             day={day}
             today={today}
             items={items}
-            total={data?.total}
+            total={total}
             profile={hasNorm ? profile : undefined}
             loading={phase === "loading"}
             onPrev={() => goDay(-1)}
@@ -241,7 +265,7 @@ export default function DiaryScreen({
             onTrash={onTrash}
             onOpenWizard={onOpenWizard}
             water={data ? { ml: data.water_ml, goalMl: data.water_goal_ml } : undefined}
-            streak={data?.streak}
+            streak={streak}
             onWater={onWater}
             weightSummary={weight?.summary}
             onOpenWeight={onOpenWeight}

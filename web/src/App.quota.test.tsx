@@ -65,7 +65,15 @@ afterEach(() => {
 });
 
 /** Снять кадр и отправить его на проверку — ровно тем путём, что и пользователь. */
+/** Приложение с 09.09 открывается вкладкой «Калории» — чтобы снять ЭТИКЕТКУ,
+ *  надо сначала переключиться на «Состав». Раньше этот шаг был не нужен: стартовой
+ *  вкладкой был сканер, и тест молча пользовался дефолтом. */
+async function goToScanTab() {
+  fireEvent.click(await screen.findByText("Состав"));
+}
+
 async function scanFromHome() {
+  await goToScanTab();
   const input = document.querySelector('input[type="file"]') as HTMLInputElement;
   const file = new File([new Uint8Array([1, 2, 3])], "label.jpg", { type: "image/jpeg" });
   fireEvent.change(input, { target: { files: [file] } });
@@ -84,6 +92,9 @@ describe("остаток проверок на главном", () => {
     getMe.mockRejectedValue(new Error("сеть недоступна"));
     stubTelegram();
     render(<App />);
+    // Счётчик контекстен вкладке: на «Калориях» он про разборы, на «Составе» — про
+    // проверки. Этот тест про ПРОВЕРКИ, поэтому переключаемся до первого утверждения.
+    await goToScanTab();
 
     expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     await scanFromHome();
@@ -98,6 +109,9 @@ describe("остаток проверок на главном", () => {
     getMe.mockResolvedValue({ ...bootMe, scans_left: 2 } as Me);
     stubTelegram();
     render(<App />);
+    // Счётчик контекстен вкладке: на «Калориях» он про разборы, на «Составе» — про
+    // проверки. Этот тест про ПРОВЕРКИ, поэтому переключаемся до первого утверждения.
+    await goToScanTab();
 
     expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     await scanFromHome();
@@ -110,6 +124,9 @@ describe("остаток проверок на главном", () => {
   it("на первом показе главного лишнего запроса /api/me нет — профиль пришёл с /auth", async () => {
     stubTelegram();
     render(<App />);
+    // Счётчик контекстен вкладке: на «Калориях» он про разборы, на «Составе» — про
+    // проверки. Этот тест про ПРОВЕРКИ, поэтому переключаемся до первого утверждения.
+    await goToScanTab();
 
     expect((await screen.findByText(/Осталось/)).textContent).toContain("5 из 30");
     expect(getMe).not.toHaveBeenCalled();

@@ -84,6 +84,24 @@ const MANUAL_START_GRAMS = 100;
  *  их нет — уходят только ккал). */
 type Draft = MealItem & { manual?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number };
 
+/** Компактный слепок состава приёма для сравнения «трогали или нет». Сравниваем ровно
+ *  то, о чём говорит ремарка модели: блюда, их вес, калорийность и штуки. Служебные поля
+ *  черновика (per100Raw и прочее) в слепок не входят — ввод цифр в поле ещё не правка. */
+function mealShape(items: { name: string; grams: number; kcal: number; yolks?: number; whites?: number; pieces?: { kind: string; count: number }[] }[]): string {
+  return items
+    .map((d) =>
+      [
+        d.name.trim(),
+        d.grams,
+        d.kcal,
+        d.yolks ?? 0,
+        d.whites ?? 0,
+        (d.pieces ?? []).map((p) => `${p.kind}:${p.count}`).join(","),
+      ].join("|"),
+    )
+    .join(";");
+}
+
 function parseNum(raw: string): number | null {
   const n = parseFloat(raw.replace(",", "."));
   return Number.isFinite(n) ? n : null;
@@ -120,6 +138,11 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // Ручной приём стартует пустым блюдом — КРОМЕ случая, когда блюда уже оценены по
   // текстовому описанию (backlog п.2): тогда экран открывается на них, и вписывать
   // ничего не нужно, только проверить и поправить.
+  // Снимок блюд на момент открытия. Нужен, чтобы отличить «человек ничего не трогал»
+  // от «человек поправил порцию»: ремарка модели описывает ПЕРВОНАЧАЛЬНУЮ оценку и
+  // после правок начинает противоречить числам (живой случай 08.09 с желтками).
+  const [initialSnapshot] = useState(() => mealShape(result.dishes ?? []));
+
   const [dishes, setDishes] = useState<Draft[]>(() => {
     const given = result.dishes ?? [];
     if (!manual) return given;
@@ -446,6 +469,11 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   const n = dishes.length;
   const left = mealsLeft ?? result.meals_left; // из me; фолбэк на result (витрина)
   const chip = isSubscribed || left < 0 ? "БЕЗЛИМИТ" : `КАЛОРИИ ${Math.max(0, left)}${mealLimit ? `/${mealLimit}` : ""}`;
+  // Ремарка устарела, если состав блюд изменился с момента открытия. Сравниваем снимком:
+  // мутаций у блюда много (граммовка, штуки, имя, удаление), и ставить флаг в каждой —
+  // способ однажды забыть одну из них.
+  const noteStale = mealShape(dishes) !== initialSnapshot;
+
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -632,7 +660,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
         {/* Разбор модели о тарелке (note) тем же стилем, что и тейк сканера. При
             lowConfidence note уже показан в плашке «оценка на глаз» выше — тогда здесь
             не дублируем. У ручного приёма note модели нет. */}
-        {!lowConfidence && fromModel && <ModelTake text={result.note} />}
+        {!lowConfidence && fromModel && <ModelTake text={result.note} stale={noteStale} />}
 
         <div style={{ height: 16 }} />
       </div>
