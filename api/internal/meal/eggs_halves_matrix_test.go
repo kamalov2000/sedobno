@@ -145,3 +145,46 @@ func TestДвеПоловинкиРавныЦеломуЯйцу(t *testing.T) {
 			hp, hf, hc, whole[0].ProteinG, whole[0].FatG, whole[0].CarbG)
 	}
 }
+
+// Половинки и целые яйца в ОДНОМ блюде — это одни и те же яйца, описанные дважды.
+// Сложить оба вклада значит удвоить порцию: три половинки (117) плюс «2 целых» (156)
+// дали бы 273 ккал вместо 117. Оставляем половинки — у разрезанного яйца это точнее.
+func TestПоловинкиИЦелыеВОдномБлюде_НеСкладываются(t *testing.T) {
+	d := llm.MealItem{
+		Name: "варёные яйца половинками", Confidence: 0.8,
+		Pieces: []llm.MealPiece{
+			{Kind: "egg_half", Count: 3},
+			{Kind: "yolk", Count: 2},
+			{Kind: "white", Count: 2},
+		},
+	}
+	got := sanitizeDishes([]llm.MealItem{d})
+	_, kcal, _, _, _ := pieceMacros(got[0].Pieces)
+	if total := got[0].Kcal + kcal; total != 117 {
+		t.Errorf("итог %v ккал, ждали 117 — яйца посчитаны и половинками, и целыми", total)
+	}
+	for _, p := range got[0].Pieces {
+		if p.Kind == kindYolk || p.Kind == kindWhite {
+			t.Errorf("целая часть осталась рядом с половинками: %+v", p)
+		}
+	}
+	if !got[0].NeedsReview {
+		t.Error("противоречивый счёт не помечен на проверку")
+	}
+}
+
+// Счётчик штук у блюда с половинками тоже обнуляется: иначе сервер посчитал бы яйца по
+// yolks/whites поверх половинок.
+func TestПоловинкиГасятСчётчикШтук(t *testing.T) {
+	d := llm.MealItem{
+		Name: "яйца", Yolks: 2, Whites: 2, Confidence: 0.8,
+		Pieces: []llm.MealPiece{{Kind: "egg_half", Count: 3}},
+	}
+	got := sanitizeDishes([]llm.MealItem{d})
+	if got[0].Yolks != 0 || got[0].Whites != 0 {
+		t.Errorf("счётчик штук остался: %d/%d", got[0].Yolks, got[0].Whites)
+	}
+	if got[0].DishKind == DishKindEggs {
+		t.Error("блюдо ушло в штучный счётчик, хотя в нём половинки")
+	}
+}

@@ -199,7 +199,8 @@ func asEggDish(d llm.MealItem) (llm.MealItem, bool) {
 	// приблизительное число с приглашением поправить честнее точного, но неверного.
 	// Половинки в штучный счётчик не отдаём ВООБЩЕ: их посчитает реестр примитивов, где
 	// половинка стоит ровно половину яйца. Три половинки так дают 117 ккал, а не 78 (вниз)
-	// и не 234 (вверх) — округлять нечего.
+	// и не 234 (вверх) — округлять нечего. Приведение блюда в порядок (снятие целых
+	// частей, описывающих те же яйца) делает fixEggHalves у вызывающей стороны.
 	if hasEggHalves(d.Pieces) {
 		return d, false
 	}
@@ -233,6 +234,38 @@ func markNeedsReview(d llm.MealItem) llm.MealItem {
 	d.NeedsReview = true
 	if d.Confidence > reviewConfidenceCap {
 		d.Confidence = reviewConfidenceCap
+	}
+	return d
+}
+
+// fixEggHalves убирает двойной счёт у блюда с половинками.
+//
+// Половинки и целые части (желток/белок) в ОДНОМ блюде — это одни и те же яйца,
+// описанные двумя способами: модель посчитала и срезы, и «сколько там яиц». Сложить оба
+// вклада значит удвоить порцию — ровно та ошибка, из-за которой три половинки когда-то
+// стали 234 ккал. Оставляем половинки: у разрезанного яйца это более точный счёт (полтора
+// яйца в целых частях не выражаются). Блюдо помечаем на проверку — человек видит
+// приблизительность и может поправить.
+func fixEggHalves(d llm.MealItem) llm.MealItem {
+	if !hasEggHalves(d.Pieces) {
+		return d
+	}
+	kept := make([]llm.MealPiece, 0, len(d.Pieces))
+	var dropped bool
+	for _, p := range d.Pieces {
+		if p.Kind == kindYolk || p.Kind == kindWhite {
+			dropped = true
+			continue
+		}
+		kept = append(kept, p)
+	}
+	d.Pieces = kept
+	// Счётчики блюда тоже обнуляем: они описывают те же яйца.
+	if d.Yolks > 0 || d.Whites > 0 {
+		d.Yolks, d.Whites, dropped = 0, 0, true
+	}
+	if dropped {
+		d = markNeedsReview(d)
 	}
 	return d
 }
