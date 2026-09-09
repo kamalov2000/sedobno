@@ -1,6 +1,7 @@
 package scoring
 
 import (
+	"strings"
 	"testing"
 
 	appconfig "github.com/sostav/api/config"
@@ -215,5 +216,42 @@ func TestScore_PenalizedМножествоВиновников(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Прогон матрицы этикеток на реальных фото 09.09 вскрыл дыру: у добавок из словаря
+// основание штрафа было, а у правил-маркеров (сахар, соль, пальма, трансжиры) — нет.
+// Сахар при этом самый крупный штраф в наборе, и он оставался единственным
+// необъяснённым: «−15 и почему?».
+func TestScore_КаждыйШтрафОбъяснён(t *testing.T) {
+	c := load(t)
+	items := []Ingredient{
+		{Name: "сахар", Category: MarkerCategory, Position: 2, Matched: true, Risk: 1},
+		{Name: "соль", Category: MarkerCategory, Position: 3, Matched: true, Risk: 1},
+		{Code: "E211", Name: "бензоат натрия", Position: 5, Matched: true, Risk: 2, Basis: "ДСП 5 мг/кг, EFSA 2016"},
+	}
+	res := c.Score(items)
+	if len(res.Breakdown) == 0 {
+		t.Fatal("вычетов нет — проверять нечего")
+	}
+	for _, d := range res.Breakdown {
+		if d.Source == "" {
+			t.Errorf("штраф «%s» (−%d, правило %q) без основания — человеку нечем объяснить балл", d.Title, d.Penalty, d.Rule)
+		}
+		if d.Rule == "" {
+			t.Errorf("штраф «%s» без идентификатора правила — поддержке нечем восстановить расчёт", d.Title)
+		}
+	}
+	// Словарное основание не подменяется описанием правила: у добавки оно точнее.
+	for _, d := range res.Breakdown {
+		if d.Code == "E211" && d.Source != "ДСП 5 мг/кг, EFSA 2016" {
+			t.Errorf("словарное основание потеряно: %q", d.Source)
+		}
+	}
+	// И наоборот: у нашего правила источник честно назван нашим, а не чужим.
+	for _, d := range res.Breakdown {
+		if d.Rule == "sugar" && !strings.Contains(d.Source, "Правило Съедобно") {
+			t.Errorf("правило-маркер выдаёт чужое основание: %q", d.Source)
+		}
 	}
 }

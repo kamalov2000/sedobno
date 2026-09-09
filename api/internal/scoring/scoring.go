@@ -223,7 +223,8 @@ func (c *Config) Score(items []Ingredient) Result {
 				Capped:  true,
 				// Поимённого виновника тут нет по устройству: потолок обрезал сумму по
 				// КЛАССУ, и приписать её одной добавке значило бы соврать.
-				Rule: "risk_cap",
+				Rule:   "risk_cap",
+				Source: ruleBasis("risk_cap"),
 			})
 			continue
 		}
@@ -231,7 +232,7 @@ func (c *Config) Score(items []Ingredient) Result {
 			breakdown = append(breakdown, Deduction{
 				Title: displayName(it), Penalty: c.riskEach(r),
 				Code: it.Code, Ingredient: displayName(it),
-				Rule: fmt.Sprintf("risk%d_each", r), Source: it.Basis,
+				Rule: fmt.Sprintf("risk%d_each", r), Source: basisOr(it.Basis, ""),
 			})
 		}
 	}
@@ -245,7 +246,7 @@ func (c *Config) Score(items []Ingredient) Result {
 		flags = append(flags, Flag{Code: it.Code, Title: "Добавленный сахар", Reason: it.VerdictShort, Penalty: pen, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{
 			Title: "добавленный сахар", Penalty: pen,
-			Code: it.Code, Ingredient: displayName(*it), Rule: "sugar", Source: it.Basis,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "sugar", Source: basisOr(it.Basis, "sugar"),
 		})
 	}
 	// Трансжиры.
@@ -255,7 +256,7 @@ func (c *Config) Score(items []Ingredient) Result {
 		flags = append(flags, Flag{Code: it.Code, Title: "Трансжиры", Reason: it.VerdictShort, Penalty: c.Transfat, Risk: 3})
 		breakdown = append(breakdown, Deduction{
 			Title: "трансжиры", Penalty: c.Transfat,
-			Code: it.Code, Ingredient: displayName(*it), Rule: "transfat", Source: it.Basis,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "transfat", Source: basisOr(it.Basis, "transfat"),
 		})
 	}
 	// Пальмовое масло.
@@ -265,7 +266,7 @@ func (c *Config) Score(items []Ingredient) Result {
 		flags = append(flags, Flag{Code: it.Code, Title: "Пальмовое масло", Reason: it.VerdictShort, Penalty: c.Palm, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{
 			Title: "пальмовое масло", Penalty: c.Palm,
-			Code: it.Code, Ingredient: displayName(*it), Rule: "palm", Source: it.Basis,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "palm", Source: basisOr(it.Basis, "palm"),
 		})
 	}
 	// Соль в первых позициях.
@@ -275,7 +276,7 @@ func (c *Config) Score(items []Ingredient) Result {
 		flags = append(flags, Flag{Code: it.Code, Title: "Соль в начале состава", Reason: it.VerdictShort, Penalty: c.SaltTop, Risk: maxInt(it.Risk, 1)})
 		breakdown = append(breakdown, Deduction{
 			Title: "соль в начале состава", Penalty: c.SaltTop,
-			Code: it.Code, Ingredient: displayName(*it), Rule: "salt_top", Source: it.Basis,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "salt_top", Source: basisOr(it.Basis, "salt_top"),
 		})
 	}
 
@@ -363,4 +364,37 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ruleBasis — основание для правил, у которых НЕТ словарной записи. Прогон матрицы
+// этикеток 09.09 показал дыру: у добавок основание бралось из словаря (sources_note), а
+// правила-маркеры — сахар, соль, пальма, трансжиры — приходили с пустым источником. Для
+// человека это «−15 и почему?»: самый крупный штраф в наборе оказывался единственным
+// необъяснённым.
+//
+// Здесь основание — не внешняя ссылка, а НАШЕ правило, и говорить об этом надо прямо:
+// смешивать «так считает EFSA» и «так считаем мы» нельзя.
+func ruleBasis(rule string) string {
+	switch rule {
+	case "sugar":
+		return "Правило Съедобно: добавленный сахар в составе; чем ближе к началу списка, тем больше его в продукте"
+	case "transfat":
+		return "Правило Съедобно: частично гидрогенизированные жиры"
+	case "palm":
+		return "Правило Съедобно: пальмовое масло в составе"
+	case "salt_top":
+		return "Правило Съедобно: соль в первых позициях состава"
+	case "risk_cap":
+		return "Правило Съедобно: суммарный штраф по классу риска ограничен потолком — поимённо строки не показываем, иначе сумма не сойдётся с баллом"
+	}
+	return ""
+}
+
+// basisOr — словарное основание, а при его отсутствии — описание правила. Пустым
+// источник остаётся только там, где сказать действительно нечего.
+func basisOr(dictBasis, rule string) string {
+	if dictBasis != "" {
+		return dictBasis
+	}
+	return ruleBasis(rule)
 }
