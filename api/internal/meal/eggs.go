@@ -206,3 +206,24 @@ func asEggDish(d llm.MealItem) (llm.MealItem, bool) {
 	d.Grams, d.Kcal, d.ProteinG, d.FatG, d.CarbG = eggMacros(yolks, whites)
 	return d, true
 }
+
+// flagFractionalEggs помечает блюдо, где модель прислала ДРОБНОЕ число яичных штук.
+//
+// Живой разбор 09.09: три половинки варёного яйца на тарелке ушли как 3 желтка и 3 белка
+// (234 ккал вместо ~117) — модель считала видимые срезы, а не яйца. Промпт теперь велит
+// в таких случаях оценивать массой, но промпт — просьба. Дробное количество, дошедшее до
+// сервера, означает ровно эту неоднозначность: округление в любую сторону ошибётся на
+// пол-яйца, и человек должен об этом знать и иметь возможность поправить.
+func flagFractionalEggs(d llm.MealItem) llm.MealItem {
+	for _, p := range d.Pieces {
+		if !isEggPieceKind(p.Kind) || !p.Fractional {
+			continue
+		}
+		d.NeedsReview = true
+		if d.Confidence > reviewConfidenceCap {
+			d.Confidence = reviewConfidenceCap
+		}
+		return d
+	}
+	return d
+}

@@ -185,10 +185,16 @@ func normPieces(in []llm.MealPiece) []llm.MealPiece {
 			if i, seen := at[kind]; seen {
 				out[i].Count = clampPieces(out[i].Count + n)
 				out[i].Assumed = out[i].Assumed && p.Assumed
+				// Дробность «липкая»: если хоть одна из слитых строк была дробной,
+				// результат тоже неточен, и терять этот след при слиянии нельзя.
+				out[i].Fractional = out[i].Fractional || p.Fractional
 				continue
 			}
 			at[kind] = len(out)
-			out = append(out, llm.MealPiece{Kind: kind, Count: n, Assumed: p.Assumed})
+			// Fractional переносим: normPieces пересобирает элементы с нуля, и без явного
+			// переноса признак «модель прислала 1,5 желтка» умирал прямо здесь — раньше,
+			// чем его успевал увидеть тот, ради кого он заведён.
+			out = append(out, llm.MealPiece{Kind: kind, Count: n, Assumed: p.Assumed, Fractional: p.Fractional})
 		}
 	}
 	if len(out) == 0 {
