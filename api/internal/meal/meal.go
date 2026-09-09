@@ -324,6 +324,7 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		d = flagFractionalEggs(d)
 		d = fixCutEggs(d)
 		d = fixEggHalves(d)
+		d = flagHalvesCount(d)
 		// Жир, который уже в базовой оценке блюда (жарка, выпечка), вторым слоем не
 		// считаем: промпт об этом просит, но одна и та же «жареная картошка» в двух
 		// прогонах подряд приходила и без ложек, и с двумя (см. fat.go).

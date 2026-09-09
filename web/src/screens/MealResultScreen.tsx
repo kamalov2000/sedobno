@@ -867,11 +867,22 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove }: { dish: Mea
       {dish.needs_review && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, fontSize: 11.5, color: "var(--cal-num)", lineHeight: 1.4 }}>
           <i className="ti ti-alert-triangle" aria-hidden="true" style={{ fontSize: 13, flex: "none" }} />
-          Проверьте калорийность — оценка ненадёжна
+          {reviewHint(dish)}
         </div>
       )}
     </div>
   );
+}
+
+/** Текст пометки «проверьте» — по причине, а не общий на все случаи. У разрезанных яиц
+ *  проблема в СЧЁТЕ срезов (прогон 09.09: на фото четыре половинки, модель увидела три —
+ *  одна лежала белком вверх), и звать проверять калорийность там бессмысленно: арифметика
+ *  как раз точна. Число правится тапом по чипсу «Половинка» рядом. */
+export function reviewHint(dish: { pieces?: { kind: string; count: number }[] }): string {
+  const halves = (dish.pieces ?? []).some((p) => p.kind === "egg_half" && p.count > 0);
+  return halves
+    ? "Проверьте количество половинок — на фото их легко просчитать"
+    : "Проверьте калорийность — оценка ненадёжна";
 }
 
 // Карточка ручного блюда: два поля ввода вместо распознанных чисел. У ручного блюда

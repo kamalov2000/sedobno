@@ -2,6 +2,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import MealResultScreen from "./MealResultScreen";
+import { reviewHint } from "./MealResultScreen";
 import { makeMealResult, makeMealHistory } from "../fixtures";
 import { diaryItemToResult } from "../meal";
 
@@ -834,5 +835,26 @@ describe("MealResultScreen — компоненты и происхождени�
     // click: степпер держит нажатие для автоповтора).
     fireEvent.pointerDown(screen.getAllByLabelText("Больше грамм")[0]);
     expect(screen.getAllByText("изменено вами").length).toBeGreaterThan(0);
+  });
+});
+
+// Разрезанные яйца: число срезов на фото сосчитать трудно (прогон 09.09 — четыре
+// половинки на тарелке, модель увидела три), поэтому блюдо приходит с пометкой. Пометка
+// обязана говорить про КОЛИЧЕСТВО: звать проверять калорийность там бессмысленно —
+// арифметика как раз точна, и человек пошёл бы искать ошибку не там.
+describe("MealResultScreen — пометка у половинок", () => {
+  it("у блюда с половинками просит проверить количество", () => {
+    const text = reviewHint({ pieces: [{ kind: "egg_half", count: 3 }] });
+    expect(text).toContain("количество половинок");
+    expect(text).not.toContain("калорийность");
+  });
+
+  it("у остальных блюд текст прежний — про калорийность", () => {
+    expect(reviewHint({ pieces: [{ kind: "butter", count: 1 }] })).toContain("калорийность");
+    expect(reviewHint({})).toContain("калорийность");
+  });
+
+  it("снятые половинки (count=0) пометку не меняют", () => {
+    expect(reviewHint({ pieces: [{ kind: "egg_half", count: 0 }] })).toContain("калорийность");
   });
 });
