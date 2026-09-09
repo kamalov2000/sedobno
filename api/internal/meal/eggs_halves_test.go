@@ -59,3 +59,57 @@ func TestFractionalAddon_НеТревожит(t *testing.T) {
 		t.Error("дробная ложка масла подняла флаг проверки — предупреждение обесценится")
 	}
 }
+
+// Половинки НЕ загоняем в штучный счётчик: он умеет только целые яйца и неизбежно
+// округлит полтора. Живой прогон 09.09 показал обе стороны ошибки — сперва 234 ккал
+// вместо 117 (округление вверх), затем 78 (счётчик переписал честную оценку массой).
+func TestCutEggs_ОстаютсяОценкойПоМассе(t *testing.T) {
+	// Модель оценила три половинки массой — 82 г, 117 ккал. Счётчик не должен это трогать.
+	d := llm.MealItem{
+		Name: "половинки варёного яйца", Grams: 82, Kcal: 117,
+		ProteinG: 10.3, FatG: 8.2, CarbG: 0.9, Confidence: 0.9,
+	}
+	got := sanitizeDishes([]llm.MealItem{d})
+	if len(got) != 1 {
+		t.Fatalf("блюд на выходе %d", len(got))
+	}
+	if got[0].Grams != 82 {
+		t.Errorf("масса переписана счётчиком: %v вместо 82", got[0].Grams)
+	}
+	if got[0].Kcal < 100 || got[0].Kcal > 130 {
+		t.Errorf("ккал ушли от оценки модели: %v (ждали ~117)", got[0].Kcal)
+	}
+	if got[0].DishKind == DishKindEggs {
+		t.Error("разрезанные яйца превращены в штучное блюдо — полтора яйца там не выражаются")
+	}
+	if !got[0].NeedsReview {
+		t.Error("приблизительная порция не помечена на проверку")
+	}
+}
+
+// Целые яйца по-прежнему идут штучным счётчиком: там он точнее любой оценки на глаз.
+func TestWholeEggs_ОстаютсяШтучными(t *testing.T) {
+	d := llm.MealItem{Name: "варёные яйца", Yolks: 2, Whites: 2, Confidence: 0.9}
+	got := sanitizeDishes([]llm.MealItem{d})
+	if got[0].DishKind != DishKindEggs {
+		t.Error("целые яйца перестали считаться штуками")
+	}
+	if got[0].NeedsReview {
+		t.Error("целые яйца ошибочно помечены на проверку")
+	}
+}
+
+func TestIsCutEggDish(t *testing.T) {
+	yes := []string{"половинки варёного яйца", "яйцо, разрезанное пополам", "нарезанное яйцо", "яйцо дольками"}
+	for _, n := range yes {
+		if !isCutEggDish(n) {
+			t.Errorf("isCutEggDish(%q)=false", n)
+		}
+	}
+	no := []string{"варёные яйца", "яичница", "омлет", "яйцо пашот"}
+	for _, n := range no {
+		if isCutEggDish(n) {
+			t.Errorf("isCutEggDish(%q)=true", n)
+		}
+	}
+}

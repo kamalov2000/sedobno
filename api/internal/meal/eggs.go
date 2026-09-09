@@ -189,6 +189,20 @@ func asEggDish(d llm.MealItem) (llm.MealItem, bool) {
 	if !isEggDish(d.Name) && d.DishKind != DishKindEggs && !baseIsSameEggs(d) {
 		return d, false
 	}
+	// РАЗРЕЗАННЫЕ яйца в штучный счётчик не загоняем. Счётчик умеет только ЦЕЛЫЕ яйца, и
+	// «три половинки» он неизбежно округлит: 1,5 → 1 (недосчёт трети порции) или → 2
+	// (приписанная еда). Живой прогон 09.09 показал обе стороны: до правки промпта три
+	// половинки давали 234 ккал, после — 78 вместо ~117, потому что счётчик переписывал
+	// массу, честно оценённую моделью.
+	//
+	// Поэтому у «половинок» оставляем оценку массой как есть и помечаем на проверку:
+	// приблизительное число с приглашением поправить честнее точного, но неверного.
+	//
+	// Пометку на проверку ставит flagCutEggs у вызывающей стороны: здесь возвращается
+	// ЧУЖОЕ блюдо (ok=false), и вызывающий его правку выбрасывает — метке тут не выжить.
+	if isCutEggDish(d.Name) && d.Grams > 0 {
+		return d, false
+	}
 	yolks, whites := clampEggs(d.Yolks), clampEggs(d.Whites)
 	if yolks == 0 && whites == 0 {
 		y, w := eggPieceCounts(d.Pieces)
@@ -207,6 +221,25 @@ func asEggDish(d llm.MealItem) (llm.MealItem, bool) {
 	return d, true
 }
 
+// markNeedsReview просит показать блюдо как приблизительное: человек увидит приглашение
+// поправить и не примет оценку за измерение.
+func markNeedsReview(d llm.MealItem) llm.MealItem {
+	d.NeedsReview = true
+	if d.Confidence > reviewConfidenceCap {
+		d.Confidence = reviewConfidenceCap
+	}
+	return d
+}
+
+// flagCutEggs помечает разрезанные яйца, оставшиеся оценкой по массе (см. asEggDish).
+// Полтора яйца — это и есть приблизительность: показать её честнее, чем округлить молча.
+func flagCutEggs(d llm.MealItem) llm.MealItem {
+	if isCutEggDish(d.Name) && d.Grams > 0 {
+		return markNeedsReview(d)
+	}
+	return d
+}
+
 // flagFractionalEggs помечает блюдо, где модель прислала ДРОБНОЕ число яичных штук.
 //
 // Живой разбор 09.09: три половинки варёного яйца на тарелке ушли как 3 желтка и 3 белка
@@ -219,11 +252,24 @@ func flagFractionalEggs(d llm.MealItem) llm.MealItem {
 		if !isEggPieceKind(p.Kind) || !p.Fractional {
 			continue
 		}
-		d.NeedsReview = true
-		if d.Confidence > reviewConfidenceCap {
-			d.Confidence = reviewConfidenceCap
-		}
+		d = markNeedsReview(d)
 		return d
 	}
 	return d
+}
+
+// cutEggMarkers — признаки того, что яйцо РАЗРЕЗАНО и целых штук в нём не ровное число.
+// Список намеренно короткий: ловим то, что действительно ломает штучный счёт, а не всё
+// подряд со словом «яйцо».
+var cutEggMarkers = []string{"половин", "четвертин", "слайс", "ломтик", "дольк", "разрезан", "нарезан", "порезан"}
+
+// isCutEggDish — блюдо описано СРЕЗАМИ яйца, а не штуками.
+func isCutEggDish(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, m := range cutEggMarkers {
+		if strings.Contains(n, m) {
+			return true
+		}
+	}
+	return false
 }
