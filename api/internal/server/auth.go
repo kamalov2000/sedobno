@@ -47,8 +47,16 @@ type meView struct {
 	// только «дней осталось»: часовой пояс клиента наш сервер не знает, и округлять
 	// сутки правильнее там, где известно местное время.
 	TrialExpiresAt *time.Time `json:"trial_expires_at,omitempty"`
-	TrialDaysLeft  int        `json:"trial_days_left"`
-	TrialActive    bool       `json:"trial_active"`
+	// StartMode — с какого режима открывать приложение (meal | scan). Пусто — человек
+	// ещё не выбирал: первый запуск показывает экран выбора сценария (ТЗ, APP-01).
+	// Диплинк с сайта перебивает прежний выбор — он и есть свежее намерение.
+	StartMode string `json:"start_mode,omitempty"`
+	// PendingPlan — тариф, выбранный на сайте до оплаты (monthly | annual). Отдаётся
+	// ОДИН раз и тут же гасится: иначе пейволл открывался бы на годовом и через неделю
+	// после того, как человек передумал.
+	PendingPlan   string `json:"pending_plan,omitempty"`
+	TrialDaysLeft int    `json:"trial_days_left"`
+	TrialActive   bool   `json:"trial_active"`
 	// Streak — серия дней с записями в дневнике. Здесь, а не только в ответе дневника:
 	// причина вернуться завтра должна быть видна на ГЛАВНОМ экране, а не в разделе, куда
 	// надо догадаться зайти. Опущена при нулевой серии — показывать «0 дней» незачем.
@@ -123,8 +131,11 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Атрибуция посевов (§10): start_param диплинка сохраняется при первом заходе.
-	u, err := s.store.UpsertUser(r.Context(), tgUser.ID, tgUser.Username, auth.StartParam(req.InitData))
+	// Диплинк несёт две разные вещи: КАНАЛ посева и НАМЕРЕНИЕ (режим, тариф). Раньше
+	// весь payload уезжал в acquisition_source; с появлением ссылок вида «mode-label»
+	// это добавило бы в отчёт по размещениям каналы, которых не существует.
+	intent := auth.ParseStartIntent(auth.StartParam(req.InitData))
+	u, err := s.store.UpsertUser(r.Context(), tgUser.ID, tgUser.Username, intent.Source)
 	if err != nil {
 		s.log.Error("auth: upsert user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
@@ -143,8 +154,19 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	// Обязательное событие воронки: точка, где посев с сайта/поста превращается в
 	// пользователя. start_payload — метка кампании и режима, по ней связываются клик и
 	// первый разбор. Telegram-имя и прочие персональные данные сюда НЕ кладём (ТЗ §10).
+	// Намерение из ссылки: режим приложения и/или тариф. Пустые значения прежний выбор
+	// не затирают (см. SaveStartIntent).
+	if intent.Mode != "" || intent.Plan != "" {
+		if err := s.store.SaveStartIntent(r.Context(), u.ID, intent.Mode, intent.Plan); err != nil {
+			s.log.Warn("auth: сохранение намерения диплинка", "err", err, "user", u.ID)
+		} else {
+			u.LastMode = firstNonEmpty(intent.Mode, u.LastMode)
+		}
+	}
 	s.track(r.Context(), u.ID, evBotStart, map[string]any{
 		"start_payload": auth.StartParam(req.InitData),
+		"mode":          intent.Mode,
+		"plan":          intent.Plan,
 	})
 
 	// Вернулся — значит разблокировал: мини-апп открывается только из чата с ботом.
@@ -205,6 +227,7 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		mealsLeft = 0
 	}
 	v := meView{
+		StartMode: u.LastMode,
 		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
 		FreeScanLimit: trialScanLimit, FreeMealLimit: trialMealLimit,
@@ -218,6 +241,13 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 	if !u.IsSubscribed {
 		exp := u.TrialExpiresAt
 		v.TrialExpiresAt = &exp
+		// Отложенный тариф отдаём и гасим за один раз (best-effort: ошибка чтения не
+		// повод ронять /api/me — человек просто выберет тариф руками).
+		if plan, err := s.store.ConsumePendingPlan(ctx, u.ID); err != nil {
+			s.log.Warn("me: чтение отложенного тарифа", "err", err, "user", u.ID)
+		} else {
+			v.PendingPlan = plan
+		}
 	}
 	if u.IsSubscribed {
 		if sub, err := s.store.CurrentSubscription(ctx, u.ID); err != nil {

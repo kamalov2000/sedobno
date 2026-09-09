@@ -70,6 +70,10 @@ export function makeMe(subscription: Subscription = "active", goal: Goal = "lose
     // перекрывают — ему срок не показывают вовсе.
     trial_active: true,
     trial_days_left: 6,
+    // Фикстура изображает ВЕРНУВШЕГОСЯ пользователя: режим он уже выбирал, поэтому
+    // приложение открывает главный экран, а не спрашивает сценарий заново. Первый
+    // запуск (start_mode отсутствует) проверяется отдельно — App.choosemode.test.tsx.
+    start_mode: "meal" as const,
     trial_expires_at: "2026-09-03T08:04:05Z",
     sbp_available: true,
     sbp_recurrent: true,

@@ -32,6 +32,9 @@ interface Props {
   // не должен обещать автопродление там, где спишется один раз. Stars — отдельная история,
   // её рекуррент даёт сам Bot API и от этого флага не зависит.
   sbpRecurrent?: boolean;
+  /** Тариф, выбранный ещё на сайте (диплинк plan-month / plan-year). Пейволл
+   *  открывается сразу на нём: повторный выбор того же самого читается как сбой. */
+  initialPlan?: SubPlan;
   onSbpPay?: (plan: SubPlan) => Promise<void>;
 }
 
@@ -50,9 +53,10 @@ export default function PaywallScreen({
   onDismiss,
   sbpAvailable = false,
   sbpRecurrent = false,
+  initialPlan,
   onSbpPay,
 }: Props) {
-  const [plan, setPlan] = useState<SubPlan>("monthly");
+  const [plan, setPlan] = useState<SubPlan>(initialPlan ?? "monthly");
   const [busy, setBusy] = useState(false); // Stars
   const [busySbp, setBusySbp] = useState(false);
   const anyBusy = busy || busySbp;

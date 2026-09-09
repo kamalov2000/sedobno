@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralDishes, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
+import { scaleDish, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
 import EggCounter from "../components/EggCounter";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
@@ -82,7 +82,10 @@ const MANUAL_START_GRAMS = 100;
  *  per100Raw держит СЫРОЙ ввод, чтобы промежуточные «12,» не схлопывались при наборе.
  *  proteinPer100/… — БЖУ на 100 г, подставленные из справочника (при ручном вводе с нуля
  *  их нет — уходят только ккал). */
-type Draft = MealItem & { manual?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number };
+// touched — человек правил ЭТУ строку (граммовку, имя, штуки, добавки). APP-08: после
+// правки должно быть видно, откуда взялось число, иначе распознанное и исправленное
+// выглядят одинаково, и доверять нельзя ни тому, ни другому.
+type Draft = MealItem & { manual?: boolean; touched?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number };
 
 /** Компактный слепок состава приёма для сравнения «трогали или нет». Сравниваем ровно
  *  то, о чём говорит ремарка модели: блюда, их вес, калорийность и штуки. Служебные поля
@@ -126,7 +129,10 @@ function blankManual(): Draft {
 
 export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo }: Props) {
   const isSaved = saved != null;
-  const initialMealType = saved?.meal_type ?? null;
+  // APP-09. У сохранённого приёма тип уже выбран; у свежего — предлагаем по времени.
+  // Предположение, а не решение: чип остаётся обычным, его можно снять или сменить.
+  // Смысл в том, чтобы человек не выбирал вручную то, что и так очевидно из часов.
+  const initialMealType = saved?.meal_type ?? guessMealType(new Date());
   // Числа посчитала МОДЕЛЬ — по фото или по текстовому описанию. Только тогда осмысленны
   // строка «AI …», ремарка модели и плашка уверенности: у приёма, вписанного цифрами,
   // никакого распознавания не было, и говорить об уверенности не о чем.
@@ -185,9 +191,10 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
 
   const setGrams = (i: number, grams: number) => {
     if (!Number.isFinite(grams)) return;
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? scaleDish(d, grams) : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...scaleDish(d, grams), touched: true } : d)));
   };
-  const stepGrams = (i: number, delta: number) => setDishes((ds) => ds.map((d, idx) => (idx === i ? scaleDish(d, d.grams + delta) : d)));
+  const stepGrams = (i: number, delta: number) =>
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...scaleDish(d, d.grams + delta), touched: true } : d)));
   const removeDish = (i: number) => {
     haptic("light");
     setDishes((ds) => ds.filter((_, idx) => idx !== i));
@@ -246,21 +253,21 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // подпись. Числа правятся степперами, отдельно и осознанно; молча пересчитать их
   // вслед за именем значило бы придумать данные, которых пользователь не давал.
   const setName = (i: number, name: string) => {
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name } : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name, touched: true } : d)));
   };
 
   // Яичное блюдо: тап по счётчику штук пересчитывает КБЖУ детерминированно (те же
   // константы, что на сервере), тотал приёма обновляется на лету — как вода пересчитывает
   // мл. К числам ни LLM, ни ручной ввод не подпускаются: только штуки.
   const setEggCount = (i: number, yolks: number, whites: number) => {
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? withEggCount(d, yolks, whites) : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...withEggCount(d, yolks, whites), touched: true } : d)));
   };
 
   // Счётные единицы блюда (яйца/котлеты/… внутри составного): тап ± меняет число штук,
   // их КБЖУ считается по константам и добавляется к тоталу — как штучные яйца, но поверх
   // eyeball-базы блюда.
   const setPieceCount = (i: number, kind: string, count: number) => {
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? withPieceCount(d, kind, count) : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...withPieceCount(d, kind, count), touched: true } : d)));
   };
 
   // Подстановка из справочника: имя + ккал/100 + БЖУ/100. Граммы юзер ставит сам,
@@ -559,7 +566,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
         {fromModel && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 16, fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", textTransform: "uppercase" }}>
           <i className="ti ti-sparkles" aria-hidden="true" style={{ fontSize: 13, color: "var(--cal-num)" }} />
-          {fromText ? "AI оценил по описанию" : "AI распознал"}: {n} {pluralDishes(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
+          {fromText ? "AI оценил по описанию" : "AI распознал"}: {n} {pluralComponents(n)} · уверенность {lowConfidence ? "на глаз" : "высокая"}
         </div>
         )}
 
@@ -582,7 +589,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
                   onRemove={() => removeDish(i)}
                 />
               ) : (
-                <DishCard dish={d} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
+                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
               )}
               {/* Примитивы блюда чипсами: штучные (яйца ×4) и ложечные добавки (масло 1 ч.л.).
                   Их КБЖУ считает сервер, тотал обновляется на лету. Ряд рисуется у КАЖДОГО
@@ -789,7 +796,11 @@ function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { valu
 
 // Карточка блюда: название (правится) + ккал + удаление; степпер граммовки с
 // удержанием + ккал/100 г. Переименование числа НЕ трогает — они правятся степпером.
-function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void }) {
+// origin — откуда взялись числа этой строки (APP-08). «Распознано» ставим только на
+// разборе модели: у приёма, вписанного руками, распознавания не было, и говорить о нём
+// нечего. «Изменено вами» перебивает распознанное — это и есть то, что человек хочет
+// видеть, вернувшись к приёму через неделю.
+function DishCard({ dish, origin, onName, onStep, onSet, onRemove }: { dish: MealItem; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void }) {
   const timer = useRef<number | null>(null);
   const iv = useRef<number | null>(null);
   const stop = () => {
@@ -816,6 +827,12 @@ function DishCard({ dish, onName, onStep, onSet, onRemove }: { dish: MealItem; o
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 14, padding: "12px 12px 12px 14px" }}>
+      {origin && (
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text3)", marginBottom: 5 }}>
+          <i className={`ti ${origin === "edited" ? "ti-pencil" : "ti-sparkles"}`} aria-hidden="true" style={{ fontSize: 12 }} />
+          {origin === "edited" ? "изменено вами" : "распознано"}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <DishNameInput value={dish.name} onChange={onName} />
         <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(effectiveDishKcal(dish))} ккал</span>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100, scanDiaryPrefill } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100, scanDiaryPrefill, guessMealType } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -292,5 +292,25 @@ describe("scanDiaryPrefill — заготовка для «скан без КБ�
 
   it("хвостовые пробелы не уезжают в подставленный текст", () => {
     expect(scanDiaryPrefill("  Творожок глазированный  ")).toBe("Творожок глазированный, 1 шт");
+  });
+});
+
+// APP-09: тип приёма предлагается по времени суток. Это подсказка — человек меняет её
+// одним тапом; смысл в том, чтобы не заставлять выбирать очевидное.
+describe("guessMealType", () => {
+  const at = (h: number) => new Date(2026, 8, 9, h, 30);
+  it("угадывает по часам", () => {
+    expect(guessMealType(at(8))).toBe("breakfast");
+    expect(guessMealType(at(13))).toBe("lunch");
+    expect(guessMealType(at(19))).toBe("dinner");
+  });
+  it("ночью предлагает перекус, а не ужин", () => {
+    expect(guessMealType(at(2))).toBe("snack");
+    expect(guessMealType(at(23))).toBe("snack");
+  });
+  it("границы не проваливаются: 11:00 уже обед, 16:00 уже ужин", () => {
+    expect(guessMealType(new Date(2026, 8, 9, 11, 0))).toBe("lunch");
+    expect(guessMealType(new Date(2026, 8, 9, 16, 0))).toBe("dinner");
+    expect(guessMealType(new Date(2026, 8, 9, 4, 0))).toBe("breakfast");
   });
 });

@@ -23,12 +23,14 @@ import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, LABEL_NOT_A_LABEL_HINTS, LABEL_WRONG_BLOCK_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
+import ChooseModeScreen from "./screens/ChooseModeScreen";
 import type { PaywallReason } from "./api";
+import { setLastMode } from "./api";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
 // Подписки v2: экран управления подпиской (тариф, следующее списание, отмена).
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
+type View = "choose_mode" | "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -60,6 +62,32 @@ const LABEL_ERRORS: Record<string, ErrorCopy> = {
   },
 };
 
+/** APP-11. Человеку нужен понятный повод, а не текст исключения. Три случая, которые
+ *  реально случаются на телефоне, разводим словами; остальное — общий текст.
+ *
+ *  Оборванный по таймауту запрос (AbortError) отдельно: «Что-то пошло не так» на висящей
+ *  сети выглядит как поломка продукта, хотя чинится повтором в метро на две минуты позже. */
+function uploadErrorCopy(err: unknown): ErrorCopy {
+  const isAbort = err instanceof DOMException && err.name === "AbortError";
+  if (isAbort) {
+    return {
+      title: "Долго не отвечает",
+      subtitle: "Проверьте связь и попробуйте ещё раз — фото не потерялось.",
+      hints: CAMERA_HINTS_NETWORK,
+    };
+  }
+  if (err instanceof TypeError) {
+    // fetch бросает TypeError, когда сети нет вовсе.
+    return { title: "Нет соединения", subtitle: "Похоже, пропал интернет. Попробуйте ещё раз.", hints: CAMERA_HINTS_NETWORK };
+  }
+  return { title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." };
+}
+
+const CAMERA_HINTS_NETWORK: Hint[] = [
+  { icon: "ti-wifi", text: "Проверьте связь — Wi-Fi или мобильный интернет" },
+  { icon: "ti-refresh", text: "Повторный снимок не спишет вторую проверку" },
+];
+
 const LABEL_ERROR_FALLBACK: ErrorCopy = {
   title: "Не разглядел состав",
   subtitle: "На фото не нашлось читаемого списка ингредиентов.",
@@ -73,12 +101,23 @@ export default function App() {
   // Причина стены: её приносит ответ 402. Экран пейволла по ней меняет заголовок —
   // «неделя прошла» и «упёрся в потолок» это разные положения человека.
   const [paywallReason, setPaywallReason] = useState<PaywallReason>("trial_expired");
-  // Стартовая вкладка — КАЛОРИИ. Приложение открывалось «Составом», хотя приветствие
-  // ведёт калориями, а числа размещения 31.08 говорят то же: 43 разбора еды против 4
-  // успешных сканов, 9 человек против 2. Человек приходил за дневником и первым делом
-  // видел «Сфотографируйте состав на упаковке» — тот же мисматч, что и в /start, только
-  // на экран позже. Состав остаётся в один тап, вкладки никуда не делись.
-  const [mode, setMode] = useState<HomeMode>("meal"); // режим главного экрана: калории | состав
+  // Тариф, выбранный ещё на сайте (диплинк plan-month / plan-year). Пейволл открывается
+  // сразу на нём — второй выбор того же самого человек воспринимает как сбой.
+  const [paywallPlan, setPaywallPlan] = useState<SubPlan | undefined>(undefined);
+  // Режим главного экрана. Дефолт «meal» — фолбэк на случай, когда сервер режима не
+  // знает и экран выбора почему-то не показался; нормальный путь другой:
+  //   первый запуск  → экран выбора сценария (ТЗ, APP-01);
+  //   повторный      → последний использованный режим (me.start_mode);
+  //   диплинк с сайта → режим из ссылки, он перебивает прежний выбор.
+  const [mode, setModeState] = useState<HomeMode>("meal");
+
+  // Смена режима запоминается НА СЕРВЕРЕ: мини-апп открывают с разных устройств, и
+  // выбор, сделанный на телефоне, должен пережить переход на планшет. Ошибку сети
+  // глотаем — не смогли запомнить, значит следующий запуск просто спросит снова.
+  const setMode = useCallback((m: HomeMode) => {
+    setModeState(m);
+    void setLastMode(m).catch(() => {});
+  }, []);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");
@@ -144,6 +183,26 @@ export default function App() {
     try {
       const profile = await bootAuth();
       setMe(profile);
+      // Куда открыть приложение (ТЗ, APP-01). Сервер знает последний режим и намерение
+      // из диплинка — оба приходят одним полем start_mode: диплинк его перезаписывает,
+      // поэтому «ссылка имеет приоритет» получается само собой, без второго флага.
+      // APP-12. Тариф, выбранный на сайте, приходит один раз и сразу ведёт на пейволл:
+      // человек уже сделал выбор, и заставлять его выбирать второй раз — потерять его на
+      // ровном месте. Режим при этом всё равно применяем: вернувшись с оплаты, он попадёт
+      // туда, куда шёл.
+      if (profile.pending_plan) {
+        setPaywallPlan(profile.pending_plan);
+      }
+      if (profile.start_mode === "meal" || profile.start_mode === "scan") {
+        setModeState(profile.start_mode);
+        setView(profile.pending_plan ? "paywall" : "home");
+      } else if (profile.pending_plan) {
+        setView("paywall");
+      } else {
+        // Режима нет — человек здесь впервые. Спрашиваем прямо, вместо того чтобы
+        // угадать вкладкой и потерять его на первом экране.
+        setView("choose_mode");
+      }
       setPhase("ready");
     } catch (err) {
       const outsideTelegram = !tg()?.initData;
@@ -259,7 +318,7 @@ export default function App() {
       }
     } catch (err) {
       notify("error");
-      setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
+      setErrorCopy(uploadErrorCopy(err));
       setView("error");
     }
   }, [applyMealsLeft]);
@@ -337,7 +396,7 @@ export default function App() {
       }
     } catch (err) {
       notify("error");
-      setErrorCopy({ title: "Что-то пошло не так", subtitle: err instanceof Error ? err.message : "Попробуйте ещё раз." });
+      setErrorCopy(uploadErrorCopy(err));
       setView("error");
     }
   }, [mode, runMeal, applyScansLeft]);
@@ -438,6 +497,14 @@ export default function App() {
   // phase === "ready"
   return (
     <Shell>
+      {view === "choose_mode" && me && (
+        <ChooseModeScreen
+          onPick={(m) => {
+            setMode(m);
+            setView("home");
+          }}
+        />
+      )}
       {view === "home" && me && (
         <HomeScreen
           me={me}
@@ -762,6 +829,7 @@ export default function App() {
           onPay={onPay}
           onDismiss={() => setView("home")}
           reason={paywallReason}
+          initialPlan={paywallPlan}
           // Числа за неделю берём из /api/me: это те же счётчики, по которым сервер
           // принимает решение о доступе, — расхождению взяться неоткуда.
           mealsUsed={me?.free_meals_used ?? 0}

@@ -69,11 +69,26 @@ export function bootAuth(): Promise<Me> {
 }
 
 /** fetch с Bearer и тихим повтором при 401. */
+/** Потолок ожидания ответа. APP-11: «нет вечного состояния загрузки».
+ *  90 секунд — с большим запасом к боевому p95 (скан этикетки 24,5 с, разбор еды 7 с):
+ *  всё, что дольше, это не медленная модель, а зависшая сеть, и крутить лоадер до
+ *  скончания века нельзя. Меньше ставить опасно — оборвём законный медленный скан. */
+const REQUEST_TIMEOUT_MS = 90_000;
+
 export async function apiFetch(input: string, init: RequestInit = {}, allowReauth = true): Promise<Response> {
   if (!token) await authenticate();
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(input, { ...init, headers });
+  // Свой таймер, а не AbortSignal.timeout: последний есть не во всех вебвью Telegram,
+  // а ронять запрос из-за отсутствия API — хуже, чем не иметь таймаута.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(input, { ...init, headers, signal: init.signal ?? ctl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401 && allowReauth) {
     token = null;
     await authenticate();
@@ -463,4 +478,16 @@ export async function addWater(deltaMl: number, date = localDay()): Promise<Wate
   });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
+}
+
+/** POST /api/me/mode — запомнить режим приложения (калории | состав).
+ *  Хранится на сервере, а не в localStorage: мини-апп открывают с разных устройств,
+ *  и выбор должен переживать смену устройства (ТЗ, APP-01). */
+export async function setLastMode(mode: "meal" | "scan"): Promise<void> {
+  const res = await apiFetch("/api/me/mode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
 }

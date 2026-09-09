@@ -38,3 +38,14 @@ func (s *Server) track(ctx context.Context, userID int64, name string, props map
 func (s *Server) trackAnon(ctx context.Context, name string, props map[string]any) {
 	_ = s.store.InsertEvent(ctx, nil, name, props)
 }
+
+// firstNonEmpty — первое непустое значение. Мелочь, но без неё «намерение перебивает
+// прежний выбор» пишется тремя строками ветвлений в каждом месте.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

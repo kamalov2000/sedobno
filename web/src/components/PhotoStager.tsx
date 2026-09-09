@@ -7,6 +7,10 @@ import { haptic } from "../telegram";
 // результате и ошибке — меняются только подпись/иконка/размер стартовой кнопки.
 
 const MAX_PHOTOS = 3; // тот же потолок, что на сервере (§8)
+// Потолок размера кадра. Сервер принимает тело до 32 МБ, здесь режем раньше и мягче:
+// снимок с камеры укладывается в единицы мегабайт, а всё, что сильно больше, — это
+// исходник из галереи или вовсе не фотография. Ждать ради него загрузку незачем.
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 // Хинт мультикадра для сканера состава (по умолчанию): доп. кадры — ПРОДОЛЖЕНИЕ того же
 // списка «Состав», а не другие панели.
@@ -50,11 +54,26 @@ export default function PhotoStager({
 }: Props) {
   const [photos, setPhotos] = useState<File[]>([]);
   const [readError, setReadError] = useState(false);
+  // Ошибка САМОГО файла (формат, размер) — до отправки. Отдельно от readError: там сбой
+  // чтения, здесь заведомо непригодный кадр, и текст человеку нужен разный.
+  const [fileError, setFileError] = useState("");
   const urls = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
 
+  // APP-11. Проверяем кадр ДО отправки: иначе человек ждёт загрузку, платит попыткой
+  // и получает невнятную ошибку с сервера. Оба случая реальны — камера отдаёт HEIC,
+  // а «фото» из мессенджера может оказаться видео или гигабайтным исходником.
   const addPhoto = (f: File) => {
     setReadError(false);
+    setFileError("");
+    if (f.type && !f.type.startsWith("image/")) {
+      setFileError("Это не фотография. Нужен снимок или картинка.");
+      return;
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      setFileError(`Файл слишком большой (${Math.round(f.size / (1024 * 1024))} МБ). Снимите заново камерой.`);
+      return;
+    }
     setPhotos((p) => (p.length >= MAX_PHOTOS ? p : [...p, f]));
   };
   const removePhoto = (i: number) => {
@@ -76,6 +95,11 @@ export default function PhotoStager({
   };
 
   if (photos.length === 0) {
+    const fileErr = fileError && (
+      <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>
+        {fileError}
+      </p>
+    );
     const readErr = readError && (
       <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.4, color: "var(--danger, #d64545)", textAlign: "center" }}>
         Не удалось прочитать фото — снимите ещё раз.
@@ -86,7 +110,9 @@ export default function PhotoStager({
     if (startShape === "circle") {
       return (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
-          {readErr}
+          {fileErr}
+          {fileErr}
+        {readErr}
           <ScanButton shape="circle" diameter={startDiameter} icon={startIcon} label={startLabel} accentColor={accentColor} onColor={onColor} onFile={addPhoto} onReadError={() => setReadError(true)} />
           {caption && <div style={{ textAlign: "center" }}>{caption}</div>}
         </div>

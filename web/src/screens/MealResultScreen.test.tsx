@@ -814,3 +814,25 @@ describe("MealResultScreen — видно, что приём ещё не в дн
     expect(screen.queryByText(/Пока не в дневнике/)).toBeNull();
   });
 });
+
+// APP-06/APP-08: одна тарелка даёт КОМПОНЕНТЫ, а не блюда; после правки видно, откуда
+// взялось число. Без второго распознанное и исправленное выглядят одинаково, и доверять
+// нельзя ни тому, ни другому.
+describe("MealResultScreen — компоненты и происхождение данных", () => {
+  it("говорит «компонента», а не «блюда»", () => {
+    render(<MealResultScreen result={makeMealResult()} isSubscribed={false} onDone={noop} onRetake={noop} />);
+    const body = document.body.textContent ?? "";
+    expect(body).toMatch(/компонент/);
+    expect(body).not.toMatch(/\d+ блюд/);
+  });
+
+  it("свежий разбор помечен «распознано», после правки — «изменено вами»", () => {
+    render(<MealResultScreen result={makeMealResult()} isSubscribed={false} onDone={noop} onRetake={noop} />);
+    expect(screen.getAllByText("распознано").length).toBeGreaterThan(0);
+
+    // Правим граммовку первой строки — «больше грамм» на степпере (pointerDown, а не
+    // click: степпер держит нажатие для автоповтора).
+    fireEvent.pointerDown(screen.getAllByLabelText("Больше грамм")[0]);
+    expect(screen.getAllByText("изменено вами").length).toBeGreaterThan(0);
+  });
+});

@@ -77,3 +77,41 @@ func (s *Store) ClearUserBlocked(ctx context.Context, userID int64) error {
 	_, err := s.pool.Exec(ctx, q, userID)
 	return err
 }
+
+// SaveStartIntent сохраняет намерение из диплинка: режим приложения и выбранный тариф.
+// Пустые значения не затирают уже известные — человек мог прийти по ссылке без режима,
+// и терять его прежний выбор из-за этого незачем.
+//
+// last_mode перезаписывается КАЖДЫМ диплинком с режимом: «deep-link имеет приоритет»
+// (ТЗ, APP-01). Прежний выбор при этом и есть то, что человек хотел изменить, нажав
+// кнопку «Проверить этикетку» на сайте.
+func (s *Store) SaveStartIntent(ctx context.Context, userID int64, mode, plan string) error {
+	const q = `
+UPDATE users
+   SET last_mode     = COALESCE(NULLIF($2, ''), last_mode),
+       pending_plan  = COALESCE(NULLIF($3, ''), pending_plan)
+ WHERE id = $1`
+	_, err := s.pool.Exec(ctx, q, userID, mode, plan)
+	return err
+}
+
+// SetLastMode запоминает режим, в котором человек работает. Зовётся, когда он
+// переключает вкладку: следующий запуск откроется там же (ТЗ, APP-01).
+func (s *Store) SetLastMode(ctx context.Context, userID int64, mode string) error {
+	const q = `UPDATE users SET last_mode = $2 WHERE id = $1`
+	_, err := s.pool.Exec(ctx, q, userID, mode)
+	return err
+}
+
+// ConsumePendingPlan отдаёт отложенный тариф и сразу гасит его: намерение одноразовое.
+// Если не гасить, пейволл открывался бы на годовом тарифе и через неделю после того,
+// как человек передумал.
+func (s *Store) ConsumePendingPlan(ctx context.Context, userID int64) (string, error) {
+	const q = `UPDATE users SET pending_plan = NULL WHERE id = $1 AND pending_plan IS NOT NULL RETURNING pending_plan`
+	var plan string
+	err := s.pool.QueryRow(ctx, q, userID).Scan(&plan)
+	if err != nil {
+		return "", nil // строки нет — намерения не было, это норма
+	}
+	return plan, nil
+}

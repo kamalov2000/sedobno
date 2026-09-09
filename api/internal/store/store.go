@@ -34,7 +34,10 @@ type User struct {
 	TrialExpiresAt time.Time
 	// BlockedAt — когда человек заблокировал бота (nil — не блокировал). Ставится по
 	// окончательной ошибке Bot API, снимается при следующем входе в мини-апп.
-	BlockedAt    *time.Time
+	BlockedAt *time.Time
+	// LastMode — последний режим приложения (meal | scan). Пусто — человек ещё не
+	// выбирал, и первый запуск показывает экран выбора сценария (ТЗ, APP-01).
+	LastMode     string
 	IsSubscribed bool
 	// DigestEnabled — включён ли вечерний итог дня. Читается вместе с остальным
 	// пользователем, а не отдельным запросом: /api/me зовётся часто, и лишний
@@ -52,21 +55,21 @@ VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
 ON CONFLICT (telegram_id) DO UPDATE
   SET username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
       acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source)
-RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at`
+RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, '')`
 	var u User
 	err := s.pool.QueryRow(ctx, q, tgID, username, acquisitionSource).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode)
 	return u, err
 }
 
 // GetUserByID читает пользователя по внутреннему id (пре-чек лимита в /api/scan).
 func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	const q = `
-SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at
+SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, '')
 FROM users WHERE id = $1`
 	var u User
 	err := s.pool.QueryRow(ctx, q, id).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode)
 	return u, err
 }
 

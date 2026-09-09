@@ -135,3 +135,43 @@ func hmacSHA256(key, msg []byte) []byte {
 	m.Write(msg)
 	return m.Sum(nil)
 }
+
+// StartIntent — разобранный payload диплинка: канал посева отдельно, намерение отдельно.
+//
+// Формат: сегменты через «__», намерения — «mode-meal», «mode-label», «plan-month»,
+// «plan-year». Всё, что не намерение, склеивается обратно и остаётся ИСТОЧНИКОМ. Так
+// старые ссылки кампаний (?start=tg_ovz) работают как работали, а новые могут нести и
+// то и другое сразу: ?start=tg_ovz__mode-label.
+//
+// Разделять обязательно: без этого «mode-meal» осел бы в acquisition_source и испортил
+// отчёт по размещениям — там появился бы «канал», которого не существует.
+type StartIntent struct {
+	Source string // метка кампании (tg_ovz)
+	Mode   string // meal | scan («label» с сайта нормализуется в scan)
+	Plan   string // monthly | annual
+}
+
+// ParseStartIntent разбирает payload. Санитайзинг тот же, что у источника: чужого
+// алфавита не пропускаем.
+func ParseStartIntent(payload string) StartIntent {
+	var out StartIntent
+	var srcParts []string
+	for _, seg := range strings.Split(SanitizeStartParam(payload), "__") {
+		switch seg {
+		case "":
+			continue
+		case "mode-meal":
+			out.Mode = "meal"
+		case "mode-label", "mode-scan":
+			out.Mode = "scan"
+		case "plan-month":
+			out.Plan = "monthly"
+		case "plan-year":
+			out.Plan = "annual"
+		default:
+			srcParts = append(srcParts, seg)
+		}
+	}
+	out.Source = SanitizeStartParam(strings.Join(srcParts, "__"))
+	return out
+}

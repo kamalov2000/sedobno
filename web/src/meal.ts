@@ -326,11 +326,28 @@ export function mealTextReady(text: string): boolean {
 }
 
 /** Русская плюрализация: 1 блюдо, 2 блюда, 5 блюд. */
-export function pluralDishes(n: number): string {
+// APP-06. Разбор одной тарелки даёт КОМПОНЕНТЫ («8 компонентов»), а не восемь блюд:
+// гарнир, белок, салат и соус на одной тарелке — это один приём пищи, разложенный на
+// части. «8 блюд» читалось как обвинение в переедании.
+export function pluralComponents(n: number): string {
   const a = Math.abs(n) % 100;
   const b = a % 10;
-  if (a > 10 && a < 20) return "блюд";
-  if (b === 1) return "блюдо";
-  if (b >= 2 && b <= 4) return "блюда";
-  return "блюд";
+  if (a > 10 && a < 20) return "компонентов";
+  if (b === 1) return "компонент";
+  if (b >= 2 && b <= 4) return "компонента";
+  return "компонентов";
+}
+
+
+/** APP-09. Тип приёма по времени суток: подсказка, а не решение — человек её меняет
+ *  одним тапом. Границы бытовые, без претензии на диетологию: 4–11 завтрак,
+ *  11–16 обед, 16–22 ужин, ночью — перекус (в три часа ночи «ужин» звучит странно).
+ *
+ *  У приёма, открытого из дневника, ничего не угадываем: там тип уже выбран человеком. */
+export function guessMealType(now: Date): MealType {
+  const h = now.getHours();
+  if (h >= 4 && h < 11) return "breakfast";
+  if (h >= 11 && h < 16) return "lunch";
+  if (h >= 16 && h < 22) return "dinner";
+  return "snack";
 }

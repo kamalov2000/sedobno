@@ -352,11 +352,21 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 		// mini-app: по диплинку t.me/бот?start=tg_ovz человек сначала попадает в бот, и
 		// до мини-аппа доходят не все. Кто отвалился на приветствии — тоже пришёл с канала,
 		// и в отчёте по размещению он обязан быть виден.
-		src := startPayload(msg.Text)
-		if _, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src); err != nil {
+		intent := auth.ParseStartIntent(startPayload(msg.Text))
+		src := intent.Source
+		if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src); err != nil {
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
-		} else if src != "" {
-			s.log.Info("webhook: /start с каналом посева", "user_tg", msg.From.ID, "source", src)
+		} else {
+			// Намерение из ссылки сохраняем СРАЗУ, ещё до открытия мини-аппа: только так
+			// его можно донести до фронта — обычный t.me/bot?start=… мини-апп не видит.
+			if intent.Mode != "" || intent.Plan != "" {
+				if serr := s.store.SaveStartIntent(ctx, u.ID, intent.Mode, intent.Plan); serr != nil {
+					s.log.Warn("webhook: сохранение намерения диплинка", "err", serr, "user", u.ID)
+				}
+			}
+			if src != "" {
+				s.log.Info("webhook: /start с каналом посева", "user_tg", msg.From.ID, "source", src)
+			}
 		}
 	}
 	text := startGreeting(s.cfg.WebAppURL != "")
