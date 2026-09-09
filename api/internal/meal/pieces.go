@@ -28,6 +28,16 @@ const (
 	kindOilVeg = "oil_veg"
 	kindButter = "butter"
 	kindSugar  = "sugar"
+	// kindEggHalf — ПОЛОВИНКА варёного яйца, отдельный примитив.
+	//
+	// Зачем он нужен. Штучный счётчик умеет только целые яйца, и разрезанное яйцо в него
+	// не выражается: три половинки — это полтора яйца, а схема требует целое число. Пока
+	// половинки приходили желтками и белками, «три половинки» на фото становились тремя
+	// ЦЕЛЫМИ яйцами — 234 ккал вместо 117, вдвое больше съеденного (живой разбор 09.09).
+	// Отличить одно от другого по числам нельзя: три желтка выглядят одинаково и у трёх
+	// яиц, и у трёх половинок. Поэтому различает МОДЕЛЬ, называя вид, а сервер считает
+	// половинку ровно как половину яйца — без округлений в какую-либо сторону.
+	kindEggHalf = "egg_half"
 )
 
 // Константы ложечных добавок на 1 Ч.Л. (~5 г) — единый источник для калибровки (не магические
@@ -59,18 +69,23 @@ func pieceRegistry() map[string]pieceSpec {
 	return map[string]pieceSpec{
 		// Яйцо двумя ЧАСТЯМИ: желток и белок (целое яйцо = 1 желток + 1 белок). Константы
 		// ТОЛЬКО из EggConsts — единый источник со счётчиком яичного блюда, числа не дублируем.
-		kindYolk:   {Grams: e.YolkGrams, Kcal: e.YolkKcal, Protein: e.YolkProtein, Fat: e.YolkFat, Carb: e.YolkCarb},
-		kindWhite:  {Grams: e.WhiteGrams, Kcal: e.WhiteKcal, Protein: e.WhiteProtein, Fat: e.WhiteFat, Carb: e.WhiteCarb},
-		kindOilVeg: {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
-		kindButter: {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
-		kindSugar:  {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
+		kindYolk:  {Grams: e.YolkGrams, Kcal: e.YolkKcal, Protein: e.YolkProtein, Fat: e.YolkFat, Carb: e.YolkCarb},
+		kindWhite: {Grams: e.WhiteGrams, Kcal: e.WhiteKcal, Protein: e.WhiteProtein, Fat: e.WhiteFat, Carb: e.WhiteCarb},
+		// Половинка — ровно половина целого яйца. Числа делим здесь, а не вводим отдельной
+		// константой: единый источник (EggConsts) гарантирует, что две половинки и одно
+		// целое яйцо дадут одинаковые ккал, и человек не поймает нас на расхождении.
+		kindEggHalf: {Grams: e.WholeGrams / 2, Kcal: e.WholeKcal / 2, Protein: e.WholeProtein / 2, Fat: e.WholeFat / 2, Carb: e.WholeCarb / 2},
+		kindOilVeg:  {Grams: spoonGrams, Kcal: oilVegKcal, Fat: oilVegFat, Addon: true},
+		kindButter:  {Grams: spoonGrams, Kcal: butterKcal, Fat: butterFat, Addon: true},
+		kindSugar:   {Grams: spoonGrams, Kcal: sugarKcal, Carb: sugarCarb, Addon: true},
 	}
 }
 
 // PieceLabels — русские подписи для UI (kind → «Желток» и т.п.). Экспортируется, чтобы фронт
 // не хардкодил названия. Порядок для UI не важен — блюдо несёт свои pieces.
 var PieceLabels = map[string]string{
-	kindYolk: "Желток", kindWhite: "Белок", kindOilVeg: "Масло", kindButter: "Сливочное", kindSugar: "Сахар",
+	kindYolk: "Желток", kindWhite: "Белок", kindEggHalf: "Половинка",
+	kindOilVeg: "Масло", kindButter: "Сливочное", kindSugar: "Сахар",
 }
 
 // pieceKindAliases — имена, которыми модель называет яйцо мимо реестра частей. Схема в
@@ -86,6 +101,11 @@ var pieceKindAliases = map[string][]string{
 	"white_egg": {kindWhite},
 	"egg_yolk":  {kindYolk},
 	"yolk_egg":  {kindYolk},
+	// Половинка: модель называет её по-разному, а вид у нас один.
+	"half_egg":    {kindEggHalf},
+	"egg_halves":  {kindEggHalf},
+	"halved_egg":  {kindEggHalf},
+	"egg_half_pc": {kindEggHalf},
 }
 
 // resolveKinds переводит присланный kind в реестровые. Обычный kind — сам себя.
@@ -103,8 +123,23 @@ func isAddonKind(kind string) bool {
 	return ok && spec.Addon
 }
 
-// isEggPieceKind — штучная часть яйца (желток/белок) среди примитивов.
-func isEggPieceKind(kind string) bool { return kind == kindYolk || kind == kindWhite }
+// isEggPieceKind — яичный примитив: часть яйца (желток/белок) или половинка.
+func isEggPieceKind(kind string) bool {
+	return kind == kindYolk || kind == kindWhite || kind == kindEggHalf
+}
+
+// hasEggHalves — в блюде есть половинки. Такое блюдо штучному счётчику не отдаём: он
+// считает целые яйца, а половинок в нём ровно столько, сколько назвала модель, и
+// пересчитывать их в целые — это и есть то округление, из-за которого три половинки
+// становились тремя яйцами.
+func hasEggHalves(pieces []llm.MealPiece) bool {
+	for _, p := range pieces {
+		if p.Kind == kindEggHalf && p.Count > 0 {
+			return true
+		}
+	}
+	return false
+}
 
 // eggPieceCounts — сколько желтков и белков лежит в примитивах блюда. Вход предполагается
 // нормализованным (normPieces): виды приведены к реестровым и слиты по одному на вид.

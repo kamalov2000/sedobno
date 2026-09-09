@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100, scanDiaryPrefill, guessMealType } from "./meal";
+import { scaleDish, totalOf, mealStatusToScreen, round1, emptyMealWord, dishesBrief, diaryItemToResult, eggMacros, withEggCount, isEggDish, pieceMacros, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, pieceCountLabel, displayPieces, per100, scanDiaryPrefill, guessMealType, PIECE_CONSTS, PIECE_LABELS, EGG_WHOLE } from "./meal";
 import type { MealItem, MealDiaryItem } from "./types";
 
 const dish = (over: Partial<MealItem> = {}): MealItem => ({
@@ -312,5 +312,40 @@ describe("guessMealType", () => {
     expect(guessMealType(new Date(2026, 8, 9, 11, 0))).toBe("lunch");
     expect(guessMealType(new Date(2026, 8, 9, 16, 0))).toBe("dinner");
     expect(guessMealType(new Date(2026, 8, 9, 4, 0))).toBe("breakfast");
+  });
+});
+
+// Половинка варёного яйца: клиент дублирует константы сервера ради мгновенного
+// предпросмотра, и разойтись они не имеют права — расхождение человек увидит прямо в
+// дневнике (у сервера одно число, на экране другое).
+describe("половинка яйца", () => {
+  it("стоит ровно половину целого", () => {
+    const half = PIECE_CONSTS.egg_half;
+    expect(half.kcal * 2).toBe(EGG_WHOLE.kcal);
+    expect(half.grams * 2).toBe(EGG_WHOLE.grams);
+  });
+
+  it("три половинки дают полтора яйца, а не одно и не два", () => {
+    const t = pieceMacros([{ kind: "egg_half", count: 3 }]);
+    expect(t.kcal).toBe(117);
+    expect(pieceGrams([{ kind: "egg_half", count: 3 }])).toBe(82.5);
+  });
+
+  it("две половинки равны целому яйцу", () => {
+    const halves = pieceMacros([{ kind: "egg_half", count: 2 }]);
+    const whole = pieceMacros([{ kind: "yolk", count: 1 }, { kind: "white", count: 1 }]);
+    expect(halves.kcal).toBe(whole.kcal);
+  });
+
+  it("показывается чипсом с подписью, а не сырым kind", () => {
+    const shown = displayPieces([{ kind: "egg_half", count: 3 }]);
+    const half = shown.find((p) => p.kind === "egg_half");
+    expect(half?.count).toBe(3);
+    expect(PIECE_LABELS.egg_half).toBe("Половинка");
+  });
+
+  it("в постоянный ряд чипсов не лезет: половинки бывают редко", () => {
+    const shown = displayPieces([]);
+    expect(shown.some((p) => p.kind === "egg_half")).toBe(false);
   });
 });

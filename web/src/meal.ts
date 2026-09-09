@@ -155,6 +155,15 @@ export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealR
 // источник истины при сохранении — сервер. Значения обязаны совпадать с eggs.go.
 export const EGG_WHITE = { grams: 33, kcal: 17, protein_g: 3.6, fat_g: 0.1, carb_g: 0.2 };
 export const EGG_YOLK = { grams: 22, kcal: 61, protein_g: 2.7, fat_g: 5.2, carb_g: 0.4 }; // целое(55/78/6.3/5.3/0.6) − белок
+// Целое яйцо = желток + белок. Половинка считается от него, а не отдельными числами:
+// иначе две половинки и одно яйцо однажды разойдутся, и человек увидит это в дневнике.
+export const EGG_WHOLE = {
+  grams: EGG_YOLK.grams + EGG_WHITE.grams,
+  kcal: EGG_YOLK.kcal + EGG_WHITE.kcal,
+  protein_g: round1(EGG_YOLK.protein_g + EGG_WHITE.protein_g),
+  fat_g: round1(EGG_YOLK.fat_g + EGG_WHITE.fat_g),
+  carb_g: round1(EGG_YOLK.carb_g + EGG_WHITE.carb_g),
+};
 export const EGG_MAX_PER_KIND = 30;
 
 export const isEggDish = (d: MealItem): boolean => d.dish_kind === "eggs";
@@ -190,18 +199,27 @@ const SPOON_G = 5; // масса одной чайной ложки добавк
 export const PIECE_CONSTS: Record<string, { grams: number; kcal: number; protein_g: number; fat_g: number; carb_g: number }> = {
   yolk: EGG_YOLK,
   white: EGG_WHITE,
+  // Половинка варёного яйца — ровно половина целого. Заведена отдельным примитивом,
+  // потому что полтора яйца в штучный счётчик не влезают: три половинки он округлял
+  // либо до одного яйца, либо до двух (живой разбор 09.09 — 234 ккал вместо 117).
+  egg_half: {
+    grams: round1(EGG_WHOLE.grams / 2), kcal: round1(EGG_WHOLE.kcal / 2),
+    protein_g: round1(EGG_WHOLE.protein_g / 2), fat_g: round1(EGG_WHOLE.fat_g / 2),
+    carb_g: round1(EGG_WHOLE.carb_g / 2),
+  },
   oil_veg: { grams: SPOON_G, kcal: 45, protein_g: 0, fat_g: 5.0, carb_g: 0 },
   butter: { grams: SPOON_G, kcal: 37, protein_g: 0, fat_g: 4.1, carb_g: 0 },
   sugar: { grams: SPOON_G, kcal: 20, protein_g: 0, fat_g: 0, carb_g: 5.0 },
 };
 
 export const PIECE_LABELS: Record<string, string> = {
-  yolk: "Желток", white: "Белок", oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
+  yolk: "Желток", white: "Белок", egg_half: "Половинка",
+  oil_veg: "Масло", butter: "Сливочное", sugar: "Сахар",
 };
 
 // Эмодзи чипса примитива (части яйца yolk/white + ложечные).
 export const PIECE_EMOJI: Record<string, string> = {
-  yolk: "🟡", white: "⚪", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
+  yolk: "🟡", white: "⚪", egg_half: "🥚", oil_veg: "🫒", butter: "🧈", sugar: "🍬",
 };
 
 export const PIECE_MAX = 50;
