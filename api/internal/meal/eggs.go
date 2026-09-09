@@ -231,13 +231,20 @@ func markNeedsReview(d llm.MealItem) llm.MealItem {
 	return d
 }
 
-// flagCutEggs помечает разрезанные яйца, оставшиеся оценкой по массе (см. asEggDish).
-// Полтора яйца — это и есть приблизительность: показать её честнее, чем округлить молча.
-func flagCutEggs(d llm.MealItem) llm.MealItem {
-	if isCutEggDish(d.Name) && d.Grams > 0 {
-		return markNeedsReview(d)
+// fixCutEggs приводит в порядок разрезанные яйца, оставшиеся оценкой по массе (см.
+// asEggDish): помечает их приблизительными и снимает ЯИЧНЫЕ примитивы.
+//
+// Примитивы снимаются потому, что это те же самые яйца, посчитанные второй раз: на
+// «две половинки варёного яйца» модель отдала и массу 50 г с 78 ккал, и pieces с желтком
+// и белком — вместе 156 ккал, вдвое больше съеденного. У блюда-счётчика от двойного счёта
+// защищает keepAddonPieces; здесь блюдо остаётся обычным, и защита нужна своя. Ложечные
+// добавки (масло) сохраняются: их вклад в массу блюда не входит.
+func fixCutEggs(d llm.MealItem) llm.MealItem {
+	if !isCutEggDish(d.Name) || d.Grams <= 0 {
+		return d
 	}
-	return d
+	d.Pieces = keepAddonPieces(d.Pieces)
+	return markNeedsReview(d)
 }
 
 // flagFractionalEggs помечает блюдо, где модель прислала ДРОБНОЕ число яичных штук.

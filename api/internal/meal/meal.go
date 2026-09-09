@@ -322,7 +322,7 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		// Стоит ДО ветки яичного блюда СОЗНАТЕЛЬНО: она делает ранний continue, и именно
 		// яичные блюда — те, ради которых флаг и заведён. Ниже он до них не доходил.
 		d = flagFractionalEggs(d)
-		d = flagCutEggs(d)
+		d = fixCutEggs(d)
 
 		if egg, ok := asEggDish(d); ok {
 			// Яйца-СЧЁТЧИК (яичница): КБЖУ уже из штук по константам — в том числе из штук,

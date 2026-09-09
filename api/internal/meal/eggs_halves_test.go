@@ -113,3 +113,32 @@ func TestIsCutEggDish(t *testing.T) {
 		}
 	}
 }
+
+// Живой прогон 09.09 после правки промпта: на «две половинки варёного яйца» модель отдала
+// И массу с калориями (50 г, 78 ккал), И яичные примитивы — те же яйца дважды, 156 ккал
+// вместо 78. Блюдо-счётчик от этого защищает keepAddonPieces; у половинок защита своя.
+func TestCutEggs_ЯичныеПримитивыНеУдваиваютПорцию(t *testing.T) {
+	d := llm.MealItem{
+		Name: "варёное яйцо (две половинки)", Grams: 50, Kcal: 78,
+		ProteinG: 6.3, FatG: 5.3, CarbG: 0.6, Confidence: 0.6,
+		Pieces: []llm.MealPiece{
+			{Kind: "yolk", Count: 1}, {Kind: "white", Count: 1},
+			{Kind: "butter", Count: 1, Assumed: true},
+		},
+	}
+	got := sanitizeDishes([]llm.MealItem{d})
+	if len(got) != 1 {
+		t.Fatalf("блюд на выходе %d", len(got))
+	}
+	for _, p := range got[0].Pieces {
+		if isEggPieceKind(p.Kind) {
+			t.Errorf("яичный примитив %q остался — порция посчитана дважды", p.Kind)
+		}
+	}
+	if len(got[0].Pieces) != 1 || got[0].Pieces[0].Kind != "butter" {
+		t.Errorf("ложечная добавка потеряна вместе с яичными: %+v", got[0].Pieces)
+	}
+	if !got[0].NeedsReview {
+		t.Error("приблизительная порция не помечена на проверку")
+	}
+}
