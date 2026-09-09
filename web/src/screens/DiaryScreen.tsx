@@ -65,6 +65,13 @@ export default function DiaryScreen({
   const [week, setWeek] = useState<MealDaily[] | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [pending, setPending] = useState<MealDiaryItem | null>(null); // приём в очереди на удаление (undo)
+  // Ошибка самого удаления (не загрузки дня): показываем её в том же снекбаре, где была
+  // кнопка «Вернуть». Молчаливый провал здесь особенно неприятен — человек видел «Приём
+  // удалён», а запись осталась.
+  const [delError, setDelError] = useState(false);
+  // Зеркало pending для очистки при размонтировании: колбэк уходит с пустыми зависимостями
+  // и замыкает состояние на момент монтирования, поэтому читать надо через ref.
+  const pendingRef = useRef<MealDiaryItem | null>(null);
   // Сводка веса для карточки. Своим запросом, а не полем дневника: вес живёт своей
   // жизнью (одна запись в неделю), и раздувать ответ дневника ради неё незачем.
   const [weight, setWeight] = useState<WeightResponse | null>(null);
@@ -72,14 +79,17 @@ export default function DiaryScreen({
 
   const hasNorm = profile?.filled === true;
 
-  // Дожать отложенное удаление (таймер undo не дождал): реальный DELETE на сервер.
-  const flushDelete = useCallback(async (id: number) => {
+  // Дожать отложенное удаление (человек ушёл со экрана или сменил день, не дождавшись
+  // таймера): реальный DELETE на сервер. Возвращает успех — вызывающий решает, показывать
+  // ли ошибку: при уходе с экрана показывать уже некому.
+  const flushDelete = useCallback(async (id: number): Promise<boolean> => {
     if (delTimer.current) window.clearTimeout(delTimer.current);
     delTimer.current = null;
     try {
       await deleteMeal(id);
+      return true;
     } catch {
-      /* приём останется — пользователь удалит снова */
+      return false;
     }
   }, []);
 
@@ -162,7 +172,9 @@ export default function DiaryScreen({
 
   const goDay = (delta: number) => {
     if (!day) return;
-    if (pending) void flushDelete(pending.id); // при смене дня дожимаем отложенное удаление
+    // Смена дня дожимает отложенное удаление; экран остаётся — значит об ошибке можно и
+    // нужно сказать.
+    if (pending) void flushDelete(pending.id).then((ok) => !ok && setDelError(true));
     setPending(null);
     haptic("light");
     void fetchDay(addDays(day, delta));
@@ -171,15 +183,21 @@ export default function DiaryScreen({
   // Удаление с отложенным DELETE и возможностью «Вернуть» 5 секунд.
   const onTrash = (item: MealDiaryItem) => {
     haptic("light");
-    if (pending) void flushDelete(pending.id); // предыдущее отложенное — дожать сразу
+    if (pending) void flushDelete(pending.id).then((ok) => !ok && setDelError(true)); // предыдущее — дожать
     setPending(item);
     if (delTimer.current) window.clearTimeout(delTimer.current);
+    setDelError(false);
     delTimer.current = window.setTimeout(() => {
-      void deleteMeal(item.id).finally(() => {
-        delTimer.current = null;
-        setPending(null);
-        void fetchDay(day);
-      });
+      void deleteMeal(item.id)
+        .then(() => setDelError(false))
+        // Провал удаления: приём вернётся с сервера при перезагрузке дня ниже, а человеку
+        // говорим прямо. Молча оставить «Приём удалён» на экране, где запись жива, нельзя.
+        .catch(() => setDelError(true))
+        .finally(() => {
+          delTimer.current = null;
+          setPending(null);
+          void fetchDay(day); // источник истины — сервер: и при успехе, и при провале
+        });
     }, 5000);
   };
   const onUndo = () => {
@@ -187,9 +205,27 @@ export default function DiaryScreen({
     if (delTimer.current) window.clearTimeout(delTimer.current);
     delTimer.current = null;
     setPending(null);
+    setDelError(false);
   };
 
-  useEffect(() => () => { if (delTimer.current) window.clearTimeout(delTimer.current); }, []);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+
+  // Уход с экрана ДОЖИМАЕТ удаление, а не отменяет его. Раньше очистка гасила только
+  // таймер, и выход «назад» быстрее пяти секунд молча отменял удаление: человек видел
+  // «Приём удалён», уходил, а запись возвращалась (проверка 09.09 — выход за 3,4 с,
+  // вернулся тот же приём на 693 ккал). Отмена должна быть только явной — кнопкой
+  // «Вернуть», и она отрабатывает раньше, снимая pending.
+  useEffect(
+    () => () => {
+      const p = pendingRef.current;
+      if (delTimer.current) window.clearTimeout(delTimer.current);
+      delTimer.current = null;
+      if (p) void deleteMeal(p.id).catch(() => {}); // экрана уже нет — показывать ошибку некому
+    },
+    [],
+  );
 
   const rawItems = data?.items ?? [];
   const items = pending ? rawItems.filter((i) => i.id !== pending.id) : rawItems;
@@ -280,15 +316,21 @@ export default function DiaryScreen({
       {mode === "day" && onAddManual && <AddMealFooter onClick={onAddManual} />}
 
       {/* Undo-снекбар — над футером, иначе кнопка «Вернуть» ушла бы под кнопку добавления. */}
-      {pending && (
+      {(pending || delError) && (
         <div style={{ position: "absolute", left: 16, right: 16, bottom: 84, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "#2A2A2C", borderRadius: 13, padding: "12px 16px", boxShadow: "0 12px 30px -10px rgba(0,0,0,0.4)" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13.5, color: "#F2F1ED" }}>
-            <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 16, color: "#A6A5A0" }} />
-            Приём удалён
+            <i className={`ti ${delError ? "ti-alert-triangle" : "ti-trash"}`} aria-hidden="true" style={{ fontSize: 16, color: delError ? "#E8B44F" : "#A6A5A0" }} />
+            {delError ? "Не удалось удалить приём" : "Приём удалён"}
           </span>
-          <button type="button" onClick={onUndo} style={{ background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 600, color: "var(--cal-num)", cursor: "pointer" }}>
-            Вернуть
-          </button>
+          {delError ? (
+            <button type="button" onClick={() => setDelError(false)} style={{ background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 600, color: "#F2F1ED", cursor: "pointer" }}>
+              Понятно
+            </button>
+          ) : (
+            <button type="button" onClick={onUndo} style={{ background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 600, color: "var(--cal-num)", cursor: "pointer" }}>
+              Вернуть
+            </button>
+          )}
         </div>
       )}
     </div>
