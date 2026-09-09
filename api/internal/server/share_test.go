@@ -255,3 +255,44 @@ func TestSharePage_ИстёкшаяКарточкаТожеСМеткой(t *tes
 		t.Errorf("на странице истёкшей карточки ссылка без своей метки:\n%s", body)
 	}
 }
+
+// Страница карточки публична и её вправе держать любой промежуточный кэш. Значит, её
+// кэш обязан кончаться вместе с карточкой: «ссылка живёт сутки» — обещание человеку,
+// и пережившая карточку страница в чужом кэше это обещание нарушает.
+func TestSharePageCacheControl_НеПереживаетКарточку(t *testing.T) {
+	cases := []struct {
+		left time.Duration
+		want string
+	}{
+		{24 * time.Hour, "public, max-age=600"}, // запас большой — потолок наш
+		{20 * time.Minute, "public, max-age=600"},
+		{5 * time.Minute, "public, max-age=300"}, // остаток меньше потолка — берём остаток
+		{30 * time.Second, "public, max-age=30"},
+		{0, "no-store"},
+		{-time.Hour, "no-store"},
+	}
+	for _, c := range cases {
+		if got := sharePageCacheControl(c.left); got != c.want {
+			t.Errorf("остаток %v дал %q, ждали %q", c.left, got, c.want)
+		}
+	}
+}
+
+// Страница истёкшей ссылки не кэшируется вовсе.
+func TestSharePage_ИстёкшаяНеКэшируется(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testShareCfg(dir, time.Hour)
+	cfg.ShareBotURL = "https://t.me/sedobno_bot"
+	s := &Server{cfg: cfg, log: testLogger()}
+
+	r := chi.NewRouter()
+	r.Get("/s/{token}", s.handleSharePage)
+	req := httptest.NewRequest(http.MethodGet, "/s/"+strings.Repeat("ef", 16), nil)
+	req.Host = "sedobno-pay.ru"
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control=%q, ждали no-store", got)
+	}
+}

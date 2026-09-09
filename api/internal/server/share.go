@@ -312,18 +312,37 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// Кэш короткий: Telegram дёргает страницу ради превью почти сразу после отправки,
-	// а жить ей всё равно сутки.
-	w.Header().Set("Cache-Control", "public, max-age=600")
+	// Кэш короткий: Telegram дёргает страницу ради превью почти сразу после отправки.
+	// Но не дольше, чем живёт сама карточка: страница публичная и её вправе держать у
+	// себя любой промежуточный кэш, а «ссылка живёт сутки» — обещание человеку, а не
+	// приблизительный срок. Пережить карточку страница не должна ни на минуту.
+	w.Header().Set("Cache-Control", sharePageCacheControl(s.cfg.ShareTTL-time.Since(fi.ModTime())))
 	if err := sharePageTmpl.Execute(w, data); err != nil {
 		s.log.Warn("share: рендер страницы", "err", err)
 	}
+}
+
+// sharePageCacheControl — сколько можно кэшировать страницу карточки. Не больше её
+// остатка жизни и не больше десяти минут (превью Telegram забирает сразу, дольше держать
+// незачем). Остаток кончился — не кэшировать вовсе.
+func sharePageCacheControl(left time.Duration) string {
+	const maxAge = 600
+	secs := int(left.Seconds())
+	if secs <= 0 {
+		return "no-store"
+	}
+	if secs > maxAge {
+		secs = maxAge
+	}
+	return fmt.Sprintf("public, max-age=%d", secs)
 }
 
 // writeShareGone — истёкшая или неизвестная ссылка. 404 со страницей, а не голый текст:
 // её открывает получатель, который ни в чём не виноват и наш продукт видит впервые.
 func (s *Server) writeShareGone(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Отказ не кэшируем: страница у токена одна, и держать её ответ незачем.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNotFound)
 	_ = sharePageTmpl.Execute(w, sharePageData{
 		Title: "Карточка больше недоступна",
