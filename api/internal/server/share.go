@@ -292,7 +292,12 @@ func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
 		Desc:     shareDefaultDesc,
 		ImageURL: absoluteURL(r, "/api/share/"+token+".png"),
 		PageURL:  absoluteURL(r, "/s/"+token),
-		BotURL:   s.cfg.ShareBotURL,
+		// Ссылка с меткой: карточку человек отправляет друзьям, и их переходы — это
+		// органика, которую иначе нечем отличить от прямых заходов. Режим сразу
+		// «еда»: карточка про приём пищи, и открывать сканер составов после неё
+		// значило бы обмануть ожидание (ровно та ошибка, что стоила нам 18 блокировок
+		// на размещении 31.08).
+		BotURL: trackedBotURL(s.cfg.ShareBotURL, "share__mode-meal"),
 	}
 	if raw, rerr := os.ReadFile(filepath.Join(s.cfg.ShareDir, token+".json")); rerr == nil {
 		var m shareMeta
@@ -321,10 +326,30 @@ func (s *Server) writeShareGone(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
 	_ = sharePageTmpl.Execute(w, sharePageData{
-		Title:  "Карточка больше недоступна",
-		Desc:   "Ссылка на карточку живёт сутки — эта уже истекла. Свою можно собрать в «Съедобно».",
-		BotURL: s.cfg.ShareBotURL,
+		Title: "Карточка больше недоступна",
+		Desc:  "Ссылка на карточку живёт сутки — эта уже истекла. Свою можно собрать в «Съедобно».",
+		// Отдельная метка: переход по ПРОТУХШЕЙ карточке — это тоже органика, но
+		// другого качества (человек пришёл по мёртвой ссылке). Смешивать их в одну
+		// цифру значило бы не понять потом, что именно работает.
+		BotURL: trackedBotURL(s.cfg.ShareBotURL, "share_expired__mode-meal"),
 	})
+}
+
+// trackedBotURL добавляет к ссылке на бота стартовый payload — метку источника и режим.
+// Без неё переходы из шер-карточек неотличимы от прямых заходов, и «карточка приносит
+// людей» остаётся верой, а не числом.
+//
+// Уже имеющийся start в настроенном URL не трогаем: если владелец задал свой payload,
+// он знает, зачем. Пустой базовый URL оставляем пустым — кнопки просто не будет.
+func trackedBotURL(base, payload string) string {
+	if base == "" || payload == "" || strings.Contains(base, "start=") {
+		return base
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "start=" + payload
 }
 
 // absoluteURL достраивает адрес до полного: og-теги относительных ссылок не понимают.

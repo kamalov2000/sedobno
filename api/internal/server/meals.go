@@ -180,7 +180,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	// Пре-чек квоты: неподписчик, исчерпавший бесплатные разборы, упирается в paywall.
 	// Ниже кэша — как и у сканера составов: за уже разобранное фото квота списана,
 	// и гасить его пейволлом значило бы отобрать оплаченное.
-	if acc := checkAccess(u, accessMeal, time.Now()); !acc.Allowed {
+	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", map[string]any{"reason": acc.Reason})
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
 		return
@@ -210,14 +210,14 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", mealDiagProps(res))
 		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
-			Status: res.Status, Message: mealLabelMessage, MealsLeft: remainingMeals(u),
+			Status: res.Status, Message: mealLabelMessage, MealsLeft: s.remainingMeals(u),
 		})
 
 	case res.Status == meal.StatusNotFood:
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", mealDiagProps(res))
 		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
-			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: remainingMeals(u),
+			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: s.remainingMeals(u),
 		})
 
 	default: // ok — сохраняем приём и списываем одну попытку
@@ -243,12 +243,12 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 	switch res.Status {
 	case meal.StatusLabelDetected:
 		writeJSON(w, http.StatusOK, mealResponse{
-			Status: res.Status, Message: mealLabelMessage, MealsLeft: remainingMeals(u),
+			Status: res.Status, Message: mealLabelMessage, MealsLeft: s.remainingMeals(u),
 		})
 		return
 	case meal.StatusNotFood:
 		writeJSON(w, http.StatusOK, mealResponse{
-			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: remainingMeals(u),
+			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: s.remainingMeals(u),
 		})
 		return
 	}
@@ -267,7 +267,7 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, ID: item.ID, EatenAt: &item.EatenAt,
 			Dishes: item.Dishes, Total: item.Total, Confidence: deref(item.Confidence),
-			Message: mealAlreadyInDiaryMessage, MealsLeft: remainingMeals(u),
+			Message: mealAlreadyInDiaryMessage, MealsLeft: s.remainingMeals(u),
 			AlreadyInDiary: true, Meal: &item,
 		})
 		return
@@ -290,7 +290,7 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 	}
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, ID: id, Dishes: res.Dishes, Total: &res.Total,
-		Confidence: res.Confidence, Note: res.Note, MealsLeft: remainingMeals(u),
+		Confidence: res.Confidence, Note: res.Note, MealsLeft: s.remainingMeals(u),
 	})
 }
 
@@ -315,14 +315,14 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		return
 	}
 
-	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, trialMealLimit)
+	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.accessLimits().Meals)
 	if cerr != nil {
 		s.log.Error("meal: списание лимита", "err", cerr, "user", u.ID)
 	}
 	left := -1 // подписчик: безлимит
 	if !u.IsSubscribed {
 		if charged {
-			left = trialMealLimit - newUsed
+			left = s.accessLimits().Meals - newUsed
 		} else {
 			left = 0 // гонка увела за лимит между пре-чеком и списанием
 		}
@@ -798,8 +798,8 @@ func dishGramsList(ds []llm.MealItem) []map[string]any {
 }
 
 // remainingMeals — остаток бесплатных разборов без списания (подписчик → -1).
-func remainingMeals(u store.User) int {
-	if acc := checkAccess(u, accessMeal, time.Now()); acc.Left > 0 || acc.Left == -1 {
+func (s *Server) remainingMeals(u store.User) int {
+	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); acc.Left > 0 || acc.Left == -1 {
 		return acc.Left
 	}
 	return 0
@@ -932,7 +932,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 	u, uerr := s.store.GetUserByID(ctx, userID)
 	left := -1
 	if uerr == nil {
-		left = remainingMeals(u)
+		left = s.remainingMeals(u)
 	}
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: meal.StatusOK, ID: id, Dishes: dishes, Total: &total, MealsLeft: left,

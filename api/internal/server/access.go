@@ -14,11 +14,41 @@ import (
 //
 // Модель доступа (с 27.08.2026): неделя полного доступа с первого касания бота, внутри
 // недели — потолок на число разборов и сканов. Дальше подписка.
+// Значения по умолчанию. Боевые берутся из окружения (TRIAL_DAYS, TRIAL_MEAL_LIMIT,
+// TRIAL_SCAN_LIMIT) — экономика ещё не собрана, и подкручивать условия надо уметь
+// перезапуском, а не выкатом. Константы остаются как дефолт и как значение для тестов.
 const (
 	trialDays      = 7
 	trialMealLimit = 30 // разборов еды на весь триал: обычному человеку это 4 в день
 	trialScanLimit = 30 // сканов состава на весь триал
 )
+
+// limits — действующие условия доступа. Отдельным типом, чтобы checkAccess осталась
+// чистой функцией: ей передают правила, а не сервер целиком, и тест может проверить
+// любые условия, ничего не поднимая.
+type limits struct {
+	Days  int
+	Meals int
+	Scans int
+}
+
+// accessLimits — условия из конфигурации с падением на дефолты. Нулевой конфиг (тесты,
+// старые сборки) даёт ровно прежнее поведение.
+func (s *Server) accessLimits() limits {
+	l := limits{Days: trialDays, Meals: trialMealLimit, Scans: trialScanLimit}
+	if s != nil && s.cfg != nil {
+		if s.cfg.TrialDays > 0 {
+			l.Days = s.cfg.TrialDays
+		}
+		if s.cfg.TrialMealLimit > 0 {
+			l.Meals = s.cfg.TrialMealLimit
+		}
+		if s.cfg.TrialScanLimit > 0 {
+			l.Scans = s.cfg.TrialScanLimit
+		}
+	}
+	return l
+}
 
 // Причины отказа. Уходят клиенту в поле reason ответа 402: экраны для «неделя кончилась»
 // и «упёрся в потолок» разные по смыслу, и склеивать их в одно «лимит исчерпан» нельзя.
@@ -49,13 +79,19 @@ type access struct {
 // checkAccess принимает решение по пользователю и виду действия. now передаётся явно,
 // чтобы решение проверялось тестом без ожидания реального времени.
 func checkAccess(u store.User, kind accessKind, now time.Time) access {
+	return checkAccessWith(u, kind, now, limits{Days: trialDays, Meals: trialMealLimit, Scans: trialScanLimit})
+}
+
+// checkAccessWith — то же решение при ЗАДАННЫХ условиях. Вынесено, чтобы боевые лимиты
+// приходили из конфигурации, а тесты могли проверить любые.
+func checkAccessWith(u store.User, kind accessKind, now time.Time, l limits) access {
 	if u.IsSubscribed {
 		return access{Allowed: true, Left: -1}
 	}
 	trialActive := now.Before(u.TrialExpiresAt)
-	used, limit := u.FreeMealsUsed, trialMealLimit
+	used, limit := u.FreeMealsUsed, l.Meals
 	if kind == accessScan {
-		used, limit = u.FreeScansUsed, trialScanLimit
+		used, limit = u.FreeScansUsed, l.Scans
 	}
 	// Срок проверяем ПЕРВЫМ: если неделя вышла, потолок уже не важен, и сообщать про
 	// «осталось 12 разборов» человеку, у которого кончился срок, — обман.

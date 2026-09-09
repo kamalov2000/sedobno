@@ -109,3 +109,33 @@ func TestPaywallBody(t *testing.T) {
 		t.Error("сообщения про срок и про потолок совпали — человек не поймёт, что случилось")
 	}
 }
+
+// Условия триала настраиваются окружением (ТЗ §11): экономика ещё не собрана, и
+// подкрутить срок или потолок надо уметь перезапуском, а не выкатом. Проверяем, что
+// решение о доступе действительно считается по ЗАДАННЫМ условиям, а не по константам.
+func TestCheckAccessWith_ЛимитыИзНастроек(t *testing.T) {
+	now := time.Now()
+	tight := limits{Days: 3, Meals: 5, Scans: 2}
+
+	// Потолок из настроек, а не из константы 30.
+	u := userWithTrial(5, 0, 24*time.Hour, false)
+	if acc := checkAccessWith(u, accessMeal, now, tight); acc.Allowed {
+		t.Error("пятый разбор при потолке 5 должен упереться в стену")
+	}
+	if acc := checkAccessWith(userWithTrial(4, 0, 24*time.Hour, false), accessMeal, now, tight); !acc.Allowed || acc.Left != 1 {
+		t.Errorf("при потолке 5 и четырёх использованных ждали остаток 1, получили %+v", acc)
+	}
+	// Счётчики раздельные и при своих потолках.
+	if acc := checkAccessWith(userWithTrial(0, 2, 24*time.Hour, false), accessScan, now, tight); acc.Allowed {
+		t.Error("второй скан при потолке 2 должен упереться")
+	}
+}
+
+// Нулевой конфиг (тесты, старая сборка) даёт РОВНО прежнее поведение — дефолты.
+func TestAccessLimits_ДефолтыБезКонфига(t *testing.T) {
+	var s *Server
+	l := s.accessLimits()
+	if l.Days != trialDays || l.Meals != trialMealLimit || l.Scans != trialScanLimit {
+		t.Errorf("без конфигурации ждали дефолты, получили %+v", l)
+	}
+}

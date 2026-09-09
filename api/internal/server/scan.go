@@ -245,7 +245,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// Остаток проверок — из АКТУАЛЬНОГО состояния пользователя, а не из кэша:
 		// за время между прогонами он мог потратить попытки на другие сканы или
 		// оформить подписку.
-		cached.ScansLeft = remainingScans(u)
+		cached.ScansLeft = s.remainingScans(u)
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", map[string]any{"status": cached.Status})
 		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
 		writeJSON(w, http.StatusOK, cached)
@@ -267,7 +267,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
-	if acc := checkAccess(u, accessScan, time.Now()); !acc.Allowed {
+	if acc := checkAccessWith(u, accessScan, time.Now(), s.accessLimits()); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", map[string]any{"reason": acc.Reason})
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "scans_left"))
 		return
@@ -305,7 +305,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Кадры от разных продуктов. Проверяйте по одному продукту за раз — несколько кадров нужны, только если состав одного продукта не влез в один снимок.",
-			ScansLeft: remainingScans(u), // не списано
+			ScansLeft: s.remainingScans(u), // не списано
 		})
 
 	case res.Status == pipeline.StatusNotScored:
@@ -323,7 +323,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			Nutrition:   nutritionView(res.Nutrition),
 			ProductName: res.ProductName,
 			Message:     "Наша методология оценивает пищевые добавки, а у алкоголя главный фактор — сам спирт, который она не учитывает. Балл был бы обманчив, поэтому мы его не ставим.",
-			ScansLeft:   remainingScans(u), // не списано
+			ScansLeft:   s.remainingScans(u), // не списано
 		})
 
 	case res.Status == pipeline.StatusNotFood:
@@ -332,7 +332,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Похоже, это не еда — косметика, бытовая химия или другое несъедобное. Оценку состава для таких продуктов не считаем.",
-			ScansLeft: remainingScans(u), // не списано
+			ScansLeft: s.remainingScans(u), // не списано
 		})
 
 	case res.Status == pipeline.StatusLabelNotFound:
@@ -346,18 +346,18 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			Status:    res.Status,
 			Reason:    res.Reason,
 			Message:   labelNotFoundMessage(res.Reason),
-			ScansLeft: remainingScans(u), // не списано
+			ScansLeft: s.remainingScans(u), // не списано
 		})
 
 	default: // ok — списываем одну попытку атомарно
-		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, trialScanLimit)
+		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, s.accessLimits().Scans)
 		if cerr != nil {
 			s.log.Error("scan: списание лимита", "err", cerr, "user", u.ID)
 		}
 		left := -1 // подписчик: безлимит
 		if !u.IsSubscribed {
 			if charged {
-				left = trialScanLimit - newUsed
+				left = s.accessLimits().Scans - newUsed
 			} else {
 				left = 0 // гонка увела за лимит между пре-чеком и списанием
 			}
@@ -439,10 +439,10 @@ func nutritionView(n *llm.Nutrition) *scanNutritionView {
 }
 
 // remainingScans — остаток бесплатных сканов без списания (подписчик → -1).
-func remainingScans(u store.User) int {
+func (s *Server) remainingScans(u store.User) int {
 	// Через тот же checkAccess, что и гейт: остаток на экране обязан сходиться с тем,
 	// пустит ли кнопка. Кончился СРОК — остаток ноль, сколько бы сканов ни осталось.
-	if acc := checkAccess(u, accessScan, time.Now()); acc.Left > 0 || acc.Left == -1 {
+	if acc := checkAccessWith(u, accessScan, time.Now(), s.accessLimits()); acc.Left > 0 || acc.Left == -1 {
 		return acc.Left
 	}
 	return 0

@@ -108,6 +108,17 @@ type Config struct {
 	// false пайплайн пропускает фазу целиком, result.explanation пустой (контракт цел).
 	ExplainEnabled bool
 
+	// --- Условия бесплатного доступа (ТЗ §11). В ОКРУЖЕНИИ, а не константами в коде:
+	// экономика ещё не собрана, и подкрутить срок или потолок надо будет уметь за минуту
+	// перезапуском, а не выкатом. Значения по умолчанию — текущая боевая модель.
+	//
+	// Меняют условия только для НОВЫХ пользователей: у существующих срок уже проставлен
+	// в users.trial_expires_at, и никакая правка переменной его не двигает. Это не
+	// побочный эффект, а требование — «условия уже оплаченного периода не ухудшать».
+	TrialDays      int // длительность недели полного доступа, дней (default 7)
+	TrialMealLimit int // потолок разборов еды за триал (default 30)
+	TrialScanLimit int // потолок проверок состава за триал (default 30)
+
 	SubscriptionStarsPrice int // цена подписки в Telegram Stars (§9)
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
@@ -350,6 +361,12 @@ func MustLoad() *Config {
 
 	cfg.SBPEnabled = optBool(opt("SBP_ENABLED", "false"))
 	cfg.SBPRecurrentEnabled = optBool(opt("SBP_RECURRENT_ENABLED", "true"))
+	// Условия триала. Ноль и отрицательные значения не принимаем: «ноль дней доступа»
+	// это не настройка, а поломка, и молча включать её нельзя.
+	cfg.TrialDays = optPositive(opt("TRIAL_DAYS", "7"), 7, &invalid, "TRIAL_DAYS")
+	cfg.TrialMealLimit = optPositive(opt("TRIAL_MEAL_LIMIT", "30"), 30, &invalid, "TRIAL_MEAL_LIMIT")
+	cfg.TrialScanLimit = optPositive(opt("TRIAL_SCAN_LIMIT", "30"), 30, &invalid, "TRIAL_SCAN_LIMIT")
+
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
 	cfg.SBPAnnualPriceRub = optInt(opt("SBP_ANNUAL_PRICE_RUB", "2490"), 2490, &invalid, "SBP_ANNUAL_PRICE_RUB")
 	cfg.YooKassaAPIBase = opt("YOOKASSA_API_BASE", "https://api.yookassa.ru/v3")
@@ -421,6 +438,18 @@ func (c *Config) IsProd() bool {
 }
 
 // optInt разбирает целое; при ошибке добавляет имя переменной в invalid и возвращает def.
+// optPositive — целое СТРОГО больше нуля. Отдельно от optInt, потому что для лимитов
+// доступа ноль — не «выключено», а сломанный продукт: человек не сможет сделать ничего
+// и не поймёт почему.
+func optPositive(raw string, def int, invalid *[]string, name string) int {
+	v := optInt(raw, def, invalid, name)
+	if v <= 0 {
+		*invalid = append(*invalid, name+" (ожидается число больше нуля)")
+		return def
+	}
+	return v
+}
+
 func optInt(raw string, def int, invalid *[]string, name string) int {
 	v, err := strconv.Atoi(raw)
 	if err != nil || v <= 0 {

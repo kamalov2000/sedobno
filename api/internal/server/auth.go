@@ -217,8 +217,9 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 	// и хендлер начинают отвечать по-разному, и человек видит «осталось 3» на кнопке,
 	// которая отвечает пейволлом.
 	now := time.Now()
-	scanAcc := checkAccess(u, accessScan, now)
-	mealAcc := checkAccess(u, accessMeal, now)
+	lim := s.accessLimits()
+	scanAcc := checkAccessWith(u, accessScan, now, lim)
+	mealAcc := checkAccessWith(u, accessMeal, now, lim)
 	left, mealsLeft := scanAcc.Left, mealAcc.Left
 	if left < 0 && !u.IsSubscribed {
 		left = 0 // отказ (срок или потолок) — остаток ноль, а не «безлимит»
@@ -230,7 +231,7 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		StartMode: u.LastMode,
 		ScansLeft: left, FreeScansUsed: u.FreeScansUsed,
 		MealsLeft: mealsLeft, FreeMealsUsed: u.FreeMealsUsed,
-		FreeScanLimit: trialScanLimit, FreeMealLimit: trialMealLimit,
+		FreeScanLimit: lim.Scans, FreeMealLimit: lim.Meals,
 		TrialDaysLeft:      trialDaysLeft(u, now),
 		TrialActive:        !u.IsSubscribed && mealAcc.TrialActive,
 		IsSubscribed:       u.IsSubscribed,

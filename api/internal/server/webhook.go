@@ -329,9 +329,13 @@ func supportThanks(contact string) string {
 //
 // Приписки про поддержку в тексте нет намеренно — кнопка «‹...›» и так висит под
 // сообщением (StartMarkup), а первый экран не место для служебных пояснений.
-func startGreeting(hasWebApp bool) string {
-	access := fmt.Sprintf("%d дней полного доступа", trialDays)
-	if trialDays == 7 {
+func startGreeting(hasWebApp bool) string { return greetingWithDays(hasWebApp, trialDays) }
+
+// greetingWithDays — приветствие при ЗАДАННОМ сроке: боевой берётся из конфигурации
+// (TRIAL_DAYS), тест проверяет любой.
+func greetingWithDays(hasWebApp bool, days int) string {
+	access := fmt.Sprintf("%d дней полного доступа", days)
+	if days == 7 {
 		access = "Неделя полного доступа"
 	}
 	intro := "Съедобно — дневник питания по фото.\n\n" +
@@ -369,7 +373,7 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 			}
 		}
 	}
-	text := startGreeting(s.cfg.WebAppURL != "")
+	text := greetingWithDays(s.cfg.WebAppURL != "", s.accessLimits().Days)
 	// Подпись кнопки тоже нейтральна к режиму: «Проверить продукт» звало только в сканер.
 	markup := tg.StartMarkup("Открыть", s.cfg.WebAppURL, supportButtonText, callbackSupport)
 	if msg.Chat != nil {

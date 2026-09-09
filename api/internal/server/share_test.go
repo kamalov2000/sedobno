@@ -151,7 +151,9 @@ func TestSharePage_ПревьюПереходИЭкранирование(t *tes
 	for _, want := range []string{
 		`property="og:image" content="https://sedobno-pay.ru/api/share/` + token + `.png"`,
 		`property="og:title" content="Ужин на 692 ккал"`,
-		`href="https://t.me/sedobno_bot"`,
+		// Ссылка ведёт в бота С МЕТКОЙ источника: переходы из карточек — единственная
+		// органика продукта, и без метки они неотличимы от прямых заходов.
+		`href="https://t.me/sedobno_bot?start=share__mode-meal"`,
 		`content="1080"`, `content="1920"`, // без размеров Telegram иногда не строит превью
 	} {
 		if !strings.Contains(body, want) {
@@ -215,4 +217,41 @@ func getSharePage(t *testing.T, s *Server, token string) (string, int) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec.Body.String(), rec.Code
+}
+
+// Переходы из шер-карточек — единственная органика, которая у продукта есть. Без метки
+// в ссылке они неотличимы от прямых заходов, и «карточка приносит людей» остаётся верой,
+// а не числом.
+func TestTrackedBotURL(t *testing.T) {
+	cases := []struct{ base, payload, want string }{
+		{"https://t.me/sedobno_bot", "share__mode-meal", "https://t.me/sedobno_bot?start=share__mode-meal"},
+		{"https://t.me/sedobno_bot?utm=x", "share__mode-meal", "https://t.me/sedobno_bot?utm=x&start=share__mode-meal"},
+		// Владелец задал свой payload — не перебиваем: он знает, зачем.
+		{"https://t.me/sedobno_bot?start=custom", "share__mode-meal", "https://t.me/sedobno_bot?start=custom"},
+		// Ссылки нет — кнопки не будет, добавлять метку не к чему.
+		{"", "share__mode-meal", ""},
+		{"https://t.me/sedobno_bot", "", "https://t.me/sedobno_bot"},
+	}
+	for _, c := range cases {
+		if got := trackedBotURL(c.base, c.payload); got != c.want {
+			t.Errorf("trackedBotURL(%q, %q) = %q, ждали %q", c.base, c.payload, got, c.want)
+		}
+	}
+}
+
+// Истёкшая карточка ведёт в бота под СВОЕЙ меткой: переход по мёртвой ссылке — тоже
+// органика, но другого качества, и смешивать её с живой в одну цифру нельзя.
+func TestSharePage_ИстёкшаяКарточкаТожеСМеткой(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testShareCfg(dir, time.Hour)
+	cfg.ShareBotURL = "https://t.me/sedobno_bot"
+	s := &Server{cfg: cfg, log: testLogger()}
+
+	body, code := getSharePage(t, s, strings.Repeat("cd", 16)) // карточки нет
+	if code != http.StatusNotFound {
+		t.Fatalf("статус=%d, ждали 404", code)
+	}
+	if !strings.Contains(body, "start=share_expired__mode-meal") {
+		t.Errorf("на странице истёкшей карточки ссылка без своей метки:\n%s", body)
+	}
 }
