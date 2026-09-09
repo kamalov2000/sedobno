@@ -181,7 +181,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	// Пре-чек квоты: неподписчик, исчерпавший бесплатные разборы, упирается в paywall.
 	// Ниже кэша — как и у сканера составов: за уже разобранное фото квота списана,
 	// и гасить его пейволлом значило бы отобрать оплаченное.
-	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); !acc.Allowed {
+	if acc := checkAccessWith(u, accessMeal, time.Now(), s.effectiveLimits(u)); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", withOp(op, map[string]any{"reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
 		return
@@ -316,14 +316,14 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		return
 	}
 
-	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.accessLimits().Meals)
+	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.effectiveLimits(u).Meals)
 	if cerr != nil {
 		s.log.Error("meal: списание лимита", "err", cerr, "user", u.ID)
 	}
 	left := -1 // подписчик: безлимит
 	if !u.IsSubscribed {
 		if charged {
-			left = s.accessLimits().Meals - newUsed
+			left = s.effectiveLimits(u).Meals - newUsed
 		} else {
 			left = 0 // гонка увела за лимит между пре-чеком и списанием
 		}
@@ -800,7 +800,7 @@ func dishGramsList(ds []llm.MealItem) []map[string]any {
 
 // remainingMeals — остаток бесплатных разборов без списания (подписчик → -1).
 func (s *Server) remainingMeals(u store.User) int {
-	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); acc.Left > 0 || acc.Left == -1 {
+	if acc := checkAccessWith(u, accessMeal, time.Now(), s.effectiveLimits(u)); acc.Left > 0 || acc.Left == -1 {
 		return acc.Left
 	}
 	return 0

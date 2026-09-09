@@ -273,7 +273,8 @@ func (s *Server) forwardSupport(ctx context.Context, msg *tgMessage, body string
 		return
 	}
 	var uid *int64
-	if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, ""); err != nil {
+	lim := s.accessLimits()
+	if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, "", lim.Meals, lim.Scans); err != nil {
 		s.log.Warn("webhook: upsert пользователя для обращения", "err", err)
 	} else {
 		uid = &u.ID
@@ -358,7 +359,8 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 		// и в отчёте по размещению он обязан быть виден.
 		intent := auth.ParseStartIntent(startPayload(msg.Text))
 		src := intent.Source
-		if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src); err != nil {
+		lim := s.accessLimits()
+		if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src, lim.Meals, lim.Scans); err != nil {
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
 		} else {
 			// Намерение из ссылки сохраняем СРАЗУ, ещё до открытия мини-аппа: только так

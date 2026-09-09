@@ -119,6 +119,13 @@ type Config struct {
 	TrialMealLimit int // потолок разборов еды за триал (default 30)
 	TrialScanLimit int // потолок проверок состава за триал (default 30)
 
+	// Потолки ПЛАТНОГО плана. 0 (по умолчанию) — безлимит: ровно те условия, которые
+	// обещаны действующим подписчикам, и менять их без отдельного решения нельзя.
+	// В отличие от триальных, эти потолки НЕ фиксируются за человеком: они подействуют
+	// на всех подписчиков сразу, поэтому включать их — осознанный шаг, а не подкрутка.
+	PaidMealLimit int // потолок разборов еды у подписчика (0 — безлимит)
+	PaidScanLimit int // потолок проверок состава у подписчика (0 — безлимит)
+
 	SubscriptionStarsPrice int // цена подписки в Telegram Stars (§9)
 
 	// --- СБП/карта через ЮKassa (§14.1). Опциональный канал: включается SBP_ENABLED. ---
@@ -366,6 +373,10 @@ func MustLoad() *Config {
 	cfg.TrialDays = optPositive(opt("TRIAL_DAYS", "7"), 7, &invalid, "TRIAL_DAYS")
 	cfg.TrialMealLimit = optPositive(opt("TRIAL_MEAL_LIMIT", "30"), 30, &invalid, "TRIAL_MEAL_LIMIT")
 	cfg.TrialScanLimit = optPositive(opt("TRIAL_SCAN_LIMIT", "30"), 30, &invalid, "TRIAL_SCAN_LIMIT")
+	// Ноль — валидное значение (безлимит), поэтому не optPositive: тот подменил бы его
+	// дефолтом и молча ввёл потолок там, где его быть не должно.
+	cfg.PaidMealLimit = optNonNeg(opt("PAID_MEAL_LIMIT", "0"), 0, &invalid, "PAID_MEAL_LIMIT")
+	cfg.PaidScanLimit = optNonNeg(opt("PAID_SCAN_LIMIT", "0"), 0, &invalid, "PAID_SCAN_LIMIT")
 
 	cfg.SBPPriceRub = optInt(opt("SBP_PRICE_RUB", "249"), 249, &invalid, "SBP_PRICE_RUB")
 	cfg.SBPAnnualPriceRub = optInt(opt("SBP_ANNUAL_PRICE_RUB", "2490"), 2490, &invalid, "SBP_ANNUAL_PRICE_RUB")
@@ -441,6 +452,17 @@ func (c *Config) IsProd() bool {
 // optPositive — целое СТРОГО больше нуля. Отдельно от optInt, потому что для лимитов
 // доступа ноль — не «выключено», а сломанный продукт: человек не сможет сделать ничего
 // и не поймёт почему.
+// optNonNeg — целое ≥ 0. Отдельно от optPositive, потому что для потолков платного плана
+// ноль осмыслен: он означает «безлимит», а не «настройка забыта».
+func optNonNeg(raw string, def int, invalid *[]string, name string) int {
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 {
+		*invalid = append(*invalid, name+" (ожидается целое не меньше нуля)")
+		return def
+	}
+	return v
+}
+
 func optPositive(raw string, def int, invalid *[]string, name string) int {
 	v := optInt(raw, def, invalid, name)
 	if v <= 0 {

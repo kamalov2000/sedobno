@@ -187,7 +187,7 @@ func newStore(t *testing.T) (*Store, context.Context) {
 // mkUser заводит пользователя и возвращает его id.
 func mkUser(t *testing.T, s *Store, ctx context.Context, tgID int64) int64 {
 	t.Helper()
-	u, err := s.UpsertUser(ctx, tgID, fmt.Sprintf("user%d", tgID), "")
+	u, err := s.UpsertUser(ctx, tgID, fmt.Sprintf("user%d", tgID), "", 30, 30)
 	if err != nil {
 		t.Fatalf("UpsertUser(%d): %v", tgID, err)
 	}

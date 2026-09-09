@@ -37,8 +37,14 @@ type User struct {
 	BlockedAt *time.Time
 	// LastMode — последний режим приложения (meal | scan). Пусто — человек ещё не
 	// выбирал, и первый запуск показывает экран выбора сценария (ТЗ, APP-01).
-	LastMode     string
-	IsSubscribed bool
+	LastMode string
+	// TrialMealLimit / TrialScanLimit — потолки триала, ЗАФИКСИРОВАННЫЕ за человеком при
+	// регистрации. Ноль — потолок не проставлен (строка старше миграции 0023), и решение
+	// падает на текущую настройку. Смысл фиксации: правка потолка ради экономики не
+	// должна закрывать доступ тому, кто уже внутри своей недели.
+	TrialMealLimit int
+	TrialScanLimit int
+	IsSubscribed   bool
 	// DigestEnabled — включён ли вечерний итог дня. Читается вместе с остальным
 	// пользователем, а не отдельным запросом: /api/me зовётся часто, и лишний
 	// round-trip ради одного булева здесь не нужен.
@@ -48,28 +54,33 @@ type User struct {
 // UpsertUser создаёт пользователя по telegram_id или обновляет username. acquisitionSource
 // (канал посева из start_param, §10) пишется ТОЛЬКО если поле ещё пусто — COALESCE не даёт
 // перезаписать при повторных заходах и не затирает существующее пустым значением.
-func (s *Store) UpsertUser(ctx context.Context, tgID int64, username, acquisitionSource string) (User, error) {
+// mealLimit/scanLimit — действующие потолки триала: проставляются НОВОМУ пользователю и
+// с этого момента принадлежат ему (см. миграцию 0023). У существующего не меняются:
+// COALESCE(users.…) в UPDATE держит уже обещанные условия.
+func (s *Store) UpsertUser(ctx context.Context, tgID int64, username, acquisitionSource string, mealLimit, scanLimit int) (User, error) {
 	const q = `
-INSERT INTO users (telegram_id, username, acquisition_source)
-VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+INSERT INTO users (telegram_id, username, acquisition_source, trial_meal_limit, trial_scan_limit)
+VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, 0), NULLIF($5, 0))
 ON CONFLICT (telegram_id) DO UPDATE
   SET username = COALESCE(NULLIF(EXCLUDED.username, ''), users.username),
-      acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source)
-RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, '')`
+      acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source),
+      trial_meal_limit = COALESCE(users.trial_meal_limit, EXCLUDED.trial_meal_limit),
+      trial_scan_limit = COALESCE(users.trial_scan_limit, EXCLUDED.trial_scan_limit)
+RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, ''), COALESCE(trial_meal_limit, 0), COALESCE(trial_scan_limit, 0)`
 	var u User
-	err := s.pool.QueryRow(ctx, q, tgID, username, acquisitionSource).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode)
+	err := s.pool.QueryRow(ctx, q, tgID, username, acquisitionSource, mealLimit, scanLimit).
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode, &u.TrialMealLimit, &u.TrialScanLimit)
 	return u, err
 }
 
 // GetUserByID читает пользователя по внутреннему id (пре-чек лимита в /api/scan).
 func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	const q = `
-SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, '')
+SELECT id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_used, is_subscribed, daily_digest_enabled, trial_expires_at, blocked_at, COALESCE(last_mode, ''), COALESCE(trial_meal_limit, 0), COALESCE(trial_scan_limit, 0)
 FROM users WHERE id = $1`
 	var u User
 	err := s.pool.QueryRow(ctx, q, id).
-		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode)
+		Scan(&u.ID, &u.TelegramID, &u.Username, &u.FreeScansUsed, &u.FreeMealsUsed, &u.IsSubscribed, &u.DigestEnabled, &u.TrialExpiresAt, &u.BlockedAt, &u.LastMode, &u.TrialMealLimit, &u.TrialScanLimit)
 	return u, err
 }
 

@@ -135,7 +135,10 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 	// весь payload уезжал в acquisition_source; с появлением ссылок вида «mode-label»
 	// это добавило бы в отчёт по размещениям каналы, которых не существует.
 	intent := auth.ParseStartIntent(auth.StartParam(req.InitData))
-	u, err := s.store.UpsertUser(r.Context(), tgUser.ID, tgUser.Username, intent.Source)
+	// Потолки триала фиксируются за НОВЫМ пользователем прямо здесь: дальше они его
+	// собственные, и правка настройки чужую неделю уже не трогает (миграция 0023).
+	lim := s.accessLimits()
+	u, err := s.store.UpsertUser(r.Context(), tgUser.ID, tgUser.Username, intent.Source, lim.Meals, lim.Scans)
 	if err != nil {
 		s.log.Error("auth: upsert user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
@@ -190,7 +193,8 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 // что и обычный путь. Вызывается ТОЛЬКО после гейта DevAuthBypass && !IsProd в handleAuth.
 func (s *Server) devAuth(w http.ResponseWriter, r *http.Request, devUserID int64) {
 	s.log.Warn("DEV-AUTH: выдан JWT без Telegram initData (dev-обход)", "dev_user_id", devUserID)
-	u, err := s.store.UpsertUser(r.Context(), devUserID, "dev", "")
+	lim := s.accessLimits()
+	u, err := s.store.UpsertUser(r.Context(), devUserID, "dev", "", lim.Meals, lim.Scans)
 	if err != nil {
 		s.log.Error("dev-auth: upsert user", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
@@ -217,7 +221,9 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 	// и хендлер начинают отвечать по-разному, и человек видит «осталось 3» на кнопке,
 	// которая отвечает пейволлом.
 	now := time.Now()
-	lim := s.accessLimits()
+	// Потолки — СВОИ у этого человека (миграция 0023): экран обязан показывать «из 30»
+	// тому, кому обещали 30, даже если настройка с тех пор изменилась.
+	lim := s.effectiveLimits(u)
 	scanAcc := checkAccessWith(u, accessScan, now, lim)
 	mealAcc := checkAccessWith(u, accessMeal, now, lim)
 	left, mealsLeft := scanAcc.Left, mealAcc.Left

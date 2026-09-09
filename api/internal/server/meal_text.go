@@ -78,7 +78,7 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
-	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); !acc.Allowed {
+	if acc := checkAccessWith(u, accessMeal, time.Now(), s.effectiveLimits(u)); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown",
 			withOp(op, map[string]any{"entry": "text", "reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
@@ -117,14 +117,14 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 
 	// ok — списываем попытку (модель отработала), приём НЕ сохраняем: его создаст клиент,
 	// когда пользователь подтвердит («В дневник» → POST /meals source=text или PATCH).
-	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.accessLimits().Meals)
+	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.effectiveLimits(u).Meals)
 	if cerr != nil {
 		s.log.Error("meal-text: списание лимита", "err", cerr, "user", u.ID)
 	}
 	left := -1
 	if !u.IsSubscribed {
 		if charged {
-			left = s.accessLimits().Meals - newUsed
+			left = s.effectiveLimits(u).Meals - newUsed
 		} else {
 			left = 0
 		}

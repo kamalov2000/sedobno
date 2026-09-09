@@ -268,7 +268,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
-	if acc := checkAccessWith(u, accessScan, time.Now(), s.accessLimits()); !acc.Allowed {
+	if acc := checkAccessWith(u, accessScan, time.Now(), s.effectiveLimits(u)); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", withOp(op, map[string]any{"reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "scans_left"))
 		return
@@ -351,14 +351,14 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		})
 
 	default: // ok — списываем одну попытку атомарно
-		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, s.accessLimits().Scans)
+		newUsed, charged, cerr := s.store.ChargeFreeScan(ctx, u.ID, s.effectiveLimits(u).Scans)
 		if cerr != nil {
 			s.log.Error("scan: списание лимита", "err", cerr, "user", u.ID)
 		}
 		left := -1 // подписчик: безлимит
 		if !u.IsSubscribed {
 			if charged {
-				left = s.accessLimits().Scans - newUsed
+				left = s.effectiveLimits(u).Scans - newUsed
 			} else {
 				left = 0 // гонка увела за лимит между пре-чеком и списанием
 			}
@@ -443,7 +443,7 @@ func nutritionView(n *llm.Nutrition) *scanNutritionView {
 func (s *Server) remainingScans(u store.User) int {
 	// Через тот же checkAccess, что и гейт: остаток на экране обязан сходиться с тем,
 	// пустит ли кнопка. Кончился СРОК — остаток ноль, сколько бы сканов ни осталось.
-	if acc := checkAccessWith(u, accessScan, time.Now(), s.accessLimits()); acc.Left > 0 || acc.Left == -1 {
+	if acc := checkAccessWith(u, accessScan, time.Now(), s.effectiveLimits(u)); acc.Left > 0 || acc.Left == -1 {
 		return acc.Left
 	}
 	return 0

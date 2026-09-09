@@ -30,6 +30,12 @@ type limits struct {
 	Days  int
 	Meals int
 	Scans int
+	// PaidMeals / PaidScans — потолки для ПОДПИСЧИКА. Ноль (по умолчанию) — безлимит,
+	// то есть ровно те условия, что обещаны действующим подписчикам. Ставить их можно
+	// только осознанно: в отличие от триальных, эти потолки не зафиксированы за
+	// человеком и подействуют на всех подписчиков сразу.
+	PaidMeals int
+	PaidScans int
 }
 
 // accessLimits — условия из конфигурации с падением на дефолты. Нулевой конфиг (тесты,
@@ -46,7 +52,20 @@ func (s *Server) accessLimits() limits {
 		if s.cfg.TrialScanLimit > 0 {
 			l.Scans = s.cfg.TrialScanLimit
 		}
+		l.PaidMeals, l.PaidScans = s.cfg.PaidMealLimit, s.cfg.PaidScanLimit
 	}
+	return l
+}
+
+// effectiveLimits — условия ИМЕННО ЭТОГО человека: срок из настройки (он всё равно
+// сравнивается с его собственным trial_expires_at), потолки — его зафиксированные, и
+// только при их отсутствии общие. Списание квоты обязано идти по тем же числам, что и
+// решение о доступе: иначе доступ разрешён, а списание молча не проходит, и человек
+// получает разбор, который не считается.
+func (s *Server) effectiveLimits(u store.User) limits {
+	l := s.accessLimits()
+	l.Meals = firstPositive(u.TrialMealLimit, l.Meals)
+	l.Scans = firstPositive(u.TrialScanLimit, l.Scans)
 	return l
 }
 
@@ -55,7 +74,19 @@ func (s *Server) accessLimits() limits {
 const (
 	denyTrialExpired = "trial_expired" // неделя вышла
 	denyTrialQuota   = "trial_quota"   // потолок разборов/сканов внутри недели
+	denyPaidQuota    = "paid_quota"    // потолок платного плана (по умолчанию не задан)
 )
+
+// firstPositive — своё значение, если оно есть, иначе общее. Ноль означает «не
+// проставлено», а не «ноль разборов»: колонка появилась позже части пользователей.
+func firstPositive(vals ...int) int {
+	for _, v := range vals {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
+}
 
 // accessKind — что человек пытается сделать. У разборов еды и сканов составов свои
 // счётчики: неделя общая, потолки раздельные.
@@ -86,12 +117,29 @@ func checkAccess(u store.User, kind accessKind, now time.Time) access {
 // приходили из конфигурации, а тесты могли проверить любые.
 func checkAccessWith(u store.User, kind accessKind, now time.Time, l limits) access {
 	if u.IsSubscribed {
-		return access{Allowed: true, Left: -1}
+		// Платный потолок по умолчанию не задан — безлимит, как и обещано. Если он
+		// задан, счётчик тот же, что у триала: другого у подписки нет, и заводить
+		// второй ради ещё не существующего тарифа незачем.
+		paid := l.PaidMeals
+		usedPaid := u.FreeMealsUsed
+		if kind == accessScan {
+			paid, usedPaid = l.PaidScans, u.FreeScansUsed
+		}
+		if paid <= 0 {
+			return access{Allowed: true, Left: -1}
+		}
+		if left := paid - usedPaid; left > 0 {
+			return access{Allowed: true, Left: left}
+		}
+		return access{Reason: denyPaidQuota}
 	}
 	trialActive := now.Before(u.TrialExpiresAt)
-	used, limit := u.FreeMealsUsed, l.Meals
+	// Потолок берём ЗАФИКСИРОВАННЫЙ за человеком, а настройку — только когда своего нет
+	// (строка старше миграции 0023). Иначе уменьшение потолка ради экономики закрывало бы
+	// доступ людям в середине их недели — это ухудшение уже обещанных условий.
+	used, limit := u.FreeMealsUsed, firstPositive(u.TrialMealLimit, l.Meals)
 	if kind == accessScan {
-		used, limit = u.FreeScansUsed, l.Scans
+		used, limit = u.FreeScansUsed, firstPositive(u.TrialScanLimit, l.Scans)
 	}
 	// Срок проверяем ПЕРВЫМ: если неделя вышла, потолок уже не важен, и сообщать про
 	// «осталось 12 разборов» человеку, у которого кончился срок, — обман.
@@ -124,8 +172,11 @@ func trialDaysLeft(u store.User, now time.Time) int {
 // незачем. Поле error тоже прежнее — новое несёт reason.
 func paywallBody(acc access, leftField string) map[string]any {
 	msg := "бесплатная неделя закончилась"
-	if acc.Reason == denyTrialQuota {
+	switch acc.Reason {
+	case denyTrialQuota:
 		msg = "на этой неделе разборы закончились"
+	case denyPaidQuota:
+		msg = "на этом тарифе разборы на сегодня закончились"
 	}
 	return map[string]any{
 		"error":   "limit_reached",
