@@ -90,8 +90,12 @@ type Result struct {
 	Status string `json:"status"`
 	// Reason — уточнение статуса. Сейчас заполняется только для label_not_found
 	// (см. константы Reason*); для прочих статусов пусто.
-	Reason         string              `json:"reason,omitempty"`
-	Score          int                 `json:"score"`
+	Reason string `json:"reason,omitempty"`
+	Score  int    `json:"score"`
+	// RulesVersion — версия набора правил скоринга, по которому получен ЭТОТ балл
+	// (config/scoring.yaml). Уезжает клиенту и в аналитику: коэффициенты тюнятся без
+	// правки кода, и без версии старый балл нечем объяснить.
+	RulesVersion   string              `json:"rules_version,omitempty"`
 	Flags          []scoring.Flag      `json:"flags"`
 	Breakdown      []scoring.Deduction `json:"breakdown"`
 	IngredientsRaw []string            `json:"ingredients_raw"`
@@ -180,11 +184,11 @@ type Pipeline struct {
 	// откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
 	selfConsistency bool
 	matcher         *dict.Matcher
-	scorer        *scoring.Config
-	byCode        map[string]dict.Additive
-	candidates    []llm.Candidate
-	log           *slog.Logger
-	sem           chan struct{}
+	scorer          *scoring.Config
+	byCode          map[string]dict.Additive
+	candidates      []llm.Candidate
+	log             *slog.Logger
+	sem             chan struct{}
 	// explainEnabled — выполнять ли фазу 4 (LLM-объяснение). По умолчанию true (обратная
 	// совместимость: кто не звал SetExplainEnabled, ведёт себя как раньше); прод выключает
 	// через EXPLAIN_ENABLED. При false фаза пропускается, res.Explanation остаётся пустым.
@@ -200,6 +204,7 @@ func (p *Pipeline) Rescore(matched []MatchedIngredient) scoring.Result {
 		items = append(items, scoring.Ingredient{
 			Code: m.Code, Category: m.Category, Name: m.Name,
 			Risk: m.Risk, Position: m.Position, Matched: m.Matched,
+			Basis: m.Basis, // основание оценки добавки → в происхождение штрафа
 		})
 	}
 	return p.scorer.Score(items)
@@ -619,6 +624,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// Фаза 3 — детерминированный скоринг.
 	sc := p.scorer.Score(items)
 	res.Score = sc.Score
+	res.RulesVersion = sc.RulesVersion
 	res.Flags = sc.Flags
 	res.Breakdown = sc.Breakdown
 

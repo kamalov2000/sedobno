@@ -184,6 +184,9 @@ func scoringItems(recs []rec) []scoring.Ingredient {
 		items = append(items, scoring.Ingredient{
 			Code: r.code, Category: r.category, Name: r.name, VerdictShort: r.verdictShort,
 			VerdictFull: r.verdictFull, Risk: r.risk, Position: r.pos, Matched: r.matched,
+			// Основание оценки добавки из словаря — доезжает до штрафа, чтобы по каждому
+			// вычету было видно не только «сколько», но и «почему».
+			Basis: ingredientBasis(r.sourcesNote),
 		})
 	}
 	return items

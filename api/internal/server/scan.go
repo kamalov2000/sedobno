@@ -56,6 +56,13 @@ type scanDeductionView struct {
 	Title   string `json:"title"`
 	Penalty int    `json:"penalty"`
 	Capped  bool   `json:"capped,omitempty"`
+	// Происхождение штрафа: какой ингредиент, по какому правилу и на каком основании.
+	// Ingredient и Source — для человека («почему такой балл»), Rule — машинный
+	// идентификатор для поддержки, в интерфейсе он не показывается.
+	Ingredient string `json:"ingredient,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Rule       string `json:"rule,omitempty"`
+	Source     string `json:"source,omitempty"`
 }
 
 // scanIngredientView — строка состава для фронта.
@@ -115,6 +122,13 @@ type scanResponse struct {
 	// исход: на кадре мог быть только оборот). Интерфейс подписывает им результат, а
 	// при уходе в дневник — предзаполняет им название приёма.
 	ProductName string `json:"product_name,omitempty"`
+	// Transcription — ДОСЛОВНО прочитанный с этикетки блок состава. Показывается человеку
+	// рядом с разбором, чтобы он мог заметить пропущенную или переврано прочитанную
+	// строку: балл считается по распознанному тексту, и если текст неверен — неверно всё
+	// ниже. Пусто — прочитать не удалось.
+	Transcription string `json:"transcription,omitempty"`
+	// RulesVersion — версия правил скоринга, по которой получен балл.
+	RulesVersion string `json:"rules_version,omitempty"`
 	// ScanNumber — порядковый номер успешной проверки пользователя (для фолбэка
 	// ценника «ПРОВЕРКА №N», когда имя товара не извлекается). Только при status=ok.
 	ScanNumber int `json:"scan_number,omitempty"`
@@ -360,6 +374,16 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			scanOkProps["gate_nutrition_mismatch"] = res.GateNutritionMismatch
 		}
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_ok", scanOkProps)
+		// Обязательное событие воронки (ТЗ §10). Ни состава, ни фото — только длина
+		// распознанного текста: она отвечает на «сколько удалось прочитать», не раскрывая
+		// что именно.
+		s.track(ctx, u.ID, evLabelAnalysisSuccess, map[string]any{
+			"model_version": res.Provider,
+			"ocr_length":    len(res.Transcription),
+			"rules_version": res.RulesVersion,
+			"latency_ms":    res.LatencyMs,
+			"cost":          res.CostRUB,
+		})
 		// Порядковый номер проверки для фолбэка ценника (best-effort — 0 просто опускается).
 		num, nerr := s.store.CountUserScansOK(ctx, u.ID)
 		if nerr != nil {
@@ -384,11 +408,16 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 	}
 	deds := make([]scanDeductionView, 0, len(res.Breakdown))
 	for _, d := range res.Breakdown {
-		deds = append(deds, scanDeductionView{Title: d.Title, Penalty: d.Penalty, Capped: d.Capped})
+		deds = append(deds, scanDeductionView{
+			Title: d.Title, Penalty: d.Penalty, Capped: d.Capped,
+			Ingredient: d.Ingredient, Code: d.Code, Rule: d.Rule, Source: d.Source,
+		})
 	}
 	return scanResponse{
 		Status: res.Status, Score: res.Score, Flags: flags, Ingredients: ings,
 		Deductions:       deds,
+		Transcription:    res.Transcription,
+		RulesVersion:     res.RulesVersion,
 		LowConfidence:    res.LowConfidence,
 		ScoreApproximate: res.ScoreApproximate,
 		Nutrition:        nutritionView(res.Nutrition),

@@ -30,7 +30,11 @@ interface Props {
 
 const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
 
-const MEAL_HINT = <>Одного кадра достаточно. Добавьте ещё ракурс блюда, только если хотите точнее — все кадры уйдут одним разбором.</>;
+// Инструкции съёмки РАЗНЫЕ у двух режимов и не должны перемешиваться: человек в режиме
+// еды не должен читать про этикетку, и наоборот. Формулировки говорят, ЧТО именно
+// поймать в кадр, — по замеру 06.09 все 14 сканов провалились потому, что снимали не то.
+const MEAL_HINT = <>Сфотографируйте всю тарелку целиком, сверху. Одного кадра достаточно; добавьте ещё ракурс, только если хотите точнее — все кадры уйдут одним разбором.</>;
+const SCAN_HINT = <>Сфотографируйте список ингредиентов — мелкий текст после слова «Состав» на обороте упаковки. Таблица с белками, жирами и углеводами — другой блок, он не подойдёт.</>;
 
 export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals, onManageSub }: Props) {
   const meal = mode === "meal";
@@ -143,13 +147,13 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
         <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, letterSpacing: "0.06em", color: "var(--text3)", marginTop: 14, textAlign: "center", lineHeight: 1.7 }}>
           {meal ? (
             <>
-              НАВЕДИТЕ КАМЕРУ НА ТАРЕЛКУ
+              СФОТОГРАФИРУЙТЕ ВСЮ ТАРЕЛКУ
               <br />
               ОДИН ПРИЁМ ПИЩИ ЗА РАЗ
             </>
           ) : (
             <>
-              НАВЕДИТЕ КАМЕРУ НА БЛОК «СОСТАВ»
+              СФОТОГРАФИРУЙТЕ СПИСОК ИНГРЕДИЕНТОВ
               <br />
               ОДИН ПРОДУКТ ЗА РАЗ
             </>
@@ -226,7 +230,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
         ) : meal ? (
           <PhotoStager key="meal" onScan={onScan} startLabel="Сфотографировать еду" startIcon="ti-camera" accentColor="var(--cal)" onColor="var(--on-cal)" hint={MEAL_HINT} />
         ) : (
-          <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" />
+          <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" hint={SCAN_HINT} />
         )}
 
         {/* Вход в ручной приём — на главном, а не только в дневнике. Раньше его можно

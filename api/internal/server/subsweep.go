@@ -219,6 +219,7 @@ func (s *Server) chargeOneSubscription(ctx context.Context, d store.DueSubscript
 			return
 		}
 		_ = s.store.InsertEvent(ctx, &uid, "pay_renewal_ok", map[string]any{"plan": plan, "channel": "sbp"})
+		s.track(ctx, uid, evSubscriptionRenewed, map[string]any{"plan": plan, "amount": amountRub})
 		return
 	}
 

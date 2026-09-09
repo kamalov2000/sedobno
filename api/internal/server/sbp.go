@@ -89,6 +89,7 @@ func (s *Server) handleSBPPay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.store.InsertEvent(ctx, &uid, "pay_started", map[string]any{"channel": "sbp"})
+	s.track(ctx, uid, evPaymentStarted, map[string]any{"plan": normPlan, "method": "sbp"})
 	writeJSON(w, http.StatusOK, sbpPayResponse{URL: p.Confirmation.ConfirmationURL})
 }
 
@@ -177,6 +178,7 @@ func (s *Server) handleSBPWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if processed {
 		_ = s.store.InsertEvent(ctx, &uid, "pay_ok", map[string]any{"channel": "sbp"})
+		s.track(ctx, uid, evPaymentSuccess, map[string]any{"plan": normPlan, "method": "sbp", "amount": rubFromValue(p.Amount.Value)})
 		s.log.Info("sbp: подписка активирована", "user", uid, "payment", p.ID, "rub", rubFromValue(p.Amount.Value))
 	}
 	w.WriteHeader(http.StatusOK)

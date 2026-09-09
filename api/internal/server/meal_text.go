@@ -139,6 +139,13 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 		props["result_dishes"] = res.Dishes
 	}
 	_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_ok", props)
+	s.track(ctx, u.ID, evMealAnalysisSuccess, map[string]any{
+		"model_version":    res.Provider,
+		"components_count": len(res.Dishes),
+		"latency_ms":       res.LatencyMs,
+		"cost":             res.CostRUB,
+		"entry":            "text",
+	})
 
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, Dishes: res.Dishes, Total: &res.Total,

@@ -14,6 +14,11 @@ const MarkerCategory = "маркер"
 
 // Config — коэффициенты скоринга и наборы кодов-маркеров.
 type Config struct {
+	// Version — версия НАБОРА ПРАВИЛ. Уезжает в ответ вместе с баллом: без неё нельзя
+	// сказать, по каким коэффициентам посчитан старый скан, а коэффициенты тюнятся
+	// без правки кода. Меняется руками при каждой правке чисел ниже.
+	Version string `yaml:"version"`
+
 	Base int `yaml:"base"`
 
 	Risk3Each int `yaml:"risk3_each"`
@@ -48,6 +53,10 @@ type Ingredient struct {
 	Risk         int
 	Position     int // 1-based позиция в списке состава (важно для §5)
 	Matched      bool
+	// Basis — основание оценки из словаря (sources_note): статус разрешения и ДСП со
+	// ссылкой на источник. Нужен, чтобы штраф отвечал на вопрос «почему», а не только
+	// «сколько»: источник оценки добавки и сам балл — разные вещи, и путать их нельзя.
+	Basis string
 }
 
 // Flag — сработавшее правило (кандидат в «красные флаги»).
@@ -69,6 +78,18 @@ type Flag struct {
 type Deduction struct {
 	Title   string `json:"title"`
 	Penalty int    `json:"penalty"`
+	// Code/Ingredient — ЧТО именно оштрафовано: код добавки (E621) и её читаемое имя.
+	// У схлопнутой по потолку строки пусто: там штраф общий на класс, а не на позицию.
+	Code       string `json:"code,omitempty"`
+	Ingredient string `json:"ingredient,omitempty"`
+	// Rule — машинный идентификатор сработавшего правила (risk3_each, sugar_top,
+	// transfat, palm, salt_top, risk_cap). Для поддержки и разбора жалоб, НЕ для показа:
+	// человеку показывается Title.
+	Rule string `json:"rule,omitempty"`
+	// Source — основание оценки добавки из словаря (sources_note). Отвечает на «почему
+	// эта добавка считается рискованной», но НЕ подтверждает сам балл: балл — наши
+	// правила, источник — про добавку.
+	Source string `json:"source,omitempty"`
 	// Capped — вычет упёрся в потолок по классу риска: это уже не «N × вес», а
 	// обрезанная сумма по группе добавок. Фронт помечает такую строку словом «потолок»,
 	// иначе арифметика в глазах пользователя не сходится.
@@ -77,8 +98,10 @@ type Deduction struct {
 
 // Result — итог скоринга.
 type Result struct {
-	Score int    `json:"score"`
-	Flags []Flag `json:"flags"` // топ-3 по величине вычета
+	Score int `json:"score"`
+	// RulesVersion — версия набора правил, по которому получен ЭТОТ балл.
+	RulesVersion string `json:"rules_version,omitempty"`
+	Flags        []Flag `json:"flags"` // топ-3 по величине вычета
 	// Breakdown — «почему такой балл»: все применённые вычеты, по убыванию.
 	Breakdown []Deduction `json:"breakdown"`
 	// Penalized — МНОЖЕСТВО кодов, из-за которых балл снижен: и обычные добавки по
@@ -198,11 +221,18 @@ func (c *Config) Score(items []Ingredient) Result {
 				Title:   fmt.Sprintf("добавки %s риска, %d шт.", riskWord(r), counts[r]),
 				Penalty: dd,
 				Capped:  true,
+				// Поимённого виновника тут нет по устройству: потолок обрезал сумму по
+				// КЛАССУ, и приписать её одной добавке значило бы соврать.
+				Rule: "risk_cap",
 			})
 			continue
 		}
 		for _, it := range byRisk[r] {
-			breakdown = append(breakdown, Deduction{Title: displayName(it), Penalty: c.riskEach(r)})
+			breakdown = append(breakdown, Deduction{
+				Title: displayName(it), Penalty: c.riskEach(r),
+				Code: it.Code, Ingredient: displayName(it),
+				Rule: fmt.Sprintf("risk%d_each", r), Source: it.Basis,
+			})
 		}
 	}
 
@@ -213,28 +243,40 @@ func (c *Config) Score(items []Ingredient) Result {
 		total += pen
 		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Добавленный сахар", Reason: it.VerdictShort, Penalty: pen, Risk: maxInt(it.Risk, 1)})
-		breakdown = append(breakdown, Deduction{Title: "добавленный сахар", Penalty: pen})
+		breakdown = append(breakdown, Deduction{
+			Title: "добавленный сахар", Penalty: pen,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "sugar", Source: it.Basis,
+		})
 	}
 	// Трансжиры.
 	if it := firstInSet(items, c.transfatSet); it != nil {
 		total += c.Transfat
 		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Трансжиры", Reason: it.VerdictShort, Penalty: c.Transfat, Risk: 3})
-		breakdown = append(breakdown, Deduction{Title: "трансжиры", Penalty: c.Transfat})
+		breakdown = append(breakdown, Deduction{
+			Title: "трансжиры", Penalty: c.Transfat,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "transfat", Source: it.Basis,
+		})
 	}
 	// Пальмовое масло.
 	if it := firstInSet(items, c.palmSet); it != nil {
 		total += c.Palm
 		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Пальмовое масло", Reason: it.VerdictShort, Penalty: c.Palm, Risk: maxInt(it.Risk, 1)})
-		breakdown = append(breakdown, Deduction{Title: "пальмовое масло", Penalty: c.Palm})
+		breakdown = append(breakdown, Deduction{
+			Title: "пальмовое масло", Penalty: c.Palm,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "palm", Source: it.Basis,
+		})
 	}
 	// Соль в первых позициях.
 	if it := c.saltInTop(items); it != nil {
 		total += c.SaltTop
 		penalize(it.Code)
 		flags = append(flags, Flag{Code: it.Code, Title: "Соль в начале состава", Reason: it.VerdictShort, Penalty: c.SaltTop, Risk: maxInt(it.Risk, 1)})
-		breakdown = append(breakdown, Deduction{Title: "соль в начале состава", Penalty: c.SaltTop})
+		breakdown = append(breakdown, Deduction{
+			Title: "соль в начале состава", Penalty: c.SaltTop,
+			Code: it.Code, Ingredient: displayName(*it), Rule: "salt_top", Source: it.Basis,
+		})
 	}
 
 	score := c.Base - total
@@ -256,7 +298,7 @@ func (c *Config) Score(items []Ingredient) Result {
 	}
 	sort.Strings(codes) // порядок обхода map случаен, а множество сравнивают поэлементно
 
-	return Result{Score: score, Flags: flags, Breakdown: breakdown, Penalized: codes}
+	return Result{Score: score, RulesVersion: c.Version, Flags: flags, Breakdown: breakdown, Penalized: codes}
 }
 
 // riskWord — название класса риска для строки разбивки («добавки среднего риска»).

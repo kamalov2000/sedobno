@@ -140,6 +140,12 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 
 	// Аналитика §10 — best-effort, не влияет на ответ.
 	_ = s.store.InsertEvent(r.Context(), &u.ID, "app_open", nil)
+	// Обязательное событие воронки: точка, где посев с сайта/поста превращается в
+	// пользователя. start_payload — метка кампании и режима, по ней связываются клик и
+	// первый разбор. Telegram-имя и прочие персональные данные сюда НЕ кладём (ТЗ §10).
+	s.track(r.Context(), u.ID, evBotStart, map[string]any{
+		"start_payload": auth.StartParam(req.InitData),
+	})
 
 	// Вернулся — значит разблокировал: мини-апп открывается только из чата с ботом.
 	// Снимаем отметку, иначе один раз заблокировавший навсегда выпал бы из рассылок

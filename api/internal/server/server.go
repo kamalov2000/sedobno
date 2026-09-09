@@ -29,9 +29,11 @@ type Server struct {
 	yk          *yookassa.Client
 	scanLimiter *userLimiter
 	mealLimiter *userLimiter
-	support     *supportState
-	poolPeak    poolPeak // пик занятых коннектов; наполняется только при DEBUG_STATS=1
-	log         *slog.Logger
+	// landingLimiter — лимит публичных событий лендинга по IP (см. landing.go).
+	landingLimiter *ipLimiter
+	support        *supportState
+	poolPeak       poolPeak // пик занятых коннектов; наполняется только при DEBUG_STATS=1
+	log            *slog.Logger
 }
 
 // New создаёт сервер с зависимостями. pipe может быть nil в тестах, не задевающих
@@ -43,8 +45,10 @@ func New(cfg *config.Config, pool *pgxpool.Pool, pipe *pipeline.Pipeline, log *s
 		yk:          yookassa.New(cfg.YooKassaAPIBase, cfg.YooKassaShopID, cfg.YooKassaSecretKey),
 		scanLimiter: newUserLimiter(rateLimitOr(cfg.ScanRateLimit, scanRateLimit), time.Minute),
 		mealLimiter: newUserLimiter(rateLimitOr(cfg.MealRateLimit, mealRateLimit), time.Minute),
-		support:     newSupportState(),
-		log:         log,
+		// Лимитер публичного роута событий лендинга: ключ — IP, пользователя там нет.
+		landingLimiter: newIPLimiter(landingRateLimit, time.Minute),
+		support:        newSupportState(),
+		log:            log,
 	}
 }
 
@@ -103,6 +107,11 @@ func (s *Server) Router() http.Handler {
 		// чтобы забрать картинку в сторис, и Bearer-токена у него нет. Защита — имя из 128
 		// бит случайности и суточный срок жизни файла (см. share.go).
 		r.Get("/share/{name}", s.handleShareCardGet)
+
+		// События лендинга (ТЗ §10). Публичный намеренно: сайт шлёт их до того, как
+		// человек попал в бот, и токена у него нет. Защита — белый список имён и полей
+		// плюс лимит по IP (см. landing.go).
+		r.Post("/landing/event", s.handleLandingEvent)
 
 		// Защищённые роуты: Bearer JWT обязателен (§8).
 		r.Group(func(r chi.Router) {

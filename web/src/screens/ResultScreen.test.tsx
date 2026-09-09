@@ -82,3 +82,46 @@ describe("ResultScreen — «балл приблизителен»", () => {
     expect(screen.queryByText(approxText)).toBeNull();
   });
 });
+
+// APP-03/APP-04: балл должен быть объяснимым, а распознанный текст — проверяемым.
+describe("ResultScreen — объяснимость балла и проверка распознанного", () => {
+  const withProvenance = (): ScanResult => baseResult({
+    score: 45,
+    transcription: "Состав: мука пшеничная, сахар, пальмовое масло, E621, соль",
+    rules_version: "2026-09-09",
+    deductions: [
+      { title: "глутамат натрия", penalty: 25, ingredient: "глутамат натрия", code: "E621", rule: "risk3_each", source: "ДСП 30 мг/кг, EFSA 2017" },
+      { title: "пальмовое масло", penalty: 10, ingredient: "пальмовое масло", rule: "palm", source: "оценка JECFA" },
+    ],
+  });
+
+  it("показывает, за что снят балл, и основание оценки", () => {
+    render(<ResultScreen result={withProvenance()} isSubscribed={false} onAgain={noop} />);
+    expect(screen.getByText("Почему такой балл")).toBeTruthy();
+    expect(screen.getByText("−25")).toBeTruthy();
+    expect(screen.getByText(/ДСП 30 мг\/кг, EFSA 2017/)).toBeTruthy();
+  });
+
+  it("машинный идентификатор правила в интерфейс не попадает", () => {
+    render(<ResultScreen result={withProvenance()} isSubscribed={false} onAgain={noop} />);
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("risk3_each");
+    expect(body).not.toContain("palm");
+    expect(body).not.toContain("rules_version");
+  });
+
+  it("распознанный состав можно прочитать и предлагается переснять", () => {
+    render(<ResultScreen result={withProvenance()} isSubscribed={false} onAgain={noop} />);
+    expect(screen.getByText("Что прочитано на этикетке")).toBeTruthy();
+    expect(screen.getByText(/Состав: мука пшеничная/)).toBeTruthy();
+    expect(screen.getByText(/Переснимите блок/)).toBeTruthy();
+  });
+
+  it("балл подписан как оценка по правилам Съедобно, а не приговор продукту", () => {
+    render(<ResultScreen result={withProvenance()} isSubscribed={false} onAgain={noop} />);
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("Оценка состава по правилам Съедобно");
+    expect(body).not.toContain("Плохой состав");
+    expect(body).not.toContain("Хороший продукт");
+  });
+});

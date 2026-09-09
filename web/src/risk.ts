@@ -43,8 +43,13 @@ export function flagBadgeLevel(risk: number, penalty: number): "mid" | "high" {
 export type VerdictKey = "bad" | "mid" | "good";
 
 /** Оценка 0..100 → ключ палитры ценника и слово вердикта (§3: 0–39 / 40–69 / 70–100). */
+// Слово к баллу описывает СОСТАВ по нашим правилам, а не выносит приговор продукту.
+// «Плохой состав» читался как вердикт о еде целиком — при том что балл считается только
+// по добавкам и не знает ни КБЖУ, ни рецепта, ни того, сколько человек этого съест.
+// Цветовой ключ (key) не меняется: сигнал «красный/жёлтый/зелёный» остаётся, меняется
+// формулировка.
 export function scoreToVerdict(score: number): { key: VerdictKey; word: string } {
-  if (score <= 39) return { key: "bad", word: "Плохой состав" };
-  if (score <= 69) return { key: "mid", word: "Средний состав" };
-  return { key: "good", word: "Хороший состав" };
+  if (score <= 39) return { key: "bad", word: "Много замечаний" };
+  if (score <= 69) return { key: "mid", word: "Есть замечания" };
+  return { key: "good", word: "Замечаний почти нет" };
 }

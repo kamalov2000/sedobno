@@ -64,6 +64,7 @@ func (s *Server) handlePayCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.store.InsertEvent(ctx, &u.ID, "pay_started", nil)
+	s.track(ctx, u.ID, evPaymentStarted, map[string]any{"plan": "monthly", "method": "stars"})
 	writeJSON(w, http.StatusOK, payCreateResponse{InvoiceLink: link})
 }
 

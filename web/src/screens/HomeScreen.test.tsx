@@ -296,3 +296,34 @@ describe("стартовая вкладка", () => {
     expect(screen.queryByText("Сканировать состав")).toBeNull();
   });
 });
+
+// APP-02: инструкции съёмки не должны перетекать между режимами. Человек в «Калориях» не
+// должен читать про этикетку, а в «Составе» — про тарелку: замер 06.09 показал 14 провалов
+// сканера подряд именно потому, что люди снимали не тот кадр.
+describe("HomeScreen — инструкция съёмки своя у каждого режима", () => {
+  const renderMode = (mode: "meal" | "scan") =>
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, meals_left: 29, scans_left: 29, trial_active: true, trial_days_left: 6 }}
+        mode={mode}
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+
+  it("в режиме еды говорит про тарелку и молчит про этикетку", () => {
+    renderMode("meal");
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("СФОТОГРАФИРУЙТЕ ВСЮ ТАРЕЛКУ");
+    expect(body).not.toContain("ингредиент");
+    expect(body).not.toContain("этикет");
+  });
+
+  it("в режиме состава говорит про список ингредиентов и молчит про тарелку", () => {
+    renderMode("scan");
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("СФОТОГРАФИРУЙТЕ СПИСОК ИНГРЕДИЕНТОВ");
+    expect(body).not.toContain("тарелк");
+    expect(body).not.toContain("ТАРЕЛКУ");
+  });
+});

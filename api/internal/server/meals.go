@@ -344,6 +344,13 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		props["dishes"] = res.Dishes
 	}
 	_ = s.store.InsertEvent(ctx, &u.ID, "meal_ok", props)
+	s.track(ctx, u.ID, evMealAnalysisSuccess, map[string]any{
+		"model_version":    res.Provider,
+		"components_count": len(res.Dishes),
+		"latency_ms":       res.LatencyMs,
+		"cost":             res.CostRUB,
+		"entry":            "photo",
+	})
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, ID: id, Dishes: res.Dishes, Total: &res.Total,
 		Confidence: res.Confidence, Note: res.Note, MealsLeft: left,
@@ -918,6 +925,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes), "source": source})
+	s.track(ctx, userID, evDiaryEntrySaved, map[string]any{"meal_type": req.MealType, "source": source})
 
 	// meals_left не трогаем: квота не списывалась. Отдаём актуальный остаток, чтобы
 	// фронт не пересчитывал его сам.

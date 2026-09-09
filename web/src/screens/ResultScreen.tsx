@@ -66,7 +66,7 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
             добавкам из состава и НЕ учитывает КБЖУ, порции и то, из чего продукт
             сделан по сути. Футерная строка говорит про медицину — это про другое. */}
         <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text3)", marginTop: 8, paddingLeft: 2 }}>
-          Оценка — ориентир по добавкам, не полная характеристика продукта
+          Оценка состава по правилам Съедобно — считается по добавкам из распознанного списка. Это не медицинская оценка продукта.
         </div>
 
         {/* Балл на пределе читаемости: плотную этикетку сильная модель прочитала дважды
@@ -111,16 +111,46 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
             сходится с баллом; собирать её из flags было бы враньём — там топ-3 и
             вычеты ДО потолка. Вычетов нет — строки нет вообще. */}
         {deductions.length > 0 && (
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text2)", marginTop: 14 }}>
-            <span style={{ color: "var(--text)", fontWeight: 500 }}>Балл снижен из-за:</span>{" "}
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>Почему такой балл</div>
+            {/* Каждая строка отвечает на «сколько сняли и за что». Основание (source)
+                берётся из словаря добавок и объясняет, почему добавка считается
+                рискованной, — но самого балла оно НЕ подтверждает: балл наш, по нашим
+                правилам. Машинный идентификатор правила (d.rule) в интерфейс не выводим:
+                он для поддержки, человеку от «risk3_each» пользы нет. */}
             {deductions.map((d, i) => (
-              <span key={i}>
-                {i > 0 && ", "}
-                {d.title} (−{d.penalty}
-                {d.capped && ", потолок"})
-              </span>
+              <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", marginTop: 7 }}>
+                <span style={{ fontFamily: "'PT Mono', monospace", fontSize: 12.5, color: "var(--text3)", flex: "none", minWidth: 34 }}>
+                  −{d.penalty}
+                </span>
+                <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--text2)" }}>
+                  {d.title}
+                  {d.capped && <span style={{ color: "var(--text3)" }}> · потолок по классу</span>}
+                  {d.source && (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{d.source}</span>
+                  )}
+                </span>
+              </div>
             ))}
           </div>
+        )}
+
+        {/* Распознанный текст этикетки. Балл считается ПО НЕМУ, поэтому человек должен
+            иметь возможность его прочитать и заметить пропавшую строку: если состав
+            прочитан неверно, неверно и всё, что ниже. Показываем свёрнутым — на хорошем
+            скане это лишний шум, а при сомнении раскрывается одним тапом. */}
+        {result.transcription && (
+          <details style={{ marginTop: 14 }}>
+            <summary style={{ fontSize: 13, color: "var(--text2)", cursor: "pointer", listStyle: "none" }}>
+              <span style={{ borderBottom: "1px dashed var(--border)" }}>Что прочитано на этикетке</span>
+            </summary>
+            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text2)", background: "var(--bg-soft)", borderRadius: 12, padding: "12px 14px", marginTop: 8, whiteSpace: "pre-wrap" }}>
+              {result.transcription}
+            </div>
+            <div style={{ fontSize: 12, lineHeight: 1.45, color: "var(--text3)", marginTop: 7 }}>
+              Строка пропущена или прочитана неверно? Переснимите блок «Состав» крупнее — кнопка «Проверить ещё» внизу.
+            </div>
+          </details>
         )}
 
         {/* Плохо прочитанный текст: состав распознан и оценён, но строки могли уехать —
