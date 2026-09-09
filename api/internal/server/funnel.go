@@ -1,0 +1,137 @@
+package server
+
+// Воронка по шагам: открыл приложение → выбрал фото → начал загрузку → сервер принял
+// запрос → результат или ошибка → сохранил в дневник → оплатил.
+//
+// Зачем дробить так мелко. Прежняя воронка знала только «запустил бота» и «получил
+// разбор», и весь провал между ними (37 из 78 открыли приложение, разобрали 10) был
+// одной чёрной коробкой: человек не нашёл кнопку, передумал на выборе фото, упёрся в
+// долгую загрузку или получил ошибку — по числам это неразличимо, а лечится по-разному.
+//
+// Три шага знает только клиент (открытие, выбор фото, начало загрузки) — сервер о них
+// не узнаёт никак: до POST их просто нет. Поэтому у клиента есть свой узкий эндпоинт с
+// белым списком имён — как у лендинга и кнопки «Поделиться».
+//
+// op_id связывает попытку с исходом. Без него «начал загрузку 40 раз» и «получил разбор
+// 30 раз» — два отдельных числа, из которых нельзя сказать, потерялись ли те же самые
+// десять человек или это разные люди в разные дни. Клиент выдаёт id на попытку и шлёт
+// его во всех шагах этой попытки, сервер — заголовком X-Op-Id.
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+)
+
+// appFunnelEvents — шаги, которые вправе прислать клиент. Белый список, а не свободное
+// имя: в events пишет и сервер, и по этой таблице считаются деньги и воронка.
+var appFunnelEvents = map[string]struct{}{
+	"app_opened":     {}, // мини-апп открыт (после авторизации, до любого выбора)
+	"mode_chosen":    {}, // человек выбрал сценарий: калории или состав
+	"photo_picked":   {}, // файл выбран в системном диалоге
+	"upload_started": {}, // байты пошли на сервер
+}
+
+const opIDHeader = "X-Op-Id"
+
+// maxOpIDLen — 32 символа: клиент шлёт 16 байт hex. Длиннее — не наш id.
+const maxOpIDLen = 32
+
+// sanitizeOpID пропускает только то, что похоже на наш идентификатор попытки: строчные
+// латиница с цифрами, 8–32 символа. Всё прочее превращается в пустую строку — id попадает
+// в JSONB события и в отчёты, и мусор из кривого клиента там не нужен.
+func sanitizeOpID(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) < 8 || len(v) > maxOpIDLen {
+		return ""
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return ""
+		}
+	}
+	return v
+}
+
+// opIDFrom достаёт идентификатор попытки из заголовка запроса. Пусто — событие всё равно
+// пишется: воронка без связки хуже, чем со связкой, но лучше, чем без события.
+func opIDFrom(r *http.Request) string { return sanitizeOpID(r.Header.Get(opIDHeader)) }
+
+// withOp добавляет op_id к свойствам события, не создавая карту, когда id нет.
+func withOp(op string, props map[string]any) map[string]any {
+	if op == "" {
+		return props
+	}
+	if props == nil {
+		props = make(map[string]any, 1)
+	}
+	props["op_id"] = op
+	return props
+}
+
+// appEventRequest — тело POST /api/app/event. Кроме имени и id попытки клиент может
+// прислать сценарий (meal|scan) и точку входа — по ним видно, ГДЕ человек отвалился.
+type appEventRequest struct {
+	Name  string `json:"name"`
+	OpID  string `json:"op_id"`
+	Mode  string `json:"mode"`
+	Entry string `json:"entry"`
+}
+
+// handleAppEvent — POST /api/app/event. Клиентские шаги воронки: только белый список имён
+// и три коротких поля с проверенными значениями.
+func (s *Server) handleAppEvent(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFrom(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
+		return
+	}
+	var body appEventRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
+		return
+	}
+	if _, known := appFunnelEvents[body.Name]; !known {
+		writeError(w, http.StatusBadRequest, "bad_request", "неизвестное событие")
+		return
+	}
+	_ = s.store.InsertEvent(r.Context(), &claims.UserID, body.Name, appEventProps(body))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// funnelEntries — откуда пришёл шаг. Тоже список, а не свободная строка: «entry» уходит
+// в группировку отчёта, и опечатка расщепила бы одну колонку на две.
+var funnelEntries = map[string]struct{}{
+	// Выбор сценария: экран выбора при входе, вкладка внутри приложения и АВТОМАТИЧЕСКОЕ
+	// переключение (после ошибки, из подсказки). Последнее — не выбор человека, и в
+	// воронке его надо уметь вычесть, иначе «выбрал калории» посчитает и тех, за кого
+	// выбрало приложение.
+	"picker": {}, "tab": {}, "auto": {},
+	// Откуда пришёл кадр или разбор.
+	"camera": {}, "gallery": {}, "text": {}, "photo": {}, "deeplink": {}, "resume": {},
+}
+
+func sanitizeFunnelEntry(v string) string {
+	if _, ok := funnelEntries[v]; ok {
+		return v
+	}
+	return ""
+}
+
+// appEventProps собирает свойства события из тела запроса, пропуская только известные
+// значения. Отдельной функцией, а не внутри обработчика: чистка полей — та часть, где
+// ошибка тихо засоряет отчёты, и её надо проверять тестом без базы.
+func appEventProps(body appEventRequest) map[string]any {
+	props := map[string]any{}
+	if body.Mode == "meal" || body.Mode == "scan" {
+		props["mode"] = body.Mode
+	}
+	if e := sanitizeFunnelEntry(body.Entry); e != "" {
+		props["entry"] = e
+	}
+	props = withOp(sanitizeOpID(body.OpID), props)
+	if len(props) == 0 {
+		return nil
+	}
+	return props
+}

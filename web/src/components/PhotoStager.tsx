@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import ScanButton from "./ScanButton";
 import { haptic } from "../telegram";
+import { appEvent, startOp } from "../api";
 
 // Набор 1–3 кадров ОДНОЙ этикетки перед отправкой в один скан (§8). Мультифото
 // нужно для любого продукта в сессии, поэтому компонент переиспользуется на главном,
@@ -37,6 +38,9 @@ interface Props {
   onColor?: string;
   // Подсказка при стейджинге доп. кадров (по умолчанию — про «продолжение того же списка»).
   hint?: React.ReactNode;
+  // Сценарий для воронки: с ним видно, на каком шаге теряются именно калории, а на каком
+  // состав. Не задан (экран ошибки) — шаг всё равно пишется, просто без сценария.
+  funnelMode?: "meal" | "scan";
 }
 
 export default function PhotoStager({
@@ -51,6 +55,7 @@ export default function PhotoStager({
   accentColor = "var(--accent)",
   onColor = "var(--on-accent)",
   hint = SCAN_HINT,
+  funnelMode,
 }: Props) {
   const [photos, setPhotos] = useState<File[]>([]);
   const [readError, setReadError] = useState(false);
@@ -66,6 +71,13 @@ export default function PhotoStager({
   const addPhoto = (f: File) => {
     setReadError(false);
     setFileError("");
+    // Первый кадр открывает НОВУЮ попытку: с этого места и до результата все шаги
+    // связаны одним op_id, иначе «выбрал фото» и «получил разбор» — два числа, из
+    // которых нельзя узнать, дошёл ли до второго тот же человек.
+    if (photos.length === 0) {
+      startOp();
+      appEvent("photo_picked", funnelMode ? { mode: funnelMode } : {});
+    }
     if (f.type && !f.type.startsWith("image/")) {
       setFileError("Это не фотография. Нужен снимок или картинка.");
       return;
@@ -91,6 +103,7 @@ export default function PhotoStager({
     if (photos.length === 0 || sending) return;
     setSending(true);
     haptic("medium");
+    appEvent("upload_started", funnelMode ? { mode: funnelMode } : {});
     onScan(photos);
   };
 

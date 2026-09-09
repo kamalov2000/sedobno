@@ -12,6 +12,10 @@ import (
 
 type modeRequest struct {
 	Mode string `json:"mode"`
+	// Entry — откуда сделан выбор: экран выбора при входе (picker) или переключение
+	// вкладки внутри приложения (tab). Разные вещи: первое — намерение, с которым
+	// человек пришёл, второе — блуждание по приложению.
+	Entry string `json:"entry"`
 }
 
 // handleSetMode — POST /api/me/mode. Принимает только два известных режима: чужое
@@ -36,5 +40,15 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
+	// Событие с датой — рядом с колонкой last_mode, а не вместо неё. Колонка отвечает
+	// на «что открыть в следующий раз» и хранит ТОЛЬКО последнее состояние: по ней нельзя
+	// сказать, что человек пришёл за калориями, потом ушёл в состав, а через неделю
+	// вернулся. Воронке нужен именно этот ряд выборов во времени.
+	props := map[string]any{"mode": req.Mode}
+	if e := sanitizeFunnelEntry(req.Entry); e != "" {
+		props["entry"] = e
+	}
+	s.track(r.Context(), claims.UserID, evModeChosen, withOp(opIDFrom(r), props))
+
 	w.WriteHeader(http.StatusNoContent)
 }

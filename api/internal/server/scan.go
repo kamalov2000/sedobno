@@ -162,6 +162,7 @@ func labelNotFoundMessage(reason string) string {
 // бы отобрать оплаченное. Стоит это лишней нормализации кадров у того, кто и так за
 // лимитом, — против vision-вызова цена пренебрежима, а потолки тела (≤32 МБ) на месте.
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	op := opIDFrom(r) // связка попытки с исходом, см. funnel.go
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
@@ -246,7 +247,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// за время между прогонами он мог потратить попытки на другие сканы или
 		// оформить подписку.
 		cached.ScansLeft = s.remainingScans(u)
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", map[string]any{"status": cached.Status})
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", withOp(op, map[string]any{"status": cached.Status}))
 		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
 		writeJSON(w, http.StatusOK, cached)
 
@@ -268,12 +269,12 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	// Пре-чек лимита: неподписчик, исчерпавший бесплатные сканы, упирается в paywall.
 	// Ниже кэша — см. комментарий к handleScan: уже проверенное фото пейволл не гасит.
 	if acc := checkAccessWith(u, accessScan, time.Now(), s.accessLimits()); !acc.Allowed {
-		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", map[string]any{"reason": acc.Reason})
+		_ = s.store.InsertEvent(ctx, &u.ID, "paywall_shown", withOp(op, map[string]any{"reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "scans_left"))
 		return
 	}
 
-	_ = s.store.InsertEvent(ctx, &u.ID, "scan_started", nil)
+	_ = s.store.InsertEvent(ctx, &u.ID, "scan_started", withOp(op, nil))
 
 	// Пайплайн (§4). res непустой даже при ошибке — пишем его в scans для диагностики.
 	res, perr := s.pipe.Run(ctx, images)
@@ -296,7 +297,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case perr != nil || res.Status == pipeline.StatusError:
 		s.log.Error("scan: пайплайн", "err", perr, "user", u.ID)
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_error", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_error", withOp(op, nil))
 		writeError(w, http.StatusBadGateway, "scan_failed", "не удалось обработать фото, попробуйте ещё раз")
 
 	case res.Status == pipeline.StatusMixedFrames:
@@ -377,13 +378,13 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// Обязательное событие воронки (ТЗ §10). Ни состава, ни фото — только длина
 		// распознанного текста: она отвечает на «сколько удалось прочитать», не раскрывая
 		// что именно.
-		s.track(ctx, u.ID, evLabelAnalysisSuccess, map[string]any{
+		s.track(ctx, u.ID, evLabelAnalysisSuccess, withOp(op, map[string]any{
 			"model_version": res.Provider,
 			"ocr_length":    len(res.Transcription),
 			"rules_version": res.RulesVersion,
 			"latency_ms":    res.LatencyMs,
 			"cost":          res.CostRUB,
-		})
+		}))
 		// Порядковый номер проверки для фолбэка ценника (best-effort — 0 просто опускается).
 		num, nerr := s.store.CountUserScansOK(ctx, u.ID)
 		if nerr != nil {

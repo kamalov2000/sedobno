@@ -42,6 +42,7 @@ const mealNotFoodTextMessage = "Не понял, что это за блюдо. 
 // handleMealText — POST /api/meals/text {"text": "..."} → оценка блюд без сохранения.
 // Ответ — тот же mealResponse, что у фото-разбора (без id: приём ещё не создан).
 func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
+	op := opIDFrom(r) // связка попытки с исходом, см. funnel.go
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "нужна авторизация")
@@ -79,12 +80,12 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 	}
 	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown",
-			map[string]any{"entry": "text", "reason": acc.Reason})
+			withOp(op, map[string]any{"entry": "text", "reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
 		return
 	}
 
-	_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_started", nil)
+	_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_started", withOp(op, nil))
 
 	res, perr := s.mealPipe.RunText(ctx, text)
 
@@ -95,7 +96,7 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 	}
 	if perr != nil || res.Status == meal.StatusError {
 		s.log.Error("meal-text: пайплайн", "err", perr, "user", u.ID)
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_error", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_error", withOp(op, nil))
 		writeError(w, http.StatusBadGateway, "meal_failed", "не удалось разобрать описание, попробуйте ещё раз")
 		return
 	}
@@ -139,13 +140,13 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 		props["result_dishes"] = res.Dishes
 	}
 	_ = s.store.InsertEvent(ctx, &u.ID, "meal_text_ok", props)
-	s.track(ctx, u.ID, evMealAnalysisSuccess, map[string]any{
+	s.track(ctx, u.ID, evMealAnalysisSuccess, withOp(op, map[string]any{
 		"model_version":    res.Provider,
 		"components_count": len(res.Dishes),
 		"latency_ms":       res.LatencyMs,
 		"cost":             res.CostRUB,
 		"entry":            "text",
-	})
+	}))
 
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, Dishes: res.Dishes, Total: &res.Total,

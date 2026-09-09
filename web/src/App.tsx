@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError, appEvent, type ModeEntry } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -114,9 +114,11 @@ export default function App() {
   // Смена режима запоминается НА СЕРВЕРЕ: мини-апп открывают с разных устройств, и
   // выбор, сделанный на телефоне, должен пережить переход на планшет. Ошибку сети
   // глотаем — не смогли запомнить, значит следующий запуск просто спросит снова.
-  const setMode = useCallback((m: HomeMode) => {
+  // entry по умолчанию "auto": так помечены ПРОГРАММНЫЕ переключения (после ошибки, из
+  // подсказки). Выбор человека приходит с "picker" или "tab" — в воронке это разные вещи.
+  const setMode = useCallback((m: HomeMode, entry: ModeEntry = "auto") => {
     setModeState(m);
-    void setLastMode(m).catch(() => {});
+    void setLastMode(m, entry).catch(() => {});
   }, []);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
@@ -193,6 +195,10 @@ export default function App() {
       if (profile.pending_plan) {
         setPaywallPlan(profile.pending_plan);
       }
+      // Первый шаг воронки: приложение открыто и авторизовано. До него виден только
+      // «запустил бота», и весь провал «нажал кнопку, но не дошёл» был неразличим.
+      appEvent("app_opened", profile.start_mode ? { mode: profile.start_mode } : {});
+
       if (profile.start_mode === "meal" || profile.start_mode === "scan") {
         setModeState(profile.start_mode);
         setView(profile.pending_plan ? "paywall" : "home");
@@ -500,7 +506,7 @@ export default function App() {
       {view === "choose_mode" && me && (
         <ChooseModeScreen
           onPick={(m) => {
-            setMode(m);
+            setMode(m, "picker");
             setView("home");
           }}
         />

@@ -232,9 +232,9 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             Оформить подписку
           </button>
         ) : meal ? (
-          <PhotoStager key="meal" onScan={onScan} startLabel="Сфотографировать еду" startIcon="ti-camera" accentColor="var(--cal)" onColor="var(--on-cal)" hint={MEAL_HINT} />
+          <PhotoStager key="meal" funnelMode="meal" onScan={onScan} startLabel="Сфотографировать еду" startIcon="ti-camera" accentColor="var(--cal)" onColor="var(--on-cal)" hint={MEAL_HINT} />
         ) : (
-          <PhotoStager key="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" hint={SCAN_HINT} />
+          <PhotoStager key="scan" funnelMode="scan" onScan={onScan} startLabel="Сканировать состав" startIcon="ti-scan" hint={SCAN_HINT} />
         )}
 
         {/* Вход в ручной приём — на главном, а не только в дневнике. Раньше его можно

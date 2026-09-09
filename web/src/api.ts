@@ -185,13 +185,55 @@ export async function subCancel(): Promise<SubCancelOutcome> {
   return data.cancelled ? { kind: "cancelled", accessUntil: data.access_until } : { kind: "nothing" };
 }
 
+// --- Воронка по шагам (см. api/internal/server/funnel.go) ---
+
+/** Идентификатор ОДНОЙ попытки разбора: выбрал фото → начал загрузку → получил результат.
+ *  Без него шаги воронки — независимые счётчики, по которым нельзя сказать, те же самые
+ *  люди дошли до результата или другие. 16 hex-символов: столько же, сколько проверяет
+ *  сервер, и достаточно, чтобы попытки не столкнулись. */
+export function newOpID(): string {
+  const b = new Uint8Array(8);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+let currentOp = "";
+
+/** Начать новую попытку: вызывается в момент, когда человек выбрал фото. */
+export function startOp(): string {
+  currentOp = newOpID();
+  return currentOp;
+}
+
+/** Текущая попытка (пустая строка — попытки нет). */
+export function opID(): string {
+  return currentOp;
+}
+
+/** Заголовок связки для запросов разбора и сохранения. */
+export function opHeaders(): Record<string, string> {
+  return currentOp ? { "X-Op-Id": currentOp } : {};
+}
+
+export type AppEventName = "app_opened" | "mode_chosen" | "photo_picked" | "upload_started";
+
+/** Шаг воронки, который знает только клиент. Best-effort, как shareEvent: телеметрия
+ *  никогда не мешает человеку пользоваться приложением. */
+export function appEvent(name: AppEventName, extra: { mode?: string; entry?: string } = {}): void {
+  void apiFetch("/api/app/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, op_id: currentOp || undefined, ...extra }),
+  }).catch(() => {});
+}
+
 export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
   const maxBusyRetries = 3;
   for (let attempt = 0; ; attempt++) {
     const form = new FormData();
     // 1–3 кадра одной этикетки — все уходят полем photo в один запрос (§8).
     for (const f of files) form.append("photo", f);
-    const res = await apiFetch("/api/scan", { method: "POST", body: form });
+    const res = await apiFetch("/api/scan", { method: "POST", body: form, headers: opHeaders() });
 
     if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
@@ -222,7 +264,7 @@ export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
   for (let attempt = 0; ; attempt++) {
     const form = new FormData();
     for (const f of files) form.append("photo", f);
-    const res = await apiFetch("/api/meals", { method: "POST", body: form });
+    const res = await apiFetch("/api/meals", { method: "POST", body: form, headers: opHeaders() });
 
     if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
@@ -248,7 +290,7 @@ export async function analyzeMealText(text: string): Promise<MealOutcome> {
   for (let attempt = 0; ; attempt++) {
     const res = await apiFetch("/api/meals/text", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...opHeaders() },
       body: JSON.stringify({ text }),
     });
 
@@ -361,7 +403,7 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
 export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" }): Promise<MealResult> {
   const res = await apiFetch("/api/meals", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...opHeaders() },
     body: JSON.stringify({ ...body, date: localDay() }),
   });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
@@ -480,14 +522,19 @@ export async function addWater(deltaMl: number, date = localDay()): Promise<Wate
   return res.json();
 }
 
+/** Откуда сделан выбор сценария: экран выбора при входе, переключение вкладки или
+ *  автоматический переход из другого экрана. Третье — не выбор человека, и в воронке
+ *  его надо уметь отделить. */
+export type ModeEntry = "picker" | "tab" | "auto";
+
 /** POST /api/me/mode — запомнить режим приложения (калории | состав).
  *  Хранится на сервере, а не в localStorage: мини-апп открывают с разных устройств,
  *  и выбор должен переживать смену устройства (ТЗ, APP-01). */
-export async function setLastMode(mode: "meal" | "scan"): Promise<void> {
+export async function setLastMode(mode: "meal" | "scan", entry: ModeEntry = "auto"): Promise<void> {
   const res = await apiFetch("/api/me/mode", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, entry }),
   });
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
 }

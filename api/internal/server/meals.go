@@ -152,6 +152,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	op := opIDFrom(r) // связка «начал загрузку → получил результат», см. funnel.go
 
 	// Пре-чек квоты: неподписчик, исчерпавший бесплатные разборы, упирается в paywall.
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
@@ -171,9 +172,9 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	// считать его заново незачем. Но ровно один раз за день (см. finishMealFromCache).
 	sha := imagesSHA(images)
 	if cached, hit := s.cachedMealResult(ctx, u.ID, sha); hit {
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", map[string]any{"status": cached.Status})
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", withOp(op, map[string]any{"status": cached.Status}))
 		s.log.Info("meal: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
-		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r))
+		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r), op)
 		return
 	}
 
@@ -181,12 +182,12 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	// Ниже кэша — как и у сканера составов: за уже разобранное фото квота списана,
 	// и гасить его пейволлом значило бы отобрать оплаченное.
 	if acc := checkAccessWith(u, accessMeal, time.Now(), s.accessLimits()); !acc.Allowed {
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", map[string]any{"reason": acc.Reason})
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown", withOp(op, map[string]any{"reason": acc.Reason}))
 		writeJSON(w, http.StatusPaymentRequired, paywallBody(acc, "meals_left"))
 		return
 	}
 
-	_ = s.store.InsertEvent(ctx, &u.ID, "meal_started", nil)
+	_ = s.store.InsertEvent(ctx, &u.ID, "meal_started", withOp(op, nil))
 
 	res, perr := s.mealPipe.Run(ctx, images)
 
@@ -200,7 +201,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case perr != nil || res.Status == meal.StatusError:
 		s.log.Error("meal: пайплайн", "err", perr, "user", u.ID)
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_error", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_error", withOp(op, nil))
 		writeError(w, http.StatusBadGateway, "meal_failed", "не удалось разобрать фото, попробуйте ещё раз")
 
 	case res.Status == meal.StatusLabelDetected:
@@ -224,7 +225,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		// Локальный день клиента (опционально): без него день выводится из eaten_at по
 		// Europe/Moscow, как до спринта 2 — старые клиенты не ломаются.
 		s.cacheMealResult(ctx, u.ID, sha, res)
-		s.finishMealOK(ctx, w, u, res, sha, localDateFromForm(r))
+		s.finishMealOK(ctx, w, u, res, sha, localDateFromForm(r), op)
 	}
 }
 
@@ -238,7 +239,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 // человек пересылал тот же файл, каждый раз получал «разбор» и не понимал, почему
 // остаток бесплатных разборов не двигается (он и не должен: модель не звали). Дубли
 // врали дневнику и дневной норме, а счётчик выглядел сломанным.
-func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate string) {
+func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate, op string) {
 	// Не-ok разбор из кэша (упаковка/не еда) приёма не создаёт — как и в живом прогоне.
 	switch res.Status {
 	case meal.StatusLabelDetected:
@@ -298,7 +299,7 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 //
 // sha кадра пишется в приём здесь, на ПЕРВОМ разборе: без него повторная отправка того же
 // фото (она приходит в finishMealFromCache) не нашла бы, что показать вместо дубля.
-func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate string) {
+func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate, op string) {
 	itemsJSON, _ := json.Marshal(res.Dishes)
 	total := res.Total
 	conf := res.Confidence
@@ -344,13 +345,13 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 		props["dishes"] = res.Dishes
 	}
 	_ = s.store.InsertEvent(ctx, &u.ID, "meal_ok", props)
-	s.track(ctx, u.ID, evMealAnalysisSuccess, map[string]any{
+	s.track(ctx, u.ID, evMealAnalysisSuccess, withOp(op, map[string]any{
 		"model_version":    res.Provider,
 		"components_count": len(res.Dishes),
 		"latency_ms":       res.LatencyMs,
 		"cost":             res.CostRUB,
 		"entry":            "photo",
-	})
+	}))
 	writeJSON(w, http.StatusOK, mealResponse{
 		Status: res.Status, ID: id, Dishes: res.Dishes, Total: &res.Total,
 		Confidence: res.Confidence, Note: res.Note, MealsLeft: left,
@@ -925,7 +926,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes), "source": source})
-	s.track(ctx, userID, evDiaryEntrySaved, map[string]any{"meal_type": req.MealType, "source": source})
+	s.track(ctx, userID, evDiaryEntrySaved, withOp(opIDFrom(r), map[string]any{"meal_type": req.MealType, "source": source}))
 
 	// meals_left не трогаем: квота не списывалась. Отдаём актуальный остаток, чтобы
 	// фронт не пересчитывал его сам.

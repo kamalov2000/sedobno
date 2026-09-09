@@ -26,6 +26,7 @@ const (
 	evSubscriptionRenewed  = "subscription_renewed"
 	evLandingView          = "landing_view"
 	evLandingCTAClick      = "landing_cta_click"
+	evModeChosen           = "mode_chosen"
 )
 
 // track — обёртка над InsertEvent: аналитика best-effort и НИКОГДА не влияет на ответ

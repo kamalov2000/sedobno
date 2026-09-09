@@ -147,6 +147,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/share/card", s.handleShareCardCreate)
 			r.Post("/share/event", s.handleShareEvent)
 
+			// Клиентские шаги воронки (открыл, выбрал фото, начал загрузку). Сервер о них
+			// не узнаёт иначе: до POST разбора этих шагов не существует (см. funnel.go).
+			r.Post("/app/event", s.handleAppEvent)
+
 			// Вес, вода (спринт 2). Бесплатные: ни квот, ни рейт-лимита LLM — это
 			// данные пользователя о себе, а не вызовы модели.
 			r.Post("/weight", s.handleWeightCreate)
