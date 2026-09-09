@@ -30,7 +30,9 @@ func TestAddons_ДобавляютсяПоверхБазы(t *testing.T) {
 // Масло — известный ложечный kind реестра; неизвестная добавка отбрасывается normPieces.
 // Проверяем и что снятие 1 ч.л. масла меняет тотал ровно на 45 (Этап 6 п.3).
 func TestAddons_МаслоРовно45(t *testing.T) {
-	base := llm.MealItem{Name: "жареная картошка", Grams: 200, Kcal: 300, ProteinG: 5, FatG: 12, CarbG: 42}
+	// Блюдо намеренно НЕ жареное: у жареного жир входит в базовую оценку, и предположенную
+	// ложку снимает dropRedundantFat (fat.go) — здесь же проверяется цена самой ложки.
+	base := llm.MealItem{Name: "гречневая каша", Grams: 200, Kcal: 300, ProteinG: 5, FatG: 12, CarbG: 42}
 	withOil := base
 	withOil.Pieces = []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "ketchup", Count: 2}}
 	_, totalOil := SanitizeDishes([]llm.MealItem{withOil})
@@ -83,8 +85,10 @@ func TestApplyAnalysis_ЛожечныеВсегдаAssumed(t *testing.T) {
 			// «рис с чечевицей»: модель вернула масло БЕЗ assumed (по факту тоже догадка).
 			{Name: "рис с чечевицей", Grams: 200, Kcal: 260, ProteinG: 9, FatG: 5, CarbG: 45,
 				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: false}}},
-			// «куриное филе жареное»: масло с assumed=true + видимое яйцо (assumed=false).
-			{Name: "куриное филе жареное", Grams: 180, Kcal: 300, ProteinG: 35, FatG: 16, CarbG: 2,
+			// «куриное филе отварное»: масло с assumed=true + видимое яйцо (assumed=false).
+			// Не жареное намеренно: у жареного предположенный жир снимается как уже
+			// посчитанный в базе (fat.go), и проверять пометку было бы не на чем.
+			{Name: "куриное филе отварное", Grams: 180, Kcal: 300, ProteinG: 35, FatG: 16, CarbG: 2,
 				Pieces: []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "yolk", Count: 1, Assumed: false}}},
 		},
 	}, true)

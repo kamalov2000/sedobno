@@ -82,7 +82,9 @@ func TestНазваннаяДобавкаНеПомечаетсяПредпол�
 // не оставляет «ноль ложек» висеть в блюде. Без этого кнопка «убрать» ничего не меняла бы
 // в сохранённом приёме.
 func TestДобавкуМожноСнять(t *testing.T) {
-	d := dishWithPieces("круассан", 65, 280,
+	// Блюдо, где жир в базу НЕ входит: иначе предположенную ложку снимет dropRedundantFat,
+	// и тест проверял бы не то, что задумано.
+	d := dishWithPieces("гречневая каша", 150, 150,
 		llm.MealPiece{Kind: "butter", Count: 0, Assumed: true},
 		llm.MealPiece{Kind: "oil_veg", Count: 1, Assumed: true})
 	got := sanitizeDishes([]llm.MealItem{d})
@@ -109,5 +111,68 @@ func TestВидимоеМаслоНеТеряется(t *testing.T) {
 	_, kcal, _, _, _ := pieceMacros(got[0].Pieces)
 	if kcal != 74 { // 2 × 37 ккал
 		t.Errorf("вклад масла %v ккал, ждали 74", kcal)
+	}
+}
+
+// Детерминированная защита от двойного счёта жира: у блюда, где жир входит в саму оценку
+// по названию, предположенная ложка снимается сервером. Промпт об этом просит, но 09.09
+// одна и та же «жареная картошка» в двух прогонах подряд пришла сначала без ложек, потом
+// с двумя — на просьбу к модели такую вещь оставлять нельзя.
+func TestDropRedundantFat(t *testing.T) {
+	assumedOil := llm.MealPiece{Kind: "oil_veg", Count: 2, Assumed: true}
+	namedOil := llm.MealPiece{Kind: "oil_veg", Count: 1, Assumed: false}
+	assumedButter := llm.MealPiece{Kind: "butter", Count: 1, Assumed: true}
+	sugar := llm.MealPiece{Kind: "sugar", Count: 1, Assumed: true}
+
+	cases := []struct {
+		name  string
+		dish  llm.MealItem
+		want  int // сколько примитивов останется
+		nofat bool
+	}{
+		{"жареная картошка: предположенное масло снимается",
+			dishWithPieces("жареная картошка", 150, 260, assumedOil), 0, true},
+		{"круассан: предположенное масло снимается",
+			dishWithPieces("круассан", 65, 280, assumedButter), 0, true},
+		{"картошка НА МАСЛЕ, названном человеком: остаётся",
+			dishWithPieces("жареная картошка с маслом", 150, 260, namedOil), 1, false},
+		{"каша: жира в базе нет, предположение законно",
+			dishWithPieces("гречневая каша", 150, 150, assumedButter), 1, false},
+		{"пюре: жира в базе нет, предположение законно",
+			dishWithPieces("картофельное пюре", 200, 170, assumedButter), 1, false},
+		{"сахар у выпечки не трогаем — вопрос был про жир",
+			dishWithPieces("печенье", 60, 270, sugar), 1, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := sanitizeDishes([]llm.MealItem{c.dish})
+			if len(got[0].Pieces) != c.want {
+				t.Fatalf("примитивов %d, ждали %d: %+v", len(got[0].Pieces), c.want, got[0].Pieces)
+			}
+			if c.nofat {
+				for _, p := range got[0].Pieces {
+					if isSpoonFat(p.Kind) {
+						t.Errorf("жир остался: %+v", p)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestFatAlreadyInBase(t *testing.T) {
+	yes := []string{"жареная картошка", "картофель фри", "куриное филе на сковороде", "круассан",
+		"песочное печенье", "слойка с сыром", "пончик", "овощи гриль"}
+	for _, n := range yes {
+		if !fatAlreadyInBase(n) {
+			t.Errorf("fatAlreadyInBase(%q)=false", n)
+		}
+	}
+	no := []string{"гречневая каша", "картофельное пюре", "варёная картошка", "борщ",
+		"овсянка на воде", "салат из огурцов", "творог"}
+	for _, n := range no {
+		if fatAlreadyInBase(n) {
+			t.Errorf("fatAlreadyInBase(%q)=true — предположение о жире тут законно", n)
+		}
 	}
 }

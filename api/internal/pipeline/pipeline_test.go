@@ -57,9 +57,9 @@ func TestPipeline_HappyPath(t *testing.T) {
 	if len(res.IngredientsRaw) != 3 {
 		t.Errorf("извлечено %d, ждали 3", len(res.IngredientsRaw))
 	}
-	// сахар в топ-3 (-15) + глутамат risk1 (-3) = -18 → 82.
-	if res.Score != 82 {
-		t.Errorf("score=%d, ждали 82", res.Score)
+	// сахар на ПЕРВОМ месте (-25, sugar_pos) + глутамат risk1 (-3) = -28 → 72.
+	if res.Score != 72 {
+		t.Errorf("score=%d, ждали 72", res.Score)
 	}
 	if res.Explanation == "" {
 		t.Error("пустое объяснение")
@@ -459,9 +459,9 @@ func TestPipeline_NutritionRetry_FillsMissing(t *testing.T) {
 	if !res.Nutrition.HasValues() || res.Nutrition.Kcal == nil || *res.Nutrition.Kcal != 470 {
 		t.Fatalf("КБЖУ не дочитан ретраем: %+v", res.Nutrition)
 	}
-	// Состав/оценка не сломались (сахар в топ-3 → -15 → 85).
-	if res.Status != StatusOK || res.Score != 85 {
-		t.Errorf("статус=%s score=%d, ждали ok/85", res.Status, res.Score)
+	// Состав/оценка не сломались (сахар на первом месте → -25 → 75, sugar_pos).
+	if res.Status != StatusOK || res.Score != 75 {
+		t.Errorf("статус=%s score=%d, ждали ok/75", res.Status, res.Score)
 	}
 }
 
@@ -570,9 +570,9 @@ func TestPipeline_TranscriptionGate_НормальныйСканБезЛишни
 	if res.GateMismatch {
 		t.Error("GateMismatch=true на нормальном скане — ложное срабатывание")
 	}
-	// сахар в топ-3 (-15) + глутамат risk1 (-3) = -18 → 82, как в TestPipeline_HappyPath.
-	if res.Score != 82 {
-		t.Errorf("score=%d, ждали 82 (гейт не должен трогать нормальный результат)", res.Score)
+	// сахар на первом месте (-25) + глутамат risk1 (-3) = -28 → 72, как в TestPipeline_HappyPath.
+	if res.Score != 72 {
+		t.Errorf("score=%d, ждали 72 (гейт не должен трогать нормальный результат)", res.Score)
 	}
 }
 
@@ -678,9 +678,9 @@ func TestPipeline_NestedSubCompositionReachesScoring(t *testing.T) {
 	if sugar.Raw != "сахар" {
 		t.Errorf("raw=%q, ждали «сахар» (развёрнутый элемент, а не вся строка)", sugar.Raw)
 	}
-	// Сахар в первых позициях → штраф sugar_top (15), а не 0 как было до фикса.
-	if res.Score != 85 {
-		t.Errorf("score=%d, ждали 85 (100 − 15 за сахар в топ-3)", res.Score)
+	// Сахар в первых позициях → штраф по месту (sugar_pos), а не 0 как было до фикса.
+	if res.Score != 75 {
+		t.Errorf("score=%d, ждали 75 (100 − 25 за сахар на первом месте)", res.Score)
 	}
 }
 
@@ -801,9 +801,9 @@ func TestPipeline_FoodКатегорияНеЛоматБалл(t *testing.T) {
 	if res.Status != StatusOK {
 		t.Fatalf("статус=%s, ждали ok", res.Status)
 	}
-	// сахар в топ-3 (−15) + глутамат risk1 (−3) = 82, как в happy path.
-	if res.Score != 82 {
-		t.Errorf("score=%d, ждали 82 — категория food не должна влиять на скоринг", res.Score)
+	// сахар на первом месте (−25) + глутамат risk1 (−3) = 72, как в happy path.
+	if res.Score != 72 {
+		t.Errorf("score=%d, ждали 72 — категория food не должна влиять на скоринг", res.Score)
 	}
 }
 

@@ -42,7 +42,7 @@ for x in d['dishes']:
     print(f"    добавки: {tag}")
 print(f"    ИТОГО: {d['total']['kcal']} ккал")
 PY
-  sleep 7
+  sleep 14 # рейт-лимит разборов: 5 в минуту
 }
 
 probe "круассан"
