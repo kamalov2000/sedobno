@@ -80,6 +80,16 @@ type Config struct {
 	// false — мгновенный откат к одиночной форс-эскалации без пересборки.
 	ScanSelfConsistency bool
 
+	// ScanSelfCheckFineLoss — СВОЙ порог плотности для второго прочтения. Раньше он был
+	// общим с форс-эскалацией (0.4), хотя реакции разные: эскалация поднимает слабую
+	// модель до сильной, а второе прочтение ловит разброс сильной модели на пределе
+	// читаемости. Замер по 51 живому скану: второе чтение сработало на 7 кадрах (14%),
+	// разошлось на 3 — и все три расхождения были при fine_loss ≥ 0,69, тогда как кадры
+	// 0,44–0,54 дали одинаковые прочтения и стоили вдвое дороже впустую (кетчуп 09.09 —
+	// 8,57 ₽ против 4,2 у соседей). Наблюдений всего семь, поэтому порог вынесен в
+	// настройку: перекалибровать его надо будет по накопленному потоку, а не правкой кода.
+	ScanSelfCheckFineLoss float64
+
 	// MealVisionModel — vision-модель модуля калорий по фото (feature/calories).
 	// "" — использовать дефолтную vision-модель выбранного провайдера (Haiku у
 	// anthropic). Переопределяется MEAL_VISION_MODEL, чтобы прогнать качество на
@@ -310,6 +320,12 @@ func MustLoad() *Config {
 		invalid = append(invalid, "SCAN_FORCE_ESCALATE_FINE_LOSS (ожидается 0≤x≤1, 0 — выключено)")
 	}
 	cfg.ScanSelfConsistency = optBool(opt("SCAN_SELF_CONSISTENCY", "true"))
+	cfg.ScanSelfCheckFineLoss = optFloat(
+		opt("SCAN_SELF_CHECK_FINE_LOSS", "0.6"), 0.6, &invalid, "SCAN_SELF_CHECK_FINE_LOSS")
+	if cfg.ScanSelfCheckFineLoss < 0 || cfg.ScanSelfCheckFineLoss > 1 {
+		invalid = append(invalid, "SCAN_SELF_CHECK_FINE_LOSS (ожидается доля 0..1)")
+		cfg.ScanSelfCheckFineLoss = 0.6
+	}
 
 	// FEEDBACK_CHAT_ID — обязателен: без него обратная связь молча теряется. chat_id
 	// может быть отрицательным (группы/каналы), поэтому проверяем лишь на «ненулевое целое».

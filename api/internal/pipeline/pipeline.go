@@ -183,12 +183,17 @@ type Pipeline struct {
 	// вместе с форс-эскалацией. false — пайплайн ведёт себя как до правки (аварийный
 	// откат через SCAN_SELF_CONSISTENCY=false, без пересборки).
 	selfConsistency bool
-	matcher         *dict.Matcher
-	scorer          *scoring.Config
-	byCode          map[string]dict.Additive
-	candidates      []llm.Candidate
-	log             *slog.Logger
-	sem             chan struct{}
+
+	// selfCheckFineLoss — порог плотности, с которого делается ВТОРОЕ прочтение. Свой, а
+	// не общий с forceFineLoss: у двух реакций разная цена и разная польза (см. конфиг).
+	// 0 — падаем на forceFineLoss, то есть на прежнее поведение.
+	selfCheckFineLoss float64
+	matcher           *dict.Matcher
+	scorer            *scoring.Config
+	byCode            map[string]dict.Additive
+	candidates        []llm.Candidate
+	log               *slog.Logger
+	sem               chan struct{}
 	// explainEnabled — выполнять ли фазу 4 (LLM-объяснение). По умолчанию true (обратная
 	// совместимость: кто не звал SetExplainEnabled, ведёт себя как раньше); прод выключает
 	// через EXPLAIN_ENABLED. При false фаза пропускается, res.Explanation остаётся пустым.
@@ -232,6 +237,19 @@ func (p *Pipeline) SetForceEscalateFineLoss(v float64) { p.forceFineLoss = v }
 // это единственный из бывших гейтов форс-эскалации, который остаётся полезен и когда
 // базовая модель уже сильнейшая (решение владельца 06.08.2026, см. sostav-vision-model).
 func (p *Pipeline) SetSelfConsistency(v bool) { p.selfConsistency = v }
+
+// SetSelfCheckFineLoss задаёт порог плотности для второго прочтения (0 — как раньше,
+// общий порог с форс-эскалацией).
+func (p *Pipeline) SetSelfCheckFineLoss(v float64) { p.selfCheckFineLoss = v }
+
+// selfCheckThreshold — действующий порог второго прочтения. Не задан — прежнее поведение
+// (общий порог с форс-эскалацией), чтобы старые сборки и тесты вели себя как раньше.
+func (p *Pipeline) selfCheckThreshold() float64 {
+	if p.selfCheckFineLoss > 0 {
+		return p.selfCheckFineLoss
+	}
+	return p.forceFineLoss
+}
 
 // New собирает пайплайн: строит матчер, индекс по коду и список кандидатов для
 // фазы 2 из словаря items. maxConcurrent — семафор на LLM-вызовы.
@@ -313,7 +331,11 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// тексте — свойство модели без temperature (selfcheck.go), а не следствие того, что
 	// её «подняли» с более слабой; поэтому проверка остаётся полезной, даже когда
 	// fallback==nil и отвечает базовая модель — тогда парой читает она сама.
-	selfCheckDue := denseFrame && p.selfConsistency
+	// Порог второго прочтения — свой и обычно ВЫШЕ порога эскалации: на кадрах средней
+	// плотности (0,44–0,54 по замеру) обе читки давали один и тот же набор добавок, то
+	// есть контроль стоил вдвое дороже и не сообщал ничего нового. Расхождения начинались
+	// с 0,69. Наблюдений семь — число живёт в настройке и перекалибруется по потоку.
+	selfCheckDue := p.selfConsistency && dens.FineLoss >= p.selfCheckThreshold()
 
 	// control — контрольное прочтение ТОГО ЖЕ кадра той же моделью, что ответит
 	// пользователю (прицельный self-consistency, selfcheck.go). Заполняется только при

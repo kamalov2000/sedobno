@@ -176,3 +176,29 @@ describe("ResultScreen — положительный блок не против
     expect(body).not.toContain("ИЗ 10");
   });
 });
+
+// Живой прогон 09.09 (онигири): таблица КБЖУ напечатана боком у края, модель её не
+// увидела — и человек оставался с разобранным составом и без объяснения, чего не хватило.
+// Сканер умеет несколько кадров, надо лишь сказать, что снять вторым.
+describe("ResultScreen — КБЖУ не прочиталось", () => {
+  it("объясняет причину и предлагает второй кадр", () => {
+    render(<ResultScreen result={baseResult()} isSubscribed onAgain={noop} />);
+    expect(screen.getByText("Пищевая ценность не прочиталась")).toBeTruthy();
+    expect(screen.getByText(/таблица «Пищевая ценность»/)).toBeTruthy();
+  });
+
+  it("КБЖУ прочитано — подсказки нет", () => {
+    render(
+      <ResultScreen result={baseResult({ nutrition: { basis: "100g", kcal: 220 } })} isSubscribed onAgain={noop} />,
+    );
+    expect(screen.queryByText("Пищевая ценность не прочиталась")).toBeNull();
+  });
+
+  it("не стыдит за плохой кадр — только факт и что сделать", () => {
+    render(<ResultScreen result={baseResult()} isSubscribed onAgain={noop} />);
+    const body = document.body.textContent ?? "";
+    for (const bad of ["неправильно", "плохо сняли", "ошиблись", "некачественн"]) {
+      expect(body).not.toContain(bad);
+    }
+  });
+});

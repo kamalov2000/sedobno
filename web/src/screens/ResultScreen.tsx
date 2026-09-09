@@ -224,6 +224,20 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
         </div>
 
         {result.nutrition && <NutritionCard nutrition={result.nutrition} />}
+
+        {/* КБЖУ не прочиталось — говорим ПОЧЕМУ и что сделать. Живой прогон 09.09: у
+            онигири таблица напечатана боком у края, и модель её не увидела, хотя числа
+            в кадре были. Человеку в этот момент непонятно, чего не хватило, а сканер
+            умеет несколько кадров — надо просто сказать, что вторым кадром снять. */}
+        {!result.nutrition?.kcal && (
+          <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "var(--bg2)", border: "0.5px solid var(--border)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Пищевая ценность не прочиталась</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--text3)" }}>
+              Часто таблицу печатают боком или у самого края упаковки. Снимите ещё раз двумя
+              кадрами: первый — состав, второй — таблица «Пищевая ценность» крупно и ровно.
+            </div>
+          </div>
+        )}
         <div style={{ height: 16 }} />
       </div>
 

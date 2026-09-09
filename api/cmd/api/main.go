@@ -160,7 +160,8 @@ func buildPipeline(cfg *config.Config, log *slog.Logger) (*pipeline.Pipeline, er
 	pipe.SetExtractFallback(fallback, cfg.ExtractConfidenceMin)
 	pipe.SetForceEscalateFineLoss(cfg.ScanForceEscalateFineLoss)
 	pipe.SetSelfConsistency(cfg.ScanSelfConsistency) // второй Sonnet на флагнутых кадрах
-	pipe.SetExplainEnabled(cfg.ExplainEnabled)       // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
+	pipe.SetSelfCheckFineLoss(cfg.ScanSelfCheckFineLoss)
+	pipe.SetExplainEnabled(cfg.ExplainEnabled) // фаза 4 по умолчанию выключена (EXPLAIN_ENABLED)
 
 	// Режим сканера — в лог на старте, как и у пайплайна калорий. У обоих рычагов
 	// (форс-эскалация, перепроверка) дефолт ВКЛЮЧЁН и живёт в коде, а не в .env, —
