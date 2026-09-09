@@ -456,3 +456,44 @@ func TestSelfCheckThreshold_НеЗависитОтFallback(t *testing.T) {
 		t.Errorf("порог %v, ждали 0.6", got)
 	}
 }
+
+// Регресс кетчупа: кадр средней плотности второе прочтение НЕ вызывает. Живой замер
+// 09.09 — fine_loss 0,54, контроль отработал, наборы добавок совпали, а скан стоил
+// 8,57 ₽ против 4,2 у соседей. Второе чтение стоит ровно столько же, сколько первое,
+// поэтому включаться оно должно там, где расхождения реально бывают (с 0,69 по замеру).
+func TestShouldSelfCheck_КетчупНеВызываетВтороеЧтение(t *testing.T) {
+	p := &Pipeline{selfConsistency: true, forceFineLoss: 0.4, selfCheckFineLoss: 0.6}
+	cases := map[float64]bool{
+		0.44: false, // кадры, на которых прочтения совпадали
+		0.47: false,
+		0.54: false, // кетчуп
+		0.59: false,
+		0.60: true, // ровно на пороге — читаем
+		0.69: true, // здесь начинались расхождения
+		0.78: true,
+	}
+	for fl, want := range cases {
+		if got := p.shouldSelfCheck(fl); got != want {
+			t.Errorf("fine_loss=%.2f: второе чтение=%v, ждали %v", fl, got, want)
+		}
+	}
+}
+
+// Выключенный self-consistency остаётся выключенным при любой плотности.
+func TestShouldSelfCheck_ВыключенныйНеСрабатывает(t *testing.T) {
+	p := &Pipeline{selfConsistency: false, forceFineLoss: 0.4, selfCheckFineLoss: 0.6}
+	for _, fl := range []float64{0.1, 0.6, 0.9} {
+		if p.shouldSelfCheck(fl) {
+			t.Errorf("fine_loss=%.2f: второе чтение при выключенной проверке", fl)
+		}
+	}
+}
+
+// Порог не задан вовсе (0 и там, и там) — второго чтения нет: иначе оно включилось бы на
+// каждом кадре и удвоило стоимость всех сканов разом.
+func TestShouldSelfCheck_БезПорогаНеЧитаемДважды(t *testing.T) {
+	p := &Pipeline{selfConsistency: true}
+	if p.shouldSelfCheck(0.9) {
+		t.Error("второе чтение без заданного порога")
+	}
+}

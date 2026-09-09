@@ -875,3 +875,50 @@ func TestPipeline_RescoreСовпадаетСЖивымСканом(t *testing.T
 		t.Errorf("Rescore разбивка %d строк, живая %d", len(sc.Breakdown), len(live.Breakdown))
 	}
 }
+
+// Второй кадр с таблицей КБЖУ. Живой прогон 09.09: у онигири пищевая ценность напечатана
+// вверх ногами вдоль края, и одним кадром модель её не читает (present=false) — а состав
+// плюс ОТДЕЛЬНЫЙ снимок полосы дают 220 ккал/100 г. Именно на это и рассчитана подсказка
+// «снимите таблицу вторым кадром», поэтому проверяем то, что зависит от нас: оба кадра
+// доходят до модели одним вызовом, а прочитанное КБЖУ доезжает до результата.
+func TestPipeline_ВторойКадрСТаблицейДоходитДоМодели(t *testing.T) {
+	var gotFrames int
+	kcal := 220.0
+	isFood := true
+	prov := &framesProvider{
+		seen: &gotFrames,
+		ext: &llm.Extraction{
+			IsLabel: true, IsFood: &isFood, Confidence: 0.9,
+			Ingredients: []string{"рис", "сахар"},
+			Nutrition:   &llm.Nutrition{Present: true, Basis: "100g", Kcal: &kcal},
+		},
+	}
+	p := newPipeWith(t, prov)
+
+	res, err := p.Run(context.Background(), []llm.Image{
+		{Data: []byte("состав"), MIME: "image/jpeg"},
+		{Data: []byte("таблица"), MIME: "image/jpeg"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gotFrames != 2 {
+		t.Errorf("до модели дошло кадров: %d, ждали 2 — второй кадр терялся бы молча", gotFrames)
+	}
+	if !res.Nutrition.HasValues() || res.Nutrition.Kcal == nil || *res.Nutrition.Kcal != 220 {
+		t.Errorf("КБЖУ со второго кадра не доехало до результата: %+v", res.Nutrition)
+	}
+}
+
+// framesProvider считает, сколько кадров получил вызов извлечения.
+type framesProvider struct {
+	fakeProvider
+	seen *int
+	ext  *llm.Extraction
+}
+
+func (f *framesProvider) Name() string { return "frames" }
+func (f *framesProvider) ExtractIngredients(_ context.Context, images []llm.Image) (*llm.Extraction, llm.Usage, error) {
+	*f.seen = len(images)
+	return f.ext, llm.Usage{}, nil
+}
