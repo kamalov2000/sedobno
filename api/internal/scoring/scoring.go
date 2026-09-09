@@ -29,11 +29,17 @@ type Config struct {
 	Risk1Cap  int `yaml:"risk1_cap"`
 
 	TopPositions int `yaml:"top_positions"`
-	SugarTop     int `yaml:"sugar_top"`
-	SugarOther   int `yaml:"sugar_other"`
-	Transfat     int `yaml:"transfat"`
-	Palm         int `yaml:"palm"`
-	SaltTop      int `yaml:"salt_top"`
+	// SugarPos — штраф за сахар ПО ПОЗИЦИИ в составе: [первое место, второе, третье].
+	// Раньше все три места стоили одинаково (sugar_top), и зефир, который почти целиком
+	// сахар, получал столько же, сколько сгущёнка с сахаром третьим — 85 у обоих. Состав
+	// пишут по убыванию массы, значит позиция и есть та информация о количестве, которая
+	// у нас уже была; ею и пользуемся. Пусто — падаем на SugarTop (старые конфиги).
+	SugarPos   []int `yaml:"sugar_pos"`
+	SugarTop   int   `yaml:"sugar_top"`
+	SugarOther int   `yaml:"sugar_other"`
+	Transfat   int   `yaml:"transfat"`
+	Palm       int   `yaml:"palm"`
+	SaltTop    int   `yaml:"salt_top"`
 
 	TransfatMarkers []string `yaml:"transfat_markers"`
 	PalmMarkers     []string `yaml:"palm_markers"`
@@ -66,6 +72,10 @@ type Flag struct {
 	Reason  string `json:"reason"` // verdict_short
 	Penalty int    `json:"penalty"`
 	Risk    int    `json:"risk"`
+	// Position — место ингредиента в составе (1 — первый). Ноль у правил, где позиция
+	// ни при чём. Нужна интерфейсу: «сахар на первом месте» человеку говорит больше,
+	// чем «−25», и объясняет, почему у двух сладких продуктов разные баллы.
+	Position int `json:"position,omitempty"`
 }
 
 // Deduction — ПРИМЕНЁННЫЙ вычет: ровно то, что вычли из базы. Отличается от Flag
@@ -94,6 +104,8 @@ type Deduction struct {
 	// обрезанная сумма по группе добавок. Фронт помечает такую строку словом «потолок»,
 	// иначе арифметика в глазах пользователя не сходится.
 	Capped bool `json:"capped,omitempty"`
+	// Position — место ингредиента в составе (1 — первый); 0 — правило без позиции.
+	Position int `json:"position,omitempty"`
 }
 
 // Result — итог скоринга.
@@ -243,9 +255,9 @@ func (c *Config) Score(items []Ingredient) Result {
 	if it, pen := c.worstSugar(items); it != nil {
 		total += pen
 		penalize(it.Code)
-		flags = append(flags, Flag{Code: it.Code, Title: "Добавленный сахар", Reason: it.VerdictShort, Penalty: pen, Risk: maxInt(it.Risk, 1)})
+		flags = append(flags, Flag{Code: it.Code, Title: "Добавленный сахар", Reason: it.VerdictShort, Penalty: pen, Risk: maxInt(it.Risk, 1), Position: it.Position})
 		breakdown = append(breakdown, Deduction{
-			Title: "добавленный сахар", Penalty: pen,
+			Title: "добавленный сахар", Penalty: pen, Position: it.Position,
 			Code: it.Code, Ingredient: displayName(*it), Rule: "sugar", Source: basisOr(it.Basis, "sugar"),
 		})
 	}
@@ -322,15 +334,24 @@ func (c *Config) worstSugar(items []Ingredient) (*Ingredient, int) {
 		if !c.sugarSet[it.Code] {
 			continue
 		}
-		pen := c.SugarOther
-		if it.Position >= 1 && it.Position <= c.TopPositions {
-			pen = c.SugarTop
-		}
-		if pen > best {
+		if pen := c.sugarPenalty(it.Position); pen > best {
 			best, found = pen, it
 		}
 	}
 	return found, best
+}
+
+// sugarPenalty — вычет за сахар на данной позиции. Первые места стоят дороже: состав
+// печатают по убыванию массы, и сахар первым — это другой продукт, чем сахар третьим.
+// SugarPos не задан — прежнее поведение (одинаковый вычет во всём топе).
+func (c *Config) sugarPenalty(pos int) int {
+	if pos >= 1 && pos <= len(c.SugarPos) {
+		return c.SugarPos[pos-1]
+	}
+	if len(c.SugarPos) == 0 && pos >= 1 && pos <= c.TopPositions {
+		return c.SugarTop
+	}
+	return c.SugarOther
 }
 
 func firstInSet(items []Ingredient, set map[string]bool) *Ingredient {

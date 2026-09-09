@@ -202,3 +202,44 @@ describe("ResultScreen — КБЖУ не прочиталось", () => {
     }
   });
 });
+
+// Сахар оценивается по МЕСТУ в составе, и человек должен видеть, почему вычет именно
+// такой: −25 без объяснения выглядит как произвол, а «сахар на первом месте» — как факт
+// с этикетки, который можно проверить глазами.
+describe("ResultScreen — место сахара в составе", () => {
+  const withSugar = (position: number, penalty: number): ScanResult =>
+    baseResult({
+      score: 100 - penalty,
+      deductions: [{ title: "добавленный сахар", penalty, ingredient: "сахар", rule: "sugar", position }],
+    });
+
+  it("первое место названо словами", () => {
+    render(<ResultScreen result={withSugar(1, 25)} isSubscribed={false} onAgain={noop} />);
+    expect(screen.getByText("Сахар находится на первом месте в составе")).toBeTruthy();
+    expect(screen.getByText("−25")).toBeTruthy();
+  });
+
+  it("второе и третье — свои слова и свои вычеты", () => {
+    const { unmount } = render(<ResultScreen result={withSugar(2, 20)} isSubscribed={false} onAgain={noop} />);
+    expect(screen.getByText("Сахар находится на втором месте в составе")).toBeTruthy();
+    unmount();
+    render(<ResultScreen result={withSugar(3, 15)} isSubscribed={false} onAgain={noop} />);
+    expect(screen.getByText("Сахар находится на третьем месте в составе")).toBeTruthy();
+  });
+
+  it("сахар дальше третьего места фразу не получает — там вычет от позиции не зависит", () => {
+    render(<ResultScreen result={withSugar(6, 5)} isSubscribed={false} onAgain={noop} />);
+    expect(screen.queryByText(/находится на/)).toBeNull();
+  });
+
+  it("у правил без позиции фразы нет", () => {
+    render(
+      <ResultScreen
+        result={baseResult({ deductions: [{ title: "пальмовое масло", penalty: 5, rule: "palm" }] })}
+        isSubscribed={false}
+        onAgain={noop}
+      />,
+    );
+    expect(screen.queryByText(/находится на/)).toBeNull();
+  });
+});

@@ -40,7 +40,11 @@ func TestScore_Table(t *testing.T) {
 		{"два risk3 (cap 50)", []Ingredient{add("E171", 3, 1), add("E123", 3, 2)}, 50},
 		{"три risk3 (cap 50)", []Ingredient{add("E171", 3, 1), add("E123", 3, 2), add("E122", 3, 3)}, 50},
 		{"четыре risk1 (cap 9)", []Ingredient{add("A", 1, 1), add("B", 1, 2), add("C", 1, 3), add("D", 1, 4)}, 91},
-		{"сахар в топ-3", []Ingredient{mark("sugar", 1)}, 85},
+		// Сахар — по МЕСТУ в составе (sugar_pos): состав печатают по убыванию массы,
+		// и сахар первым — это другой продукт, чем сахар третьим (см. scoring.yaml).
+		{"сахар первым", []Ingredient{mark("sugar", 1)}, 75},
+		{"сахар вторым", []Ingredient{mark("sugar", 2)}, 80},
+		{"сахар третьим", []Ingredient{mark("sugar", 3)}, 85},
 		{"сахар не в топе", []Ingredient{mark("sugar", 5)}, 95},
 		{"трансжиры", []Ingredient{mark("hydrogenated_fat", 4)}, 80},
 		{"пальма", []Ingredient{mark("palm_oil", 2)}, 95},
@@ -50,10 +54,10 @@ func TestScore_Table(t *testing.T) {
 			add("E171", 3, 1), add("E123", 3, 2), add("E122", 3, 4), // cap 50
 			add("E211", 2, 5),           // 10
 			mark("hydrogenated_fat", 6), // 20
-			mark("sugar", 1),            // 15
+			mark("sugar", 1),            // 25 (первое место)
 			mark("palm_oil", 7),         // 5
 			mark("salt", 3),             // 8
-		}, 0}, // 50+10+20+15+5+8 = 108 → floor 0
+		}, 0}, // 50+10+20+25+5+8 = 118 → floor 0
 	}
 	for _, tc := range cases {
 		got := c.Score(tc.items)
@@ -65,11 +69,12 @@ func TestScore_Table(t *testing.T) {
 
 func TestScore_MarkerNotDoubleCounted(t *testing.T) {
 	c := load(t)
-	// sugar имеет risk=1 и category=маркер: должен сработать только сахар-вычет (-15),
+	// sugar имеет risk=1 и category=маркер: должен сработать только сахар-вычет (-25 на
+	// первом месте),
 	// а не общий risk1 (-3). 100-15 = 85, а не 82.
 	got := c.Score([]Ingredient{mark("sugar", 1)})
-	if got.Score != 85 {
-		t.Fatalf("маркер учтён дважды: score=%d, ждали 85", got.Score)
+	if got.Score != 75 {
+		t.Fatalf("маркер учтён дважды: score=%d, ждали 75", got.Score)
 	}
 }
 
@@ -78,14 +83,14 @@ func TestScore_TopFlagsByPenalty(t *testing.T) {
 	got := c.Score([]Ingredient{
 		add("E621", 1, 1),           // -3
 		mark("hydrogenated_fat", 2), // -20
-		mark("sugar", 1),            // -15
+		mark("sugar", 1),            // -25 (первое место)
 		add("E211", 2, 3),           // -10
 	})
 	if len(got.Flags) != 3 {
 		t.Fatalf("флагов=%d, ждали топ-3", len(got.Flags))
 	}
-	// Топ-3 по величине: трансжиры(20) > сахар(15) > E211(10); E621(3) отсеян.
-	if got.Flags[0].Penalty != 20 || got.Flags[1].Penalty != 15 || got.Flags[2].Penalty != 10 {
+	// Топ-3 по величине: сахар(25) > трансжиры(20) > E211(10); E621(3) отсеян.
+	if got.Flags[0].Penalty != 25 || got.Flags[1].Penalty != 20 || got.Flags[2].Penalty != 10 {
 		t.Errorf("порядок флагов по вычету неверный: %+v", got.Flags)
 	}
 }
@@ -252,6 +257,80 @@ func TestScore_КаждыйШтрафОбъяснён(t *testing.T) {
 	for _, d := range res.Breakdown {
 		if d.Rule == "sugar" && !strings.Contains(d.Source, "Правило Съедобно") {
 			t.Errorf("правило-маркер выдаёт чужое основание: %q", d.Source)
+		}
+	}
+}
+
+// Градация сахара по позиции (сентябрь 2026). Плоский вычет уравнивал продукты, которые
+// человек не считает одинаковыми: зефир, где сахар первый и составляет почти весь
+// продукт, получал столько же, сколько сгущёнка с сахаром третьим. Состав печатают по
+// убыванию массы — позиция и есть та информация о количестве, которая у нас уже есть.
+func TestSugarPenalty_ПоМестуВСоставе(t *testing.T) {
+	c := load(t)
+	for pos, want := range map[int]int{1: 25, 2: 20, 3: 15, 4: 5, 7: 5} {
+		if got := c.sugarPenalty(pos); got != want {
+			t.Errorf("сахар на %d-м месте: вычет %d, ждали %d", pos, got, want)
+		}
+	}
+}
+
+// Позиция уходит наружу: интерфейс говорит «сахар на первом месте», и число берётся
+// отсюда, а не гадается по составу заново.
+func TestSugar_ПозицияВРазбивкеИФлаге(t *testing.T) {
+	c := load(t)
+	got := c.Score([]Ingredient{add("E621", 1, 1), mark("sugar", 2)})
+
+	var found bool
+	for _, d := range got.Breakdown {
+		if d.Rule == "sugar" {
+			found = true
+			if d.Position != 2 {
+				t.Errorf("позиция в разбивке %d, ждали 2", d.Position)
+			}
+			if d.Penalty != 20 {
+				t.Errorf("вычет %d, ждали 20 (второе место)", d.Penalty)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("вычета за сахар нет в разбивке")
+	}
+	for _, f := range got.Flags {
+		if f.Code == "sugar" && f.Position != 2 {
+			t.Errorf("позиция во флаге %d, ждали 2", f.Position)
+		}
+	}
+}
+
+// Остальные штрафы продолжают считаться независимо: градация сахара не должна ни
+// поглощать, ни отменять красители, пальму и трансжиры.
+func TestSugar_ДругиеШтрафыНеЗатронуты(t *testing.T) {
+	c := load(t)
+	got := c.Score([]Ingredient{
+		mark("sugar", 1),    // −25
+		add("E122", 3, 2),   // −25 (высокий риск)
+		mark("palm_oil", 3), // −5
+	})
+	if got.Score != 45 {
+		t.Errorf("score=%d, ждали 45 (100 − 25 − 25 − 5)", got.Score)
+	}
+	rules := map[string]bool{}
+	for _, d := range got.Breakdown {
+		rules[d.Rule] = true
+	}
+	for _, want := range []string{"sugar", "palm"} {
+		if !rules[want] {
+			t.Errorf("правило %q не сработало вместе с сахаром: %+v", want, got.Breakdown)
+		}
+	}
+}
+
+// Старый конфиг без sugar_pos ведёт себя как раньше — плоский вычет во всём топе.
+func TestSugarPenalty_БезГрадацииПрежнееПоведение(t *testing.T) {
+	c := &Config{TopPositions: 3, SugarTop: 15, SugarOther: 5}
+	for pos, want := range map[int]int{1: 15, 2: 15, 3: 15, 4: 5} {
+		if got := c.sugarPenalty(pos); got != want {
+			t.Errorf("без sugar_pos на %d-м месте: %d, ждали %d", pos, got, want)
 		}
 	}
 }

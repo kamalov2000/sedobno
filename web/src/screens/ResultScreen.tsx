@@ -23,6 +23,18 @@ interface Props {
   onAddToDiary?: () => void;
 }
 
+// Место ингредиента в составе словами. Только для правил, где позиция и есть причина
+// размера вычета (сейчас это сахар): у остальных числа позиции нет, и придумывать её
+// нельзя. Дальше третьего места фразу не строим — там вычет уже не зависит от позиции.
+const POSITION_WORDS = ["первом", "втором", "третьем"];
+
+export function positionPhrase(d: { title: string; position?: number }): string {
+  const pos = d.position ?? 0;
+  if (pos < 1 || pos > POSITION_WORDS.length) return "";
+  const what = d.title.replace(/^добавленный /i, "");
+  return `${what[0].toUpperCase()}${what.slice(1)} находится на ${POSITION_WORDS[pos - 1]} месте в составе`;
+}
+
 export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft, scanLimit, onAddToDiary }: Props) {
   const verdict = scoreToVerdict(result.score);
   const count = result.ingredients.length;
@@ -159,6 +171,13 @@ export default function ResultScreen({ result, isSubscribed, onAgain, scansLeft,
                 <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--text2)" }}>
                   {d.title}
                   {d.capped && <span style={{ color: "var(--text3)" }}> · потолок по классу</span>}
+                  {/* Почему вычет именно такой: место в составе. Состав печатают по
+                      убыванию массы, поэтому позиция говорит о количестве — и человеку
+                      это понятнее числа. Без неё два сладких продукта с разными баллами
+                      выглядят как произвол. */}
+                  {positionPhrase(d) && (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{positionPhrase(d)}</span>
+                  )}
                   {d.source && (
                     <span style={{ display: "block", fontSize: 12, color: "var(--text3)", marginTop: 1 }}>{d.source}</span>
                   )}
