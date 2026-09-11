@@ -30,6 +30,9 @@ var appFunnelEvents = map[string]struct{}{
 	"mode_chosen":    {}, // человек выбрал сценарий: калории или состав
 	"photo_picked":   {}, // файл выбран в системном диалоге
 	"upload_started": {}, // байты пошли на сервер
+	// Итог маршрутизации одной попытки: откуда начали, где закончили, почему был
+	// переброс, сколько вызовов и сколько они шли (backlog п.8).
+	"photo_routing_result": {},
 }
 
 const opIDHeader = "X-Op-Id"
@@ -76,6 +79,99 @@ type appEventRequest struct {
 	OpID  string `json:"op_id"`
 	Mode  string `json:"mode"`
 	Entry string `json:"entry"`
+	// Routing — только у photo_routing_result; каждое поле проверяется отдельно.
+	Routing *routingInfo `json:"routing"`
+}
+
+// routingInfo — итог маршрутизации одной попытки, как его видит приложение.
+type routingInfo struct {
+	InitialMode   string `json:"initial_mode"`
+	FinalMode     string `json:"final_mode"`
+	RerouteReason string `json:"reroute_reason"`
+	FinalStatus   string `json:"final_status"`
+	Frames        int    `json:"frames"`
+	Calls         int    `json:"calls"`
+	Result        string `json:"result"`
+	Bundle        string `json:"bundle"`
+	DurationsMs   []int  `json:"durations_ms"`
+	QuotaCharged  *bool  `json:"quota_charged"`
+}
+
+var routingResults = map[string]struct{}{
+	"success": {}, "paywall": {}, "unclear": {}, "double_reject": {},
+}
+
+// routingProps пропускает только проверенные значения: событие пишет клиент, а по
+// таблице events считаются решения о продукте.
+func routingProps(ri routingInfo) map[string]any {
+	p := map[string]any{}
+	if ri.InitialMode == "meal" || ri.InitialMode == "scan" {
+		p["initial_mode"] = ri.InitialMode
+	}
+	if ri.FinalMode == "meal" || ri.FinalMode == "scan" {
+		p["final_mode"] = ri.FinalMode
+	}
+	if v := routingToken(ri.RerouteReason); v != "" {
+		p["reroute_reason"] = v
+	}
+	if v := routingToken(ri.FinalStatus); v != "" {
+		p["final_status"] = v
+	}
+	if ri.Frames >= 1 && ri.Frames <= 3 {
+		p["frames"] = ri.Frames
+	}
+	if ri.Calls >= 1 && ri.Calls <= 2 {
+		p["calls"] = ri.Calls
+	}
+	if _, ok := routingResults[ri.Result]; ok {
+		p["result"] = ri.Result
+	}
+	if v := routingBundle(ri.Bundle); v != "" {
+		p["bundle"] = v
+	}
+	if n := len(ri.DurationsMs); n >= 1 && n <= 2 {
+		ok := true
+		for _, d := range ri.DurationsMs {
+			if d < 0 || d > 600000 {
+				ok = false
+			}
+		}
+		if ok {
+			p["durations_ms"] = ri.DurationsMs
+		}
+	}
+	if ri.QuotaCharged != nil {
+		p["quota_charged"] = *ri.QuotaCharged
+	}
+	return p
+}
+
+// routingToken — статус или причина: строчная латиница и подчёркивание, до 32 символов.
+func routingToken(v string) string {
+	if v == "" || len(v) > 32 {
+		return ""
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return ""
+		}
+	}
+	return v
+}
+
+// routingBundle — версия бандла: хеш коммита или метка локальной сборки.
+func routingBundle(v string) string {
+	if v == "" || len(v) > 40 {
+		return ""
+	}
+	for _, r := range v {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '.' || r == '-' || r == '_' || r == ':'
+		if !ok {
+			return ""
+		}
+	}
+	return v
 }
 
 // handleAppEvent — POST /api/app/event. Клиентские шаги воронки: только белый список имён
@@ -128,6 +224,11 @@ func appEventProps(body appEventRequest) map[string]any {
 	}
 	if e := sanitizeFunnelEntry(body.Entry); e != "" {
 		props["entry"] = e
+	}
+	if body.Name == "photo_routing_result" && body.Routing != nil {
+		for k, v := range routingProps(*body.Routing) {
+			props[k] = v
+		}
 	}
 	props = withOp(sanitizeOpID(body.OpID), props)
 	if len(props) == 0 {

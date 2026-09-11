@@ -128,12 +128,16 @@ type MealMacros struct {
 // Зеркалит схему промпта. LooksLikeLabel=true — в кадре упаковка с этикеткой, а не
 // готовая еда: пайплайн отдаст статус label_detected и фронт подскажет сканер составов.
 type MealAnalysis struct {
-	IsFood         bool       `json:"is_food"`
-	LooksLikeLabel bool       `json:"looks_like_label"`
-	Dishes         []MealItem `json:"dishes"`
-	Total          MealMacros `json:"total"`
-	Confidence     float64    `json:"confidence"`
-	Note           string     `json:"note,omitempty"`
+	IsFood         bool `json:"is_food"`
+	LooksLikeLabel bool `json:"looks_like_label"`
+	// FrameContent — что в кадре по самому фото (food | mixed | ingredients_label |
+	// package_front | label_unreadable | unclear | not_food), независимо от вкладки.
+	// Пусто у старых ответов — тогда решение принимается по LooksLikeLabel/IsFood.
+	FrameContent string     `json:"frame_content,omitempty"`
+	Dishes       []MealItem `json:"dishes"`
+	Total        MealMacros `json:"total"`
+	Confidence   float64    `json:"confidence"`
+	Note         string     `json:"note,omitempty"`
 }
 
 // MealAnalyzer — контракт vision-провайдера для модуля калорий. Намеренно ОТДЕЛЬНЫЙ

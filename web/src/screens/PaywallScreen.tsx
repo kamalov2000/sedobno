@@ -35,6 +35,9 @@ interface Props {
   /** Тариф, выбранный ещё на сайте (диплинк plan-month / plan-year). Пейволл
    *  открывается сразу на нём: повторный выбор того же самого читается как сбой. */
   initialPlan?: SubPlan;
+  /** Квота ЭТОГО режима кончилась, а в соседнем попытки есть: проверить тот же снимок там,
+   *  не загружая заново (backlog п.8). Не задан — строки нет. */
+  altMode?: { note: string; label: string; onClick: () => void };
   onSbpPay?: (plan: SubPlan) => Promise<void>;
 }
 
@@ -46,6 +49,7 @@ const BENEFITS = [
 
 export default function PaywallScreen({
   freeLimit = 30,
+  altMode,
   reason = "trial_expired",
   mealsUsed = 0,
   scansUsed = 0,
@@ -120,6 +124,18 @@ export default function PaywallScreen({
           >
             {reason === "trial_quota" ? "Разборы на этой неделе закончились" : "Неделя закончилась"}
           </div>
+          {altMode && (
+            <div style={{ marginTop: 12, maxWidth: 280 }}>
+              <div style={{ fontSize: 13.5, lineHeight: 1.45, color: "var(--brand-ink-soft)" }}>{altMode.note}</div>
+              <button
+                type="button"
+                onClick={altMode.onClick}
+                style={{ marginTop: 10, height: 42, padding: "0 16px", borderRadius: 12, border: "1px solid var(--brand-ink-soft)", background: "none", color: "var(--brand-ink)", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+              >
+                {altMode.label}
+              </button>
+            </div>
+          )}
           {/* Его собственный след за неделю. Показываем только непустое: «0 приёмов»
               на экране оплаты — упрёк, а не аргумент. */}
           {(mealsUsed > 0 || scansUsed > 0) && (

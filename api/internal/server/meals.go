@@ -59,6 +59,10 @@ type mealResponse struct {
 	// второй мы не создавали, отдаём существующий (Meal). Квота при этом не списана —
 	// как и на любом попадании в кэш.
 	AlreadyInDiary bool `json:"already_in_diary,omitempty"`
+	// Draft — разбор посчитан, но в дневник НЕ записан: снимок пришёл переброской из
+	// сканера или в кадре рядом с едой была упаковка. Приём сохраняет человек кнопкой
+	// «В дневник» (POST /meals, source=photo). Решение владельца 11.09.2026, критерий 12.
+	Draft bool `json:"draft,omitempty"`
 	// Meal — существующий приём целиком (тип приёма, признак правки, время): экран
 	// открывает его в режиме УЖЕ СОХРАНЁННОГО, а не свежего разбора. Плоские поля выше
 	// при этом тоже заполнены — клиент, не знающий про already_in_diary, покажет ровно
@@ -129,6 +133,11 @@ const (
 	// mealAlreadyInDiaryMessage — этот кадр уже разобран сегодня. Констатация, без упрёка
 	// за «повтор»: человек мог просто вернуться к приёму, и второй записи он не просил.
 	mealAlreadyInDiaryMessage = "Этот кадр уже разобран сегодня — открыли приём из дневника."
+
+	// Отказы калорий, при которых снимок остаётся во вкладке «Калории» (без переброса).
+	mealPackageFrontMessage    = "По лицевой стороне нельзя надёжно определить калорийность. Сфотографируйте таблицу пищевой ценности или саму порцию."
+	mealLabelUnreadableMessage = "Список ингредиентов попал в кадр, но текст не читается. Снимите этикетку ближе, без бликов и размытия."
+	photoUnclearMessage        = "Не получилось понять, что на фото. Снимите ближе и при хорошем свете — так, чтобы в кадре было что-то одно: блюдо или сторона упаковки."
 )
 
 // handleMealCreate — POST /api/meals (multipart, поле photo, 1–3 кадра одного приёма).
@@ -153,6 +162,8 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	op := opIDFrom(r) // связка «начал загрузку → получил результат», см. funnel.go
+	// Второй запрос попытки после автоматического переброса из сканера (см. routeHeader).
+	rerouted := r.Header.Get(routeHeader) == routeReroute
 
 	// Пре-чек квоты: неподписчик, исчерпавший бесплатные разборы, упирается в paywall.
 	u, err := s.store.GetUserByID(ctx, claims.UserID)
@@ -174,7 +185,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	if cached, hit := s.cachedMealResult(ctx, u.ID, sha); hit {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", withOp(op, map[string]any{"status": cached.Status}))
 		s.log.Info("meal: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
-		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r), op)
+		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r), op, rerouted)
 		return
 	}
 
@@ -208,7 +219,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		// Упаковка с этикеткой — не еда для калорий; подсказываем сканер составов. Не списываем.
 		// В событие кладём confidence/note модели — по ним оцениваем точность промпта на
 		// не-ok исходах (приём в meals не пишем — дневник только про еду).
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", mealDiagProps(res))
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_label_detected", withOp(op, mealDiagProps(res)))
 		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealLabelMessage, MealsLeft: s.remainingMeals(u),
@@ -221,12 +232,91 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: s.remainingMeals(u),
 		})
 
+	case res.Status == meal.StatusPackageFront, res.Status == meal.StatusLabelUnreadable, res.Status == meal.StatusUnclear:
+		// Упаковка без состава, нечитаемый текст или непонятный кадр — снимок остаётся во
+		// вкладке «Калории»: переброс тут не поможет. Лимит не списываем.
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_"+res.Status, withOp(op, mealDiagProps(res)))
+		s.cacheMealResult(ctx, u.ID, sha, res)
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, Message: mealRejectMessage(res.Status), MealsLeft: s.remainingMeals(u),
+		})
+
 	default: // ok — сохраняем приём и списываем одну попытку
 		// Локальный день клиента (опционально): без него день выводится из eaten_at по
 		// Europe/Moscow, как до спринта 2 — старые клиенты не ломаются.
 		s.cacheMealResult(ctx, u.ID, sha, res)
+		if mealIsDraft(rerouted, res) {
+			s.finishMealDraft(ctx, w, u, res, op)
+			return
+		}
 		s.finishMealOK(ctx, w, u, res, sha, localDateFromForm(r), op)
 	}
+}
+
+// Переброс снимка между анализаторами. Приложение помечает второй запрос попытки этим
+// заголовком: разбор, пришедший переброской, в дневник сам не пишется (критерий 12).
+const (
+	routeHeader  = "X-Route"
+	routeReroute = "reroute"
+)
+
+// mealIsDraft — разбор, который человек кладёт в дневник сам: пришёл переброской из
+// сканера или в кадре рядом с едой была упаковка. Обычное фото еды во вкладке «Калории»
+// по-прежнему сохраняется сразу (решение владельца 11.09.2026).
+func mealIsDraft(rerouted bool, res *meal.Result) bool {
+	return rerouted || (res != nil && res.Mixed)
+}
+
+// mealRejectMessage — подсказка для отказа калорий без переброса.
+func mealRejectMessage(status string) string {
+	switch status {
+	case meal.StatusPackageFront:
+		return mealPackageFrontMessage
+	case meal.StatusLabelUnreadable:
+		return mealLabelUnreadableMessage
+	default:
+		return photoUnclearMessage
+	}
+}
+
+// validManualSource — источники, которые клиент вправе указать у приёма, сохраняемого
+// кнопкой: из скана, из текстового разбора и из фото-черновика (переброс или смешанный
+// кадр — модель уже посчитала, квота уже списана, сохраняет человек).
+func validManualSource(v string) bool {
+	return v == mealSourceScan || v == mealSourceText || v == mealSourcePhoto
+}
+
+// finishMealDraft — успешный разбор, который НЕ пишется в дневник сам (mealIsDraft).
+// Модель вызывалась — квота списывается, как у обычного разбора; приём сохранит человек.
+// Стоимость вызова уходит в событие meal_analysis_success: строки в meals у черновика нет.
+func (s *Server) finishMealDraft(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, op string) {
+	newUsed, charged, cerr := s.store.ChargeFreeMeal(ctx, u.ID, s.effectiveLimits(u).Meals)
+	if cerr != nil {
+		s.log.Error("meal: списание лимита (черновик)", "err", cerr, "user", u.ID)
+	}
+	left := -1 // подписчик: безлимит
+	if !u.IsSubscribed {
+		if charged {
+			left = s.effectiveLimits(u).Meals - newUsed
+		} else {
+			left = 0
+		}
+	}
+	_ = s.store.InsertEvent(ctx, &u.ID, "meal_ok", withOp(op, map[string]any{
+		"kcal": res.Total.Kcal, "dishes": len(res.Dishes), "draft": true, "mixed": res.Mixed,
+	}))
+	s.track(ctx, u.ID, evMealAnalysisSuccess, withOp(op, map[string]any{
+		"model_version":    res.Provider,
+		"components_count": len(res.Dishes),
+		"latency_ms":       res.LatencyMs,
+		"cost":             res.CostRUB,
+		"entry":            "photo",
+		"draft":            true,
+	}))
+	writeJSON(w, http.StatusOK, mealResponse{
+		Status: res.Status, Dishes: res.Dishes, Total: &res.Total,
+		Confidence: res.Confidence, Note: res.Note, MealsLeft: left, Draft: true,
+	})
 }
 
 // finishMealFromCache — путь «разбор взят из кэша». Отличий от finishMealOK ровно
@@ -239,7 +329,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 // человек пересылал тот же файл, каждый раз получал «разбор» и не понимал, почему
 // остаток бесплатных разборов не двигается (он и не должен: модель не звали). Дубли
 // врали дневнику и дневной норме, а счётчик выглядел сломанным.
-func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate, op string) {
+func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter, u store.User, res *meal.Result, sha, localDate, op string, rerouted bool) {
 	// Не-ok разбор из кэша (упаковка/не еда) приёма не создаёт — как и в живом прогоне.
 	switch res.Status {
 	case meal.StatusLabelDetected:
@@ -250,6 +340,21 @@ func (s *Server) finishMealFromCache(ctx context.Context, w http.ResponseWriter,
 	case meal.StatusNotFood:
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: s.remainingMeals(u),
+		})
+		return
+	case meal.StatusPackageFront, meal.StatusLabelUnreadable, meal.StatusUnclear:
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, Message: mealRejectMessage(res.Status), MealsLeft: s.remainingMeals(u),
+		})
+		return
+	}
+
+	// Черновик: переброшенный или смешанный кадр в дневник сам не пишется — ни в живом
+	// прогоне, ни из кэша. Квоту из кэша не списываем, как и у любого попадания.
+	if mealIsDraft(rerouted, res) {
+		writeJSON(w, http.StatusOK, mealResponse{
+			Status: res.Status, Dishes: res.Dishes, Total: &res.Total,
+			Confidence: res.Confidence, Note: res.Note, MealsLeft: s.remainingMeals(u), Draft: true,
 		})
 		return
 	}
@@ -887,8 +992,8 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 	}
 	source := mealSourceManual
 	if req.Source != "" {
-		if req.Source != mealSourceScan && req.Source != mealSourceText {
-			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan" или "text" (или не указывать)`)
+		if !validManualSource(req.Source) {
+			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan", "text" или "photo" (или не указывать)`)
 			return
 		}
 		source = req.Source

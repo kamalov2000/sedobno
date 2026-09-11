@@ -68,6 +68,15 @@ const (
 	// ReasonUnreadable — этикетка есть, состава не видно и КБЖУ в кадре тоже нет:
 	// текст не прочитался (мелко/смазано/блик). Остаточный случай.
 	ReasonUnreadable = "unreadable"
+
+	// Причины по содержимому кадра (поле frame_content фазы 1, релиз маршрутизации
+	// 11.09.2026). Переброс в калории разрешён ТОЛЬКО при ReasonDishOnly: упаковка,
+	// смешанный кадр и нечитаемый текст остаются во вкладке, которую выбрал человек.
+	ReasonDishOnly        = "dish_only"
+	ReasonPackageFront    = "package_front"
+	ReasonLabelUnreadable = "label_unreadable"
+	ReasonMixed           = "mixed"
+	ReasonUnclear         = "unclear"
 )
 
 // labelNotFoundReason раскладывает «не вижу состав» на три различимых случая —
@@ -75,13 +84,32 @@ const (
 // Nutrition.Visible). Отдельного признака «штрихкод» у нас нет: кадр со штрихкодом
 // без состава попадает в unreadable либо wrong_block — тексты обоих это допускают.
 func labelNotFoundReason(e *llm.Extraction) string {
-	switch {
-	case !e.IsLabel:
-		return ReasonNotALabel
-	case e.Nutrition != nil && e.Nutrition.Visible:
-		return ReasonWrongBlock
-	default:
-		return ReasonUnreadable
+	switch strings.ToLower(strings.TrimSpace(e.FrameContent)) {
+	case "":
+		// Старый ответ без frame_content (кэш, мок, прежний промпт).
+		switch {
+		case !e.IsLabel:
+			return ReasonNotALabel
+		case e.Nutrition != nil && e.Nutrition.Visible:
+			return ReasonWrongBlock
+		default:
+			return ReasonUnreadable
+		}
+	case "dish_only":
+		return ReasonDishOnly
+	case "package_front":
+		// Упаковка без состава, но с таблицей КБЖУ: подсказка «не тот блок» точнее.
+		if e.Nutrition != nil && e.Nutrition.Visible {
+			return ReasonWrongBlock
+		}
+		return ReasonPackageFront
+	case "label_unreadable", "ingredients_label":
+		// «Состав в кадре есть», а ингредиентов не пришло — значит, текст не прочитался.
+		return ReasonLabelUnreadable
+	case "mixed":
+		return ReasonMixed
+	default: // unclear и неизвестные значения — не угадываем
+		return ReasonUnclear
 	}
 }
 

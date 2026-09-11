@@ -175,6 +175,7 @@ func (s *Store) ListScans(ctx context.Context, userID, beforeID int64, limit int
 SELECT id, created_at, status, score, ingredients_raw, ingredients_matched, nutrition_raw
 FROM scans
 WHERE user_id = $1 AND ($2 = 0 OR id < $2)
+  AND status <> 'rerouted' -- отказ «только блюдо», переброшенный в калории: не попытка в истории
 ORDER BY id DESC
 LIMIT $3`
 	rows, err := s.pool.Query(ctx, q, userID, beforeID, limit)

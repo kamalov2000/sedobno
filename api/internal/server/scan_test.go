@@ -53,11 +53,24 @@ func errorCode(t *testing.T, resp *http.Response) string {
 // кто сфотографировал лицевую сторону пачки, — бесполезно. Пустая причина (старый
 // пайплайн) должна давать осмысленный текст, а не пустую строку.
 func TestLabelNotFoundMessage(t *testing.T) {
+	// С 11.09.2026 (backlog п.8) тексты — из постановки маршрутизации. Прежний not_a_label
+	// ничего однозначного не значит и получает общую подсказку: «не похоже на состав» больше
+	// не звучит там, где в кадре могло быть блюдо.
+	const (
+		front      = "Вижу упаковку, но список ингредиентов не попал в кадр. Сфотографируйте сторону, где указан состав."
+		unreadable = "Список ингредиентов попал в кадр, но текст не читается. Снимите этикетку ближе, без бликов и размытия."
+		unclear    = "Не получилось понять, что на фото. Снимите ближе и при хорошем свете — так, чтобы в кадре было что-то одно: блюдо или сторона упаковки."
+	)
 	cases := map[string]string{
-		pipeline.ReasonNotALabel:  "Это не похоже на состав продукта. Сфотографируйте блок «Состав» на упаковке.",
-		pipeline.ReasonWrongBlock: "Кажется, в кадре не тот блок. Нужен именно список ингредиентов.",
-		pipeline.ReasonUnreadable: "Не получилось прочитать текст. Переснимите ближе и при хорошем свете.",
-		"":                        "Не получилось прочитать текст. Переснимите ближе и при хорошем свете.",
+		pipeline.ReasonNotALabel:       unclear,
+		pipeline.ReasonWrongBlock:      "Кажется, в кадре не тот блок. Нужен именно список ингредиентов.",
+		pipeline.ReasonUnreadable:      unreadable,
+		pipeline.ReasonLabelUnreadable: unreadable,
+		pipeline.ReasonPackageFront:    front,
+		pipeline.ReasonMixed:           front,
+		pipeline.ReasonUnclear:         unclear,
+		pipeline.ReasonDishOnly:        "Вижу блюдо — переключаюсь на расчёт калорий.",
+		"":                             unclear,
 	}
 	for reason, want := range cases {
 		if got := labelNotFoundMessage(reason); got != want {

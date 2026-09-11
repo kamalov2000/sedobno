@@ -8,11 +8,15 @@ import (
 
 // Ложечные добавки «готовилось с» (масло/сахар) добавляют КБЖУ по константам ПОВЕРХ базы
 // блюда — тот же механизм pieces, но примитивы ложечные (1 ч.л.), а не штучные.
+//
+// С 11.09.2026 (backlog п.8, P1) добавка входит в итог только ПОДТВЕРЖДЁННОЙ: предположение
+// модели показывается чипсом, но калории не прибавляет. Здесь добавки подтверждены
+// (assumed=false) — проверяется арифметика; ниже — что предположение в итог не входит.
 func TestAddons_ДобавляютсяПоверхБазы(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{
-		// каша (база) + 2 ч.л. сливочного + 1 ч.л. сахара
+		// каша (база) + 2 ч.л. сливочного + 1 ч.л. сахара, названные человеком
 		{Name: "овсяная каша", Grams: 250, Kcal: 200, ProteinG: 7, FatG: 5, CarbG: 32,
-			Pieces: []llm.MealPiece{{Kind: "butter", Count: 2, Assumed: true}, {Kind: "sugar", Count: 1, Assumed: true}}},
+			Pieces: []llm.MealPiece{{Kind: "butter", Count: 2}, {Kind: "sugar", Count: 1}}},
 	})
 	if len(dishes) != 1 {
 		t.Fatalf("блюд=%d, ждали 1", len(dishes))
@@ -25,6 +29,15 @@ func TestAddons_ДобавляютсяПоверхБазы(t *testing.T) {
 	if total.Kcal != 294 {
 		t.Errorf("тотал=%v ккал, ждали 294 (каша 200 + 2 сливочного 74 + сахар 20)", total.Kcal)
 	}
+
+	// Те же добавки, но предположенные моделью, — в итоге только база.
+	_, guessed := SanitizeDishes([]llm.MealItem{
+		{Name: "овсяная каша", Grams: 250, Kcal: 200, ProteinG: 7, FatG: 5, CarbG: 32,
+			Pieces: []llm.MealPiece{{Kind: "butter", Count: 2, Assumed: true}, {Kind: "sugar", Count: 1, Assumed: true}}},
+	})
+	if guessed.Kcal != 200 {
+		t.Errorf("тотал=%v ккал, ждали 200: предположенные добавки до подтверждения в итог не входят", guessed.Kcal)
+	}
 }
 
 // Масло — известный ложечный kind реестра; неизвестная добавка отбрасывается normPieces.
@@ -34,7 +47,7 @@ func TestAddons_МаслоРовно45(t *testing.T) {
 	// ложку снимает dropRedundantFat (fat.go) — здесь же проверяется цена самой ложки.
 	base := llm.MealItem{Name: "гречневая каша", Grams: 200, Kcal: 300, ProteinG: 5, FatG: 12, CarbG: 42}
 	withOil := base
-	withOil.Pieces = []llm.MealPiece{{Kind: "oil_veg", Count: 1, Assumed: true}, {Kind: "ketchup", Count: 2}}
+	withOil.Pieces = []llm.MealPiece{{Kind: "oil_veg", Count: 1}, {Kind: "ketchup", Count: 2}} // ложка подтверждена
 	_, totalOil := SanitizeDishes([]llm.MealItem{withOil})
 	_, totalBare := SanitizeDishes([]llm.MealItem{base})
 	// 1 ч.л. масла = ровно 45 ккал; «ketchup» не в реестре — отброшен.
@@ -47,7 +60,8 @@ func TestAddons_МаслоРовно45(t *testing.T) {
 // а ложечная добавка (масло) сохраняется — её вклад не дублируется.
 func TestAddons_ЯичницаСохраняетМасло(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{
-		{Name: "Яичница", Yolks: 2, Whites: 2, Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+		// масло подтверждено человеком: предположенное в итог не входит (backlog п.8, P1)
+		{Name: "Яичница", Yolks: 2, Whites: 2, Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "oil_veg", Count: 1}}},
 	})
 	if len(dishes) != 1 {
 		t.Fatalf("блюд=%d, ждали 1", len(dishes))

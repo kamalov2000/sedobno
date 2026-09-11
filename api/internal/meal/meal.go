@@ -24,6 +24,13 @@ const (
 	// фото считаем только для приготовленной еды, для упаковки есть сканер составов.
 	StatusLabelDetected = "label_detected"
 	StatusError         = "error"
+
+	// Отказы калорий без переброса (релиз маршрутизации 11.09.2026): в кадре только
+	// упаковка без состава, только нечитаемый состав или непонятно что. Снимок остаётся
+	// во вкладке «Калории», человек получает подсказку, лимит не списывается.
+	StatusPackageFront    = "package_front"
+	StatusLabelUnreadable = "label_unreadable"
+	StatusUnclear         = "unclear"
 )
 
 // ErrBusy — семафор LLM-конкурентности исчерпан на входе (тот же механизм, что у
@@ -55,6 +62,10 @@ type Result struct {
 	// сырьё метрики admin/stats: на каких классах жжём Sonnet и ловим ли реальные ошибки.
 	Escalated         bool
 	EscalationTrigger string
+	// Mixed — в кадре рядом с едой была упаковка. Разбор идёт по блюду (упаковка
+	// игнорируется), но в дневник такой разбор сам не пишется: человек подтверждает его
+	// кнопкой (решение владельца 11.09.2026, критерий 12).
+	Mixed bool
 }
 
 // Pipeline держит vision-провайдера, опциональную сильную модель для эскалации и
@@ -224,32 +235,63 @@ func applyAnalysis(res *Result, ma *llm.MealAnalysis, assumeAddons bool) {
 	// Ремарку модели чистим: она уходит человеку как есть, а модель иногда тащит в неё
 	// наш контракт («считаются сервером по pieces»). См. sanitizeNote.
 	res.Note = sanitizeNote(ma.Note)
-	switch {
-	case ma.LooksLikeLabel:
-		res.Status = StatusLabelDetected
-	case !ma.IsFood:
-		res.Status = StatusNotFood
-	default:
-		dishes := sanitizeDishes(ma.Dishes)
-		if len(dishes) == 0 {
-			// Модель сказала «еда», но ни одного пригодного блюда не распозналось —
-			// показывать нечего, лимит не списываем (как not_food).
+	fc := normFrameContent(ma.FrameContent)
+	if fc == "" {
+		// Ответ без frame_content (кэш, мок, прежний промпт): решаем как раньше.
+		switch {
+		case ma.LooksLikeLabel:
+			res.Status = StatusLabelDetected
+		case !ma.IsFood:
 			res.Status = StatusNotFood
+		default:
+			finishDishes(res, sanitizeDishes(ma.Dishes), assumeAddons)
+		}
+		return
+	}
+
+	// Есть блюдо — разбираем блюдо, даже если рядом упаковка. Вкладку «Калории» выбрал
+	// человек, и упаковку в ней мы игнорируем, а не отказываем. Смешанный кадр помечаем:
+	// такой разбор в дневник сам не пишется.
+	if fc != frameNotFood {
+		if dishes := sanitizeDishes(ma.Dishes); len(dishes) > 0 {
+			finishDishes(res, dishes, assumeAddons)
+			res.Mixed = fc != frameFood && fc != frameUnclear
 			return
 		}
-		// Ложечные добавки, пришедшие из разбора фото, — всегда догадка о СКРЫТОМ
-		// ингредиенте (сколько ложек масла/сахара — по фото не измерить). Флаг assumed для
-		// них выставляем детерминированно, а не полагаемся на модель: она возвращала его
-		// непостоянно (одну и ту же скрытую добавку то с assumed, то без), отчего одинаковые
-		// чипсы рисовались по-разному. Путь правки (PATCH) сюда не заходит — подтверждённые
-		// тапом добавки остаются assumed=false.
-		if assumeAddons {
-			markAddonsAssumed(dishes)
-		}
-		res.Dishes = dishes
-		res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
-		res.Status = StatusOK
 	}
+	switch fc {
+	case frameIngredientsLabel:
+		res.Status = StatusLabelDetected // единственный случай, когда разрешён переброс в сканер
+	case framePackageFront:
+		res.Status = StatusPackageFront
+	case frameLabelUnreadable:
+		res.Status = StatusLabelUnreadable
+	case frameUnclear:
+		res.Status = StatusUnclear
+	default: // not_food, а также «еда» без пригодных блюд — как раньше
+		res.Status = StatusNotFood
+	}
+}
+
+// finishDishes — успешный разбор: ложечные добавки из фото помечаются предположением,
+// total считается сервером. Пустой список — показывать нечего.
+func finishDishes(res *Result, dishes []llm.MealItem, assumeAddons bool) {
+	if len(dishes) == 0 {
+		// Модель сказала «еда», но ни одного пригодного блюда не распозналось —
+		// показывать нечего, лимит не списываем (как not_food).
+		res.Status = StatusNotFood
+		return
+	}
+	// Ложечные добавки, пришедшие из разбора фото, — всегда догадка о СКРЫТОМ ингредиенте
+	// (сколько ложек масла/сахара — по фото не измерить). Флаг assumed для них выставляем
+	// детерминированно, а не полагаемся на модель: она возвращала его непостоянно. Путь
+	// правки (PATCH) сюда не заходит — подтверждённые тапом добавки остаются assumed=false.
+	if assumeAddons {
+		markAddonsAssumed(dishes)
+	}
+	res.Dishes = dishes
+	res.Total = sumMacros(dishes) // total считаем СЕРВЕРНО из блюд (гарантия согласованности)
+	res.Status = StatusOK
 }
 
 // logEggPiecesAmbiguity зовётся по ИТОГОВОМУ результату каждой ветки Run/RunText, а не из

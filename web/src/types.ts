@@ -143,7 +143,7 @@ export interface ScanNutrition {
 
 /** Причина label_not_found: по ней экран ошибки выбирает подсказку.
  *  Приходит только при status=label_not_found; у старого бэка отсутствует. */
-export type ScanReason = "not_a_label" | "unreadable" | "wrong_block";
+export type ScanReason = "not_a_label" | "unreadable" | "wrong_block" | "dish_only" | "package_front" | "label_unreadable" | "mixed" | "unclear";
 
 /** Элемент истории: тот же ScanResult, что и живой скан, плюс id и дата.
  *  Открывается по тапу тем же экраном результата (переиспользуем компонент). */
@@ -192,7 +192,7 @@ export interface ScanResult {
 
 // --- Модуль калорий по фото (feature/calories). Зеркалит api/internal/server/meals.go ---
 
-export type MealStatus = "ok" | "not_food" | "label_detected" | "error";
+export type MealStatus = "ok" | "not_food" | "label_detected" | "package_front" | "label_unreadable" | "unclear" | "error";
 export type MealType = "breakfast" | "lunch" | "dinner" | "snack";
 
 /** Одно распознанное блюдо. КБЖУ — для оценённой порции (grams), не на 100 г. */
@@ -241,6 +241,9 @@ export interface MealMacros {
 /** POST /api/meals — разбор фото приёма. При ok несёт id/блюда/итог; иначе — message. */
 export interface MealResult {
   status: MealStatus;
+  /** Разбор посчитан, но в дневник не записан: снимок пришёл переброской из сканера или в
+   *  кадре рядом с едой была упаковка. Сохраняет человек кнопкой «В дневник». */
+  draft?: boolean;
   id?: number;
   eaten_at?: string;
   dishes?: MealItem[];

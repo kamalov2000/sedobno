@@ -430,8 +430,9 @@ describe("MealResultScreen — яичное блюдо как счётчик ш�
   it("масло на яичном блюде: цикл 1→0→2 восстанавливает вклад на карточке", () => {
     render(<MealResultScreen result={eggWithOil() as never} isSubscribed onDone={noop} onRetake={noop} />);
     // «N ккал» слитным текстом есть только на карточке блюда (в герое число и «ккал» —
-    // отдельными span). старт: 156 (яйца) + 45 (масло ×1) = 201.
-    expect(screen.getByText("201 ккал")).toBeTruthy();
+    // отдельными span). Старт: 156 — масло ПРЕДПОЛОЖЕНО и до подтверждения в итог не
+    // входит (backlog п.8, P1). Любой тап по его чипсу — уже решение человека.
+    expect(screen.getByText("156 ккал")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Масло: меньше")); // →0
     expect(screen.getByText("156 ккал")).toBeTruthy(); // только яйца
     fireEvent.click(screen.getByLabelText("Добавить: Масло")); // →1

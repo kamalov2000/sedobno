@@ -227,6 +227,35 @@ export function appEvent(name: AppEventName, extra: { mode?: string; entry?: str
   }).catch(() => {});
 }
 
+/** Версия клиентского бандла: при деплое — хеш коммита (APP_BUILD передаёт Makefile),
+ *  локально — метка времени сборки. Без неё по аналитике не понять, на какой версии
+ *  приложения человек получил переброс. */
+declare const __APP_BUILD__: string;
+export const APP_BUILD: string = typeof __APP_BUILD__ !== "undefined" ? __APP_BUILD__ : "dev";
+
+/** Итог маршрутизации одной попытки (backlog п.8). */
+export interface RoutingInfo {
+  initial_mode: "meal" | "scan";
+  final_mode: "meal" | "scan";
+  reroute_reason: string;
+  final_status: string;
+  frames: number;
+  calls: number;
+  result: "success" | "paywall" | "unclear" | "double_reject";
+  bundle: string;
+  durations_ms: number[];
+  quota_charged: boolean | null;
+}
+
+/** Событие photo_routing_result. Best-effort, как и остальная телеметрия. */
+export function routingEvent(info: RoutingInfo): void {
+  void apiFetch("/api/app/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "photo_routing_result", op_id: currentOp || undefined, routing: info }),
+  }).catch(() => {});
+}
+
 export async function scanPhoto(files: File[]): Promise<ScanOutcome> {
   const maxBusyRetries = 3;
   for (let attempt = 0; ; attempt++) {
@@ -259,12 +288,18 @@ export type MealOutcome =
 
 /** POST /api/meals — разбор фото приёма. Тот же паттерн, что scanPhoto: FormData поле
  *  photo (1–3 кадра), ретраи 429 с бэкоффом, 402 → пейволл. */
-export async function analyzeMeal(files: File[]): Promise<MealOutcome> {
+export async function analyzeMeal(files: File[], opts: { rerouted?: boolean } = {}): Promise<MealOutcome> {
   const maxBusyRetries = 3;
   for (let attempt = 0; ; attempt++) {
     const form = new FormData();
     for (const f of files) form.append("photo", f);
-    const res = await apiFetch("/api/meals", { method: "POST", body: form, headers: opHeaders() });
+    // X-Route: второй запрос попытки после переброса из сканера — такой разбор сервер в
+    // дневник сам не пишет, а отдаёт черновиком (backlog п.8, критерий 12).
+    const res = await apiFetch("/api/meals", {
+      method: "POST",
+      body: form,
+      headers: { ...opHeaders(), ...(opts.rerouted ? { "X-Route": "reroute" } : {}) },
+    });
 
     if (res.status === 402) return { kind: "paywall", reason: await paywallReason(res) };
 
@@ -400,7 +435,7 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
  *  Тот же эндпоинт, что и у фото: сущность одна, различается только Content-Type.
  *  Квота НЕ списывается — vision не вызывается, платить не за что.
  *  date — локальный день клиента: без него вечерний приём уехал бы во вчера. */
-export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" }): Promise<MealResult> {
+export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" | "photo" }): Promise<MealResult> {
   const res = await apiFetch("/api/meals", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...opHeaders() },

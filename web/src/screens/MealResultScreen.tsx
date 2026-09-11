@@ -58,6 +58,10 @@ interface Props {
   /** Показывать ли «Поделиться». Решает App, а не экран: смысл в МОМЕНТЕ — свежий разбор
    *  показывают, приём, открытый из истории для правки, нет. Экран этого контекста не знает. */
   canShare?: boolean;
+  /** Черновик: разбор посчитан по фото, но в дневник ещё не записан (переброс из сканера
+   *  или упаковка рядом с едой). Экран — как у свежего разбора, а «В дневник» создаёт
+   *  приём (source=photo), а не правит несуществующий. */
+  draft?: boolean;
   /** Кадр приёма для карточки. Никуда не отправляется — из него рисуется картинка прямо
    *  здесь, и на сервер уходит уже она (см. mealStoryCard.ts). Нет кадра (руками/словами) —
    *  карточка та же, но с ровным фоном. */
@@ -127,7 +131,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false }: Props) {
   const isSaved = saved != null;
   // APP-09. У сохранённого приёма тип уже выбран; у свежего — предлагаем по времени.
   // Предположение, а не решение: чип остаётся обычным, его можно снять или сменить.
@@ -356,16 +360,16 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
 
   const onSave = async () => {
     if (busy || blocked) return;
-    if (!manual && id == null) return;
+    if (!manual && !draft && id == null) return;
     setBusy(true);
     try {
-      if (manual) {
+      if (manual || draft) {
         await createManualMeal({
           dishes: toPatch(dishes),
           ...(mealType ? { meal_type: mealType } : {}),
-          // source различает в аналитике «вписал цифрами» и «описал словами»: второе —
-          // платный вызов модели, и доля таких приёмов решает, нужен ли ему отдельный вход.
-          ...(fromText ? { source: "text" as const } : {}),
+          // source различает в аналитике «вписал цифрами», «описал словами» и «сохранил
+          // черновик фото»: второе и третье — платный вызов модели.
+          ...(draft ? { source: "photo" as const } : fromText ? { source: "text" as const } : {}),
         });
       } else {
         // Правка сохранённого приёма: PATCH идёт ВСЕГДА при нажатии кнопки, без гейта по
@@ -1024,7 +1028,7 @@ function PieceChips({ dish, onCount }: { dish: MealItem; onCount: (kind: string,
           необъяснённым символом рядом с цифрой. */}
       {hasAssumed && (
         <div style={{ fontSize: 11.5, color: "var(--text3)", lineHeight: 1.4, marginTop: 7 }}>
-          «≈» — добавку предположили: на фото её не видно. Не было — уберите знаком «−».
+          «≈» — добавку предположили, в итог она пока не входит. Была — нажмите на неё, чтобы учесть; не было — уберите знаком «−».
         </div>
       )}
     </div>
@@ -1071,12 +1075,30 @@ function PieceChip({ kind, count, assumed, onSet }: { kind: string; count: numbe
       <button type="button" onClick={() => step(-1)} aria-label={`${label}: меньше`} style={{ width: 28, height: "100%", background: "none", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 12 }} />
       </button>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "0 2px", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, color: "var(--text)", whiteSpace: "nowrap" }}>
-        <span aria-hidden="true">{emoji}</span>
-        {label}
-        {assumed && <span aria-hidden="true" title="предположено" style={{ color: "var(--text3)", fontSize: 11 }}>≈</span>}
-        <span style={{ fontFamily: "'PT Mono',monospace", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{pieceCountLabel(kind, count)}</span>
-      </span>
+      {/* Предположенная добавка в итог не входит, пока её не подтвердят (backlog п.8, P1):
+          тап по самому чипсу подтверждает то же количество, «+» и «−» — меняют его. */}
+      {assumed ? (
+        <button
+          type="button"
+          onClick={() => {
+            haptic("light");
+            onSet(count);
+          }}
+          aria-label={`Учесть: ${label}`}
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "0 2px", height: "100%", border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, color: "var(--text2)", whiteSpace: "nowrap", cursor: "pointer" }}
+        >
+          <span aria-hidden="true">{emoji}</span>
+          {label}
+          <span aria-hidden="true" title="предположено" style={{ color: "var(--text3)", fontSize: 11 }}>≈</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{pieceCountLabel(kind, count)}</span>
+        </button>
+      ) : (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "0 2px", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, color: "var(--text)", whiteSpace: "nowrap" }}>
+          <span aria-hidden="true">{emoji}</span>
+          {label}
+          <span style={{ fontFamily: "'PT Mono',monospace", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{pieceCountLabel(kind, count)}</span>
+        </span>
+      )}
       <button type="button" onClick={() => step(1)} disabled={count >= PIECE_MAX} aria-label={`${label}: больше`} style={{ width: 28, height: "100%", background: "none", border: "none", color: "var(--text)", cursor: count >= PIECE_MAX ? "default" : "pointer", opacity: count >= PIECE_MAX ? 0.4 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 12 }} />
       </button>

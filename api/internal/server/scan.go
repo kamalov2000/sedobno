@@ -143,13 +143,34 @@ type scanResponse struct {
 // для клиентов без своей копирайт-таблицы и для старых версий mini-app.
 func labelNotFoundMessage(reason string) string {
 	switch reason {
-	case pipeline.ReasonNotALabel:
-		return "Это не похоже на состав продукта. Сфотографируйте блок «Состав» на упаковке."
+	case pipeline.ReasonDishOnly:
+		return "Вижу блюдо — переключаюсь на расчёт калорий."
+	case pipeline.ReasonPackageFront, pipeline.ReasonMixed:
+		return "Вижу упаковку, но список ингредиентов не попал в кадр. Сфотографируйте сторону, где указан состав."
 	case pipeline.ReasonWrongBlock:
 		return "Кажется, в кадре не тот блок. Нужен именно список ингредиентов."
-	default: // unreadable и пустая причина
-		return "Не получилось прочитать текст. Переснимите ближе и при хорошем свете."
+	case pipeline.ReasonLabelUnreadable, pipeline.ReasonUnreadable:
+		return mealLabelUnreadableMessage
+	default: // unclear, прежний not_a_label и пустая причина
+		return photoUnclearMessage
 	}
+}
+
+// scanStatusRerouted — статус строки scans для отказа «в кадре только блюдо». Приложение
+// тут же отдаёт этот снимок калориям, и для человека это ОДНА попытка, а не «состав не
+// распознан» в истории (критерий 9). Строка при этом остаётся: в ней стоимость вызова,
+// которую считает scripts/costs.sh. История сканов такой статус не показывает.
+const scanStatusRerouted = "rerouted"
+
+// scanForHistory — что пишется в scans. Отказ dish_only помечается перебросом; всё
+// остальное — как есть.
+func scanForHistory(res *pipeline.Result) *pipeline.Result {
+	if res != nil && res.Status == pipeline.StatusLabelNotFound && res.Reason == pipeline.ReasonDishOnly {
+		cp := *res
+		cp.Status = scanStatusRerouted
+		return &cp
+	}
+	return res
 }
 
 // handleScan — POST /api/scan (multipart, поле photo). Порядок (§8, §3):
@@ -287,7 +308,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.saveScan(ctx, u.ID, res, len(images))
+	s.saveScan(ctx, u.ID, scanForHistory(res), len(images))
 
 	// Сила ответа для кэша: считается ОДИН раз здесь и передаётся во все ветки —
 	// исход (ok / не еда / состава нет) на неё не влияет, влияет только то, чья модель

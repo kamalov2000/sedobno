@@ -269,7 +269,9 @@ export function pieceMacros(pieces?: MealPiece[]): MealMacros {
   const t = (pieces ?? []).reduce(
     (a, p) => {
       const c = PIECE_CONSTS[p.kind];
-      if (!c) return a;
+      // Предположенная добавка («≈») в итог не входит, пока человек её не подтвердит
+      // (backlog п.8, P1) — зеркально серверному pieceMacros.
+      if (!c || p.assumed) return a;
       const n = Math.max(0, p.count);
       return { kcal: a.kcal + c.kcal * n, protein_g: a.protein_g + c.protein_g * n, fat_g: a.fat_g + c.fat_g * n, carb_g: a.carb_g + c.carb_g * n };
     },
@@ -287,7 +289,7 @@ export function effectiveDishKcal(dish: MealItem): number {
 export function pieceGrams(pieces?: MealPiece[]): number {
   const g = (pieces ?? []).reduce((a, p) => {
     const c = PIECE_CONSTS[p.kind];
-    return c ? a + c.grams * Math.max(0, p.count) : a;
+    return c && !p.assumed ? a + c.grams * Math.max(0, p.count) : a;
   }, 0);
   return round1(g);
 }

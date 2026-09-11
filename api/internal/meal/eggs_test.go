@@ -169,10 +169,11 @@ func TestSanitizeDishes_ЯйцаНеВходятИВБазуИВПримитив
 }
 
 // Ложечная добавка при этом не теряется: яйца жарятся на масле, и его вклад не дублируется.
+// Масло здесь подтверждено: предположенное в итог не входит (backlog п.8, P1).
 func TestSanitizeDishes_ПриСхлопыванииЯицМаслоОстаётся(t *testing.T) {
 	dishes, total := SanitizeDishes([]llm.MealItem{
 		{Name: "Яичница с солью", Grams: 110, Kcal: 156,
-			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}, {Kind: "oil_veg", Count: 1, Assumed: true}}},
+			Pieces: []llm.MealPiece{{Kind: "yolk", Count: 2}, {Kind: "white", Count: 2}, {Kind: "oil_veg", Count: 1}}},
 	})
 	if len(dishes[0].Pieces) != 1 || dishes[0].Pieces[0].Kind != "oil_veg" {
 		t.Fatalf("примитивы=%+v, ждали только масло", dishes[0].Pieces)
@@ -264,9 +265,10 @@ func TestSanitizeDishes_ЖивойОтветПятьГлазуний(t *testing.
 		{Name: "гречка отварная с зеленью и соусом", Grams: 200, Kcal: 210, ProteinG: 7, FatG: 2, CarbG: 42,
 			Pieces: []llm.MealPiece{{Kind: "butter", Count: 1, Assumed: true}}},
 	})
-	// 5 целых яиц 390 + масло 45 + гречка 210 + сливочное 37 = 682.
-	if total.Kcal != 682 {
-		t.Errorf("тотал=%v, ждали 682 (5 яиц 390 + масло 45 + гречка 210 + сливочное 37)", total.Kcal)
+	// 5 целых яиц 390 + гречка 210 = 600. Масло и сливочное модель ПРЕДПОЛОЖИЛА: с 11.09.2026
+	// (backlog п.8, P1) они видны чипсами «≈», но в итог входят только после подтверждения.
+	if total.Kcal != 600 {
+		t.Errorf("тотал=%v, ждали 600 (5 яиц 390 + гречка 210; предположенные масло и сливочное — вне итога)", total.Kcal)
 	}
 }
 

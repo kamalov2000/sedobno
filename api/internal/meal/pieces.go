@@ -247,6 +247,13 @@ func pieceMacros(pieces []llm.MealPiece) (grams, kcal, protein, fat, carb float6
 		if !ok {
 			continue
 		}
+		// Предположенная добавка (assumed) в итог НЕ входит, пока человек её не подтвердит:
+		// ложка масла, додуманная по типу блюда или — хуже — по бутылке рядом с тарелкой,
+		// не должна молча прибавлять калории (релиз маршрутизации 11.09.2026, P1). Чипс её
+		// показывает, тап подтверждает — и тогда она считается.
+		if p.Assumed {
+			continue
+		}
 		n := float64(p.Count)
 		grams += n * spec.Grams
 		kcal += n * spec.Kcal

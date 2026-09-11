@@ -182,7 +182,7 @@ deploy: ## ПРОД: выкатить main (pull → фронт → образы
 	AFTER=$$(git rev-parse HEAD); \
 	if [ "$$BEFORE" = "$$AFTER" ]; then echo "   (изменений нет — пересобираем на всякий случай, шаг идемпотентен)"; fi; \
 	echo "→ 2/5 сборка фронта (web/dist)"; \
-	docker run --rm -v "$(CURDIR)/web:/w" -w /w node:20-alpine sh -c 'npm ci --no-audit --no-fund && npm run build'; \
+	docker run --rm -e APP_BUILD=$$(git rev-parse --short HEAD) -v "$(CURDIR)/web:/w" -w /w node:20-alpine sh -c 'npm ci --no-audit --no-fund && npm run build'; \
 	echo "→ 3/5 пересборка образов api+web"; \
 	$(COMPOSE) build api web; \
 	echo "→ 4/5 рестарт изменившихся контейнеров"; \

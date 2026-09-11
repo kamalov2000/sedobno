@@ -56,7 +56,12 @@ type Extraction struct {
 	// когда со скана уходят в дневник.
 	ProductName string  `json:"product_name,omitempty"`
 	Confidence  float64 `json:"confidence"`
-	IsLabel       bool     `json:"is_label"`
+	IsLabel     bool    `json:"is_label"`
+	// FrameContent — что в кадре по самому фото (ingredients_label | dish_only |
+	// package_front | label_unreadable | mixed | unclear). Уточняет отказ «состав не
+	// найден»: в калории перебрасывается ТОЛЬКО dish_only, всё остальное остаётся во
+	// вкладке человека. Пусто у старых ответов — причина выводится по-старому.
+	FrameContent string `json:"frame_content,omitempty"`
 	// IsFood — продукт съедобен (еда/напиток). Указатель: nil (поле не пришло / mock)
 	// трактуем как «еда» — permissive, чтобы не блокировать реальную еду. Скан-гейт
 	// отсекает только ЯВНЫЙ false (косметика/химия/лекарства с INCI-составом).

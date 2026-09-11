@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError, appEvent, type ModeEntry } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -93,22 +93,119 @@ const LABEL_ERROR_FALLBACK: ErrorCopy = {
   subtitle: "На фото не нашлось читаемого списка ингредиентов.",
 };
 
-// Переброс снимка между анализаторами (backlog п.7). Оба анализатора и раньше узнавали
-// «снимок не мой» — калории видели упаковку, сканер не видел состава, — но отказывали и
-// просили переснять. Подписчик 250, 04.09: пять отказов сканера и два отказа калорий на
-// одном продукте за три минуты, после чего он бросил и не открывал приложение 2,7 дня.
-// Теперь тот же снимок сам уходит туда, где его разберут; вкладка — лишь подсказка.
+// Маршрутизация снимка между «Калориями» и «Составом» (backlog п.7 и п.8).
+//
+// Вкладка — намерение человека. Снимок уходит соседнему анализатору автоматически только в
+// двух однозначных случаях: в «Составе» только блюдо, в «Калориях» только читаемый состав.
+// Смешанный кадр, лицевая сторона упаковки и нечитаемый текст остаются во вкладке, которую
+// выбрал человек, со своей подсказкой. Повод для п.8: смешанный кадр из «Состава» ушёл в
+// калории и посчитал пасту, хлеб, вино и масло «по бутылке рядом».
 const REROUTE_TO_MEAL = "Вижу блюдо — переключаюсь на расчёт калорий";
 const REROUTE_TO_SCAN = "Вижу список ингредиентов — переключаюсь на разбор состава";
 
-// Оба анализатора отказали одному снимку: калории видят упаковку, сканер не видит
-// состава. Это упаковка без читаемого списка ингредиентов — тут пересъёмка честно нужна,
-// но просим конкретное: другую сторону упаковки, а не «ещё раз».
-const PACKAGE_NO_INGREDIENTS: ErrorCopy = {
-  title: "Вижу упаковку, но не вижу состава",
-  subtitle: "Сфотографируйте сторону, где напечатан список ингредиентов — обычно он начинается со слова «Состав».",
+const SCAN_PACKAGE_FRONT: ErrorCopy = {
+  title: "Вижу упаковку, но список ингредиентов не попал в кадр",
+  subtitle: "Сфотографируйте сторону, где указан состав.",
   hints: LABEL_NOT_A_LABEL_HINTS,
 };
+// hints: [] — у этих двух случаев одна подсказка, и она уже в подзаголовке. Без явного
+// пустого списка экран ошибки подставил бы «камерные» советы про свет и резкость, а
+// проблема здесь не в качестве кадра, а в том, что на нём.
+const MEAL_PACKAGE_FRONT: ErrorCopy = {
+  title: "По лицевой стороне нельзя надёжно определить калорийность",
+  subtitle: "Сфотографируйте таблицу пищевой ценности или саму порцию.",
+  hints: [],
+};
+const LABEL_UNREADABLE: ErrorCopy = {
+  title: "Список ингредиентов попал в кадр, но текст не читается",
+  subtitle: "Снимите этикетку ближе, без бликов и размытия.",
+};
+// Одна общая подсказка — и для непонятного кадра, и для противоречия двух анализаторов:
+// пересказывать человеку «это этикетка» и «это не этикетка» про один снимок нельзя.
+const PHOTO_UNCLEAR: ErrorCopy = {
+  title: "Не получилось понять, что на фото",
+  subtitle: "Снимите ближе и при хорошем свете — так, чтобы в кадре было что-то одно: блюдо или сторона упаковки.",
+  hints: [],
+};
+
+const modeTitle = (m: HomeMode) => (m === "scan" ? "Состав" : "Калории");
+
+/** Отказ сканера, после которого снимок остаётся в «Составе». */
+function scanRejectCopy(reason?: string): ErrorCopy {
+  switch (reason) {
+    case "package_front":
+    case "mixed":
+      return SCAN_PACKAGE_FRONT;
+    case "label_unreadable":
+    case "unreadable":
+      return LABEL_UNREADABLE;
+    case "wrong_block":
+      return LABEL_ERRORS.wrong_block;
+    default: // unclear, прежний not_a_label из кэша, пусто
+      return PHOTO_UNCLEAR;
+  }
+}
+
+/** Отказ калорий, после которого снимок остаётся в «Калориях». null — свой экран (не еда). */
+function mealRejectCopy(status: string): ErrorCopy | null {
+  switch (status) {
+    case "package_front":
+      return MEAL_PACKAGE_FRONT;
+    case "label_unreadable":
+      return LABEL_UNREADABLE;
+    case "unclear":
+      return PHOTO_UNCLEAR;
+    default:
+      return null;
+  }
+}
+
+// Шаг попытки: «first» — старт, переброс разрешён; «rerouted» — снимок передал соседний
+// анализатор, второго переброса нет; «switched» — человек сам перешёл в соседний режим с
+// пейволла, переброса тоже нет.
+type Hop = "first" | "rerouted" | "switched";
+type RouteResult = RoutingInfo["result"];
+interface RouteTrace {
+  initialMode: HomeMode;
+  frames: number;
+  durations: number[];
+  reason: string; // почему был переброс; пусто — не было
+}
+interface RouteEnd {
+  result: RouteResult;
+  finalMode: HomeMode;
+  reason: string; // конечный статус или причина
+  charged: boolean | null; // null — подписка или нет данных
+}
+
+async function timed<T>(trace: RouteTrace, call: () => Promise<T>): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await call();
+  } finally {
+    trace.durations.push(Math.round(performance.now() - t0));
+  }
+}
+
+function chargedBy(before: number | undefined, after: number | undefined): boolean | null {
+  if (before == null || after == null || before < 0 || after < 0) return null;
+  return after < before;
+}
+
+function sendRouting(trace: RouteTrace, end: RouteEnd): void {
+  routingEvent({
+    initial_mode: trace.initialMode,
+    final_mode: end.finalMode,
+    reroute_reason: trace.reason,
+    final_status: end.reason,
+    frames: trace.frames,
+    calls: trace.durations.length,
+    result: end.result,
+    bundle: APP_BUILD,
+    durations_ms: trace.durations,
+    quota_charged: end.charged,
+  });
+}
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>("booting");
@@ -147,8 +244,22 @@ export default function App() {
   const [loadingNotice, setLoadingNotice] = useState("");
   // Калории и сканер перебрасывают снимок друг другу, то есть ссылаются друг на друга:
   // через ref, чтобы не заводить в useCallback взаимную зависимость.
-  const runMealRef = useRef<(files: File[], rerouted?: boolean) => Promise<void>>(async () => {});
-  const runScanRef = useRef<(files: File[], rerouted?: boolean) => Promise<void>>(async () => {});
+  const runMealRef = useRef<(files: File[], trace: RouteTrace, hop?: Hop) => Promise<RouteEnd>>(
+    async () => ({ result: "unclear", finalMode: "meal", reason: "init", charged: null }),
+  );
+  const runScanRef = useRef<(files: File[], trace: RouteTrace, hop?: Hop) => Promise<RouteEnd>>(
+    async () => ({ result: "unclear", finalMode: "scan", reason: "init", charged: null }),
+  );
+  // Актуальные счётчики квот внутри колбэков — без пересоздания их на каждое обновление /me.
+  const meRef = useRef(me);
+  meRef.current = me;
+  // Переключатель «проверить в соседнем режиме» на пейволле (квота этого режима кончилась).
+  const [paywallAlt, setPaywallAlt] = useState<{ note: string; label: string; onClick: () => void } | null>(null);
+  // Живёт только на том пейволле, где появился: пейволл, открытый позже из другого места,
+  // не должен его унаследовать.
+  useEffect(() => {
+    if (view !== "paywall") setPaywallAlt(null);
+  }, [view]);
   // Куда возвращает «назад». Экран-исход открывается из двух историй (составов и
   // приёмов), ручной приём — из дневника и с главного; во всех случаях вопрос один и
   // тот же — откуда пришли, туда и вернуть. Поэтому одно состояние, а не флаг на путь.
@@ -294,176 +405,211 @@ export default function App() {
     };
   }, [view, returnTo]);
 
-  const packageCopy = useCallback(
-    (): ErrorCopy => ({
-      ...PACKAGE_NO_INGREDIENTS,
-      primaryAction: {
-        label: "Сфотографировать состав",
-        icon: "ti-scan",
+  // Квота выбранного режима кончилась, а в соседнем попытки есть: предлагаем проверить ТОТ ЖЕ
+  // снимок там, не загружая заново. Тип снимка ради этого не определяем — это был бы
+  // платный вызов модели без результата для человека.
+  const offerQuotaSwitch = useCallback(
+    (current: HomeMode, reason: PaywallReason, files: File[]) => {
+      if (reason !== "trial_quota") return; // неделя вышла — в соседнем режиме то же самое
+      const other: HomeMode = current === "meal" ? "scan" : "meal";
+      const left = other === "scan" ? meRef.current?.scans_left : meRef.current?.meals_left;
+      if (left == null || left <= 0) return;
+      setPaywallAlt({
+        note: `В этом режиме попытки закончились. Можно проверить фотографию в режиме «${modeTitle(other)}» либо оформить подписку.`,
+        label: `Проверить в режиме «${modeTitle(other)}»`,
         onClick: () => {
-          setMode("scan");
-          setView("home");
+          // Решение человека, а не автоматика: новая попытка в воронке, тот же снимок.
+          startOp();
+          setMode(other);
+          const trace: RouteTrace = { initialMode: other, frames: files.length, durations: [], reason: "quota_switch" };
+          const run = other === "scan" ? runScanRef.current : runMealRef.current;
+          void run(files, trace, "switched").then((end) => sendRouting(trace, end));
         },
-      },
-    }),
+      });
+    },
     [setMode],
   );
 
-  // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/ошибка/пейволл.
-  // rerouted — снимок пришёл из сканера, который не нашёл в нём состава. Второй переброс
-  // запрещён: иначе снимок, который оба анализатора считают «не своим», гонялся бы по кругу.
-  const runMeal = useCallback(async (files: File[], rerouted = false) => {
-    setSavedMeal(null);
-    setMealResult(null);
-    setReturnTo(null);
-    setMealPhoto(files[0] ?? null); // первый кадр — он и попадёт на карточку
-    setLoadingKind("meal");
-    setLoadingNotice(rerouted ? REROUTE_TO_MEAL : "");
-    setView("loading");
-    try {
-      const outcome = await analyzeMeal(files);
-      if (outcome.kind === "paywall") {
-        applyMealsLeft(0);
-        setPaywallReason(outcome.reason);
-        setView("paywall");
-        return;
-      }
-      if (outcome.kind === "error") {
-        notify("error");
-        setErrorCopy({ title: "Не удалось разобрать фото", subtitle: outcome.message });
-        setView("error");
-        return;
-      }
-      const data = outcome.data;
-      applyMealsLeft(data.meals_left);
-      if (data.status === "ok") {
-        notify("success");
-        setTodayHasMeals(true); // приём сохранён — сегодня точно есть записи
-        if (data.already_in_diary && data.meal) {
-          // Этот кадр уже разбирался сегодня: сервер не завёл второй приём, а вернул
-          // существующий. Открываем его как СОХРАНЁННЫЙ — с правками пользователя и с
-          // кнопками правки, а не как свежий разбор, который предлагалось бы «добавить»
-          // (второй раз он бы и не добавился, но обещание на кнопке было бы ложным).
-          // returnTo="home": человек пришёл сюда с камеры, а не из списка приёмов.
-          setSavedMeal(data.meal);
-          // Флаг переносим руками: diaryItemToResult собирает результат из ПРИЁМА, и про
-          // обстоятельства этого ответа он не знает — без него экран молча выглядел бы
-          // как обычная правка приёма из истории.
-          setMealResult({ ...diaryItemToResult(data.meal, data.meals_left), already_in_diary: true });
-          setReturnTo("home");
-        } else {
-          setMealResult(data);
+  // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/черновик/отказ/пейволл.
+  const runMeal = useCallback(
+    async (files: File[], trace: RouteTrace, hop: Hop = "first"): Promise<RouteEnd> => {
+      setSavedMeal(null);
+      setMealResult(null);
+      setReturnTo(null);
+      setMealPhoto(files[0] ?? null); // первый кадр — он и попадёт на карточку
+      setLoadingKind("meal");
+      setLoadingNotice(hop === "rerouted" ? REROUTE_TO_MEAL : "");
+      setView("loading");
+      const leftBefore = meRef.current?.meals_left;
+      const end = (result: RouteResult, reason: string, charged: boolean | null = false): RouteEnd => ({ result, finalMode: "meal", reason, charged });
+      try {
+        const outcome = await timed(trace, () => analyzeMeal(files, { rerouted: hop === "rerouted" }));
+        if (outcome.kind === "paywall") {
+          applyMealsLeft(0);
+          setPaywallReason(outcome.reason);
+          if (hop === "first") offerQuotaSwitch("meal", outcome.reason, files);
+          setView("paywall");
+          return end("paywall", "paywall");
         }
-        setView("meal_result");
-      } else if (data.status === "label_detected") {
-        if (!rerouted) {
-          // В кадре упаковка: не отказываем, а отдаём ТОТ ЖЕ снимок сканеру состава.
-          // Вкладку переключаем вслед, чтобы «Проверить ещё» на экране результата шло в
-          // сканер, а не заново через калории.
-          setMode("scan");
-          await runScanRef.current(files, true);
-          return;
-        }
-        // Снимок уже пришёл из сканера, и тот тоже его не принял.
-        notify("warning");
-        setErrorCopy(packageCopy());
-        setView("error");
-      } else {
-        // not_food (или неожиданный error в теле 200) — попытка не списана.
-        notify("warning");
-        setMealStateKind("not_food");
-        setView("meal_state");
-      }
-    } catch (err) {
-      notify("error");
-      setErrorCopy(uploadErrorCopy(err));
-      setView("error");
-    }
-  }, [applyMealsLeft, setMode, packageCopy]);
-
-  // Разбор состава: фото → scanPhoto → результат/ошибка/пейволл. rerouted — снимок пришёл
-  // из калорий, которые увидели в нём упаковку.
-  const runScan = useCallback(async (files: File[], rerouted = false) => {
-    setReturnTo(null);
-    setResult(null);
-    setLoadingKind("scan");
-    setLoadingNotice(rerouted ? REROUTE_TO_SCAN : "");
-    setView("loading");
-    try {
-      const outcome = await scanPhoto(files);
-      if (outcome.kind === "paywall") {
-        applyScansLeft(0);
-        setPaywallReason(outcome.reason);
-        setView("paywall");
-        return;
-      }
-      if (outcome.kind === "error") {
-        notify("error");
-        setErrorCopy({ title: "Не удалось обработать фото", subtitle: outcome.message });
-        setView("error");
-        return;
-      }
-      const data = outcome.data;
-      applyScansLeft(data.scans_left);
-      if (data.status === "ok") {
-        notify("success");
-        setResult(data);
-        setView("result");
-      } else if (data.status === "not_scored") {
-        setResult(data);
-        setView("not_scored");
-      } else if (data.status === "not_food") {
-        notify("warning");
-        setErrorCopy({
-          title: "Это не еда",
-          subtitle: data.message || "Похоже, продукт несъедобный — оценку состава для него не считаем.",
-          hints: NOT_FOOD_HINTS,
-        });
-        setView("error");
-      } else if (data.status === "mixed_frames") {
-        notify("warning");
-        setErrorCopy({
-          title: "Кадры от разных продуктов",
-          subtitle: data.message || "Проверяйте по одному продукту за раз.",
-          hints: MIXED_FRAMES_HINTS,
-        });
-        setView("error");
-      } else {
-        if (data.reason === "not_a_label") {
-          if (!rerouted) {
-            // В кадре не состав — чаще всего это еда, снятая не в той вкладке. Не говорим
-            // «не этикетка» и не просим переснять: отдаём тот же снимок калориям.
-            setMode("meal");
-            await runMealRef.current(files, true);
-            return;
-          }
-          // Калории уже увидели здесь упаковку, а сканер не нашёл состава.
-          notify("warning");
-          setErrorCopy(packageCopy());
+        if (outcome.kind === "error") {
+          notify("error");
+          setErrorCopy({ title: "Не удалось разобрать фото", subtitle: outcome.message });
           setView("error");
-          return;
+          return end("unclear", "error");
         }
-        // Не тот блок или не прочиталось — снимок по адресу, переброс не поможет.
+        const data = outcome.data;
+        applyMealsLeft(data.meals_left);
+        if (data.status === "ok") {
+          notify("success");
+          // Черновик (переброс или смешанный кадр) в дневник ещё не попал.
+          if (!data.draft) setTodayHasMeals(true);
+          if (data.already_in_diary && data.meal) {
+            // Этот кадр уже разбирался сегодня: сервер не завёл второй приём, а вернул
+            // существующий. Открываем его как СОХРАНЁННЫЙ — с правками пользователя и с
+            // кнопками правки, а не как свежий разбор, который предлагалось бы «добавить».
+            // Флаг переносим руками: diaryItemToResult про обстоятельства ответа не знает.
+            setSavedMeal(data.meal);
+            setMealResult({ ...diaryItemToResult(data.meal, data.meals_left), already_in_diary: true });
+            setReturnTo("home");
+          } else {
+            setMealResult(data);
+          }
+          setView("meal_result");
+          return end("success", data.draft ? "draft" : "ok", chargedBy(leftBefore, data.meals_left));
+        }
+        if (data.status === "label_detected") {
+          if (hop === "first") {
+            // Только читаемый состав и никакой еды — снимок однозначно для сканера. Отдаём тот
+            // же файл и переключаем вкладку вслед, чтобы «Проверить ещё» шло в сканер.
+            trace.reason = "ingredients_label";
+            setMode("scan");
+            return await runScanRef.current(files, trace, "rerouted");
+          }
+          // Сканер назвал снимок блюдом, калории — этикеткой. Пересказывать человеку обе
+          // версии нельзя (критерий 1): просим один понятный кадр.
+          notify("warning");
+          setErrorCopy(PHOTO_UNCLEAR);
+          setView("error");
+          return end("double_reject", "label_detected");
+        }
         notify("warning");
-        setErrorCopy(LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK);
+        const copy = mealRejectCopy(data.status);
+        if (copy) {
+          setErrorCopy(copy);
+          setView("error");
+        } else {
+          // not_food (или неожиданный error в теле 200) — попытка не списана.
+          setMealStateKind("not_food");
+          setView("meal_state");
+        }
+        return end(hop === "first" ? "unclear" : "double_reject", data.status);
+      } catch (err) {
+        notify("error");
+        setErrorCopy(uploadErrorCopy(err));
         setView("error");
+        return end("unclear", "error");
       }
-    } catch (err) {
-      notify("error");
-      setErrorCopy(uploadErrorCopy(err));
-      setView("error");
-    }
-  }, [applyScansLeft, setMode, packageCopy]);
+    },
+    [applyMealsLeft, setMode, offerQuotaSwitch],
+  );
+
+  // Разбор состава: фото → scanPhoto → результат/отказ/пейволл.
+  const runScan = useCallback(
+    async (files: File[], trace: RouteTrace, hop: Hop = "first"): Promise<RouteEnd> => {
+      setReturnTo(null);
+      setResult(null);
+      setLoadingKind("scan");
+      setLoadingNotice(hop === "rerouted" ? REROUTE_TO_SCAN : "");
+      setView("loading");
+      const leftBefore = meRef.current?.scans_left;
+      const end = (result: RouteResult, reason: string, charged: boolean | null = false): RouteEnd => ({ result, finalMode: "scan", reason, charged });
+      try {
+        const outcome = await timed(trace, () => scanPhoto(files));
+        if (outcome.kind === "paywall") {
+          applyScansLeft(0);
+          setPaywallReason(outcome.reason);
+          if (hop === "first") offerQuotaSwitch("scan", outcome.reason, files);
+          setView("paywall");
+          return end("paywall", "paywall");
+        }
+        if (outcome.kind === "error") {
+          notify("error");
+          setErrorCopy({ title: "Не удалось обработать фото", subtitle: outcome.message });
+          setView("error");
+          return end("unclear", "error");
+        }
+        const data = outcome.data;
+        applyScansLeft(data.scans_left);
+        if (data.status === "ok") {
+          notify("success");
+          setResult(data);
+          setView("result");
+          return end("success", "ok", chargedBy(leftBefore, data.scans_left));
+        }
+        if (data.status === "not_scored") {
+          setResult(data);
+          setView("not_scored");
+          return end("success", "not_scored");
+        }
+        if (data.status === "not_food") {
+          notify("warning");
+          setErrorCopy({
+            title: "Это не еда",
+            subtitle: data.message || "Похоже, продукт несъедобный — оценку состава для него не считаем.",
+            hints: NOT_FOOD_HINTS,
+          });
+          setView("error");
+          return end(hop === "first" ? "unclear" : "double_reject", "not_food");
+        }
+        if (data.status === "mixed_frames") {
+          notify("warning");
+          setErrorCopy({
+            title: "Кадры от разных продуктов",
+            subtitle: data.message || "Проверяйте по одному продукту за раз.",
+            hints: MIXED_FRAMES_HINTS,
+          });
+          setView("error");
+          return end("unclear", "mixed_frames");
+        }
+        // Состав не найден: переброс в калории — только если в кадре одно блюдо.
+        if (data.reason === "dish_only") {
+          if (hop === "first") {
+            trace.reason = "dish_only";
+            setMode("meal");
+            return await runMealRef.current(files, trace, "rerouted");
+          }
+          // Калории назвали снимок этикеткой, сканер — блюдом: противоречие (критерий 1).
+          notify("warning");
+          setErrorCopy(PHOTO_UNCLEAR);
+          setView("error");
+          return end("double_reject", "dish_only");
+        }
+        // Упаковка без состава, смешанный кадр, нечитаемый текст, «не тот блок», непонятно —
+        // снимок остаётся в «Составе» со своей подсказкой.
+        notify("warning");
+        setErrorCopy(scanRejectCopy(data.reason));
+        setView("error");
+        return end(hop === "first" ? "unclear" : "double_reject", data.reason ?? "label_not_found");
+      } catch (err) {
+        notify("error");
+        setErrorCopy(uploadErrorCopy(err));
+        setView("error");
+        return end("unclear", "error");
+      }
+    },
+    [applyScansLeft, setMode, offerQuotaSwitch],
+  );
 
   runMealRef.current = runMeal;
   runScanRef.current = runScan;
 
-  // Снимок с главного и с экранов результата: начинает анализатор открытой вкладки, а если
-  // снимок не его — сам передаёт его соседу.
+  // Снимок с главного и с экранов результата: начинает анализатор открытой вкладки; если
+  // снимок однозначно не его — он сам передаёт его соседу. Итог попытки уходит в аналитику.
   const onScan = useCallback(
     (files: File[]) => {
-      if (mode === "meal") void runMeal(files);
-      else void runScan(files);
+      const trace: RouteTrace = { initialMode: mode, frames: files.length, durations: [], reason: "" };
+      const run = mode === "meal" ? runMeal : runScan;
+      void run(files, trace, "first").then((end) => sendRouting(trace, end));
     },
     [mode, runMeal, runScan],
   );
@@ -781,6 +927,7 @@ export default function App() {
       {view === "meal_result" && mealResult && (
         <MealResultScreen
           result={mealResult}
+          draft={mealResult.draft}
           isSubscribed={me?.is_subscribed ?? false}
           mealsLeft={me?.meals_left}
           mealLimit={me?.free_meal_limit}
@@ -905,6 +1052,7 @@ export default function App() {
           sbpAvailable={me?.sbp_available ?? false}
           sbpRecurrent={me?.sbp_recurrent ?? false}
           onSbpPay={onSbpPay}
+          altMode={paywallAlt ?? undefined}
         />
       )}
       {view === "subscription" && me && (

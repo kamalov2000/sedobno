@@ -349,3 +349,27 @@ describe("половинка яйца", () => {
     expect(shown.some((p) => p.kind === "egg_half")).toBe(false);
   });
 });
+
+// Предположенная добавка («≈») не входит в итог, пока человек её не подтвердит
+// (backlog п.8, P1). Ложка масла, додуманная по типу блюда или по бутылке рядом с
+// тарелкой, не должна молча прибавлять калории.
+describe("предположенные добавки вне итога до подтверждения", () => {
+  const potato: MealItem = { name: "картошка", grams: 150, kcal: 260, protein_g: 3, fat_g: 13, carb_g: 30, confidence: 0.8 };
+
+  it("pieceMacros и pieceGrams пропускают предположение", () => {
+    expect(pieceMacros([{ kind: "oil_veg", count: 1, assumed: true }]).kcal).toBe(0);
+    expect(pieceGrams([{ kind: "oil_veg", count: 1, assumed: true }])).toBe(0);
+    expect(pieceMacros([{ kind: "oil_veg", count: 1, assumed: false }]).kcal).toBe(45);
+  });
+
+  it("totalOf: ложка «≈» не прибавляется, подтверждённая — прибавляется", () => {
+    expect(totalOf([{ ...potato, pieces: [{ kind: "oil_veg", count: 1, assumed: true }] }]).kcal).toBe(260);
+    expect(totalOf([{ ...potato, pieces: [{ kind: "oil_veg", count: 1, assumed: false }] }]).kcal).toBe(305);
+  });
+
+  it("подтверждение тем же количеством снимает предположение и включает добавку в итог", () => {
+    const confirmed = withPieceCount({ ...potato, pieces: [{ kind: "butter", count: 1, assumed: true }] }, "butter", 1);
+    expect(confirmed.pieces?.[0].assumed).toBe(false);
+    expect(totalOf([confirmed]).kcal).toBe(297);
+  });
+});
