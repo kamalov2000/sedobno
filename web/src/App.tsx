@@ -93,6 +93,23 @@ const LABEL_ERROR_FALLBACK: ErrorCopy = {
   subtitle: "На фото не нашлось читаемого списка ингредиентов.",
 };
 
+// Переброс снимка между анализаторами (backlog п.7). Оба анализатора и раньше узнавали
+// «снимок не мой» — калории видели упаковку, сканер не видел состава, — но отказывали и
+// просили переснять. Подписчик 250, 04.09: пять отказов сканера и два отказа калорий на
+// одном продукте за три минуты, после чего он бросил и не открывал приложение 2,7 дня.
+// Теперь тот же снимок сам уходит туда, где его разберут; вкладка — лишь подсказка.
+const REROUTE_TO_MEAL = "Вижу блюдо — переключаюсь на расчёт калорий";
+const REROUTE_TO_SCAN = "Вижу список ингредиентов — переключаюсь на разбор состава";
+
+// Оба анализатора отказали одному снимку: калории видят упаковку, сканер не видит
+// состава. Это упаковка без читаемого списка ингредиентов — тут пересъёмка честно нужна,
+// но просим конкретное: другую сторону упаковки, а не «ещё раз».
+const PACKAGE_NO_INGREDIENTS: ErrorCopy = {
+  title: "Вижу упаковку, но не вижу состава",
+  subtitle: "Сфотографируйте сторону, где напечатан список ингредиентов — обычно он начинается со слова «Состав».",
+  hints: LABEL_NOT_A_LABEL_HINTS,
+};
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("booting");
   const [me, setMe] = useState<Me | null>(null);
@@ -124,6 +141,14 @@ export default function App() {
   const [mealResult, setMealResult] = useState<MealResult | null>(null);
   const [mealStateKind, setMealStateKind] = useState<"not_food" | "label">("not_food");
   const [errorCopy, setErrorCopy] = useState<ErrorCopy>(LABEL_ERROR_FALLBACK);
+  // Какой анализатор сейчас думает и почему. Не выводится из вкладки: после переброса
+  // снимок разбирает ДРУГОЙ анализатор, и лоадер обязан показывать его фазы и причину.
+  const [loadingKind, setLoadingKind] = useState<HomeMode>("meal");
+  const [loadingNotice, setLoadingNotice] = useState("");
+  // Калории и сканер перебрасывают снимок друг другу, то есть ссылаются друг на друга:
+  // через ref, чтобы не заводить в useCallback взаимную зависимость.
+  const runMealRef = useRef<(files: File[], rerouted?: boolean) => Promise<void>>(async () => {});
+  const runScanRef = useRef<(files: File[], rerouted?: boolean) => Promise<void>>(async () => {});
   // Куда возвращает «назад». Экран-исход открывается из двух историй (составов и
   // приёмов), ручной приём — из дневника и с главного; во всех случаях вопрос один и
   // тот же — откуда пришли, туда и вернуть. Поэтому одно состояние, а не флаг на путь.
@@ -269,12 +294,31 @@ export default function App() {
     };
   }, [view, returnTo]);
 
+  const packageCopy = useCallback(
+    (): ErrorCopy => ({
+      ...PACKAGE_NO_INGREDIENTS,
+      primaryAction: {
+        label: "Сфотографировать состав",
+        icon: "ti-scan",
+        onClick: () => {
+          setMode("scan");
+          setView("home");
+        },
+      },
+    }),
+    [setMode],
+  );
+
   // Разбор фото еды (модуль калорий): фото → analyzeMeal → разбор/ошибка/пейволл.
-  const runMeal = useCallback(async (files: File[]) => {
+  // rerouted — снимок пришёл из сканера, который не нашёл в нём состава. Второй переброс
+  // запрещён: иначе снимок, который оба анализатора считают «не своим», гонялся бы по кругу.
+  const runMeal = useCallback(async (files: File[], rerouted = false) => {
     setSavedMeal(null);
     setMealResult(null);
     setReturnTo(null);
     setMealPhoto(files[0] ?? null); // первый кадр — он и попадёт на карточку
+    setLoadingKind("meal");
+    setLoadingNotice(rerouted ? REROUTE_TO_MEAL : "");
     setView("loading");
     try {
       const outcome = await analyzeMeal(files);
@@ -312,10 +356,18 @@ export default function App() {
         }
         setView("meal_result");
       } else if (data.status === "label_detected") {
-        // В кадре упаковка с этикеткой — отдельный экран с переходом на сканер состава.
+        if (!rerouted) {
+          // В кадре упаковка: не отказываем, а отдаём ТОТ ЖЕ снимок сканеру состава.
+          // Вкладку переключаем вслед, чтобы «Проверить ещё» на экране результата шло в
+          // сканер, а не заново через калории.
+          setMode("scan");
+          await runScanRef.current(files, true);
+          return;
+        }
+        // Снимок уже пришёл из сканера, и тот тоже его не принял.
         notify("warning");
-        setMealStateKind("label");
-        setView("meal_state");
+        setErrorCopy(packageCopy());
+        setView("error");
       } else {
         // not_food (или неожиданный error в теле 200) — попытка не списана.
         notify("warning");
@@ -327,15 +379,15 @@ export default function App() {
       setErrorCopy(uploadErrorCopy(err));
       setView("error");
     }
-  }, [applyMealsLeft]);
+  }, [applyMealsLeft, setMode, packageCopy]);
 
-  const onScan = useCallback(async (files: File[]) => {
-    if (mode === "meal") {
-      void runMeal(files);
-      return;
-    }
+  // Разбор состава: фото → scanPhoto → результат/ошибка/пейволл. rerouted — снимок пришёл
+  // из калорий, которые увидели в нём упаковку.
+  const runScan = useCallback(async (files: File[], rerouted = false) => {
     setReturnTo(null);
     setResult(null);
+    setLoadingKind("scan");
+    setLoadingNotice(rerouted ? REROUTE_TO_SCAN : "");
     setView("loading");
     try {
       const outcome = await scanPhoto(files);
@@ -377,27 +429,23 @@ export default function App() {
         });
         setView("error");
       } else {
+        if (data.reason === "not_a_label") {
+          if (!rerouted) {
+            // В кадре не состав — чаще всего это еда, снятая не в той вкладке. Не говорим
+            // «не этикетка» и не просим переснять: отдаём тот же снимок калориям.
+            setMode("meal");
+            await runMealRef.current(files, true);
+            return;
+          }
+          // Калории уже увидели здесь упаковку, а сканер не нашёл состава.
+          notify("warning");
+          setErrorCopy(packageCopy());
+          setView("error");
+          return;
+        }
+        // Не тот блок или не прочиталось — снимок по адресу, переброс не поможет.
         notify("warning");
-        const copy = LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK;
-        // В кадре не этикетка — почти всегда это еда, снятая не в той вкладке. Даём
-        // прямой выход в «Калории», как зеркальный случай (этикетка во вкладке калорий)
-        // уже даёт кнопку «Открыть сканер состава». Без неё человек упирается в тупик:
-        // ему говорят, чего не хватает, но не говорят, куда идти с тем, что у него есть.
-        setErrorCopy(
-          data.reason === "not_a_label"
-            ? {
-                ...copy,
-                primaryAction: {
-                  label: "Посчитать калории по фото",
-                  icon: "ti-camera",
-                  onClick: () => {
-                    setMode("meal");
-                    setView("home");
-                  },
-                },
-              }
-            : copy,
-        );
+        setErrorCopy(LABEL_ERRORS[data.reason ?? ""] ?? LABEL_ERROR_FALLBACK);
         setView("error");
       }
     } catch (err) {
@@ -405,7 +453,20 @@ export default function App() {
       setErrorCopy(uploadErrorCopy(err));
       setView("error");
     }
-  }, [mode, runMeal, applyScansLeft]);
+  }, [applyScansLeft, setMode, packageCopy]);
+
+  runMealRef.current = runMeal;
+  runScanRef.current = runScan;
+
+  // Снимок с главного и с экранов результата: начинает анализатор открытой вкладки, а если
+  // снимок не его — сам передаёт его соседу.
+  const onScan = useCallback(
+    (files: File[]) => {
+      if (mode === "meal") void runMeal(files);
+      else void runScan(files);
+    },
+    [mode, runMeal, runScan],
+  );
 
   // Оплата подписки: создаём Stars-инвойс → tg.openInvoice → по "paid" обновляем профиль.
   const onPay = useCallback(async () => {
@@ -648,7 +709,7 @@ export default function App() {
           }}
         />
       )}
-      {view === "loading" && (mode === "meal" ? <MealLoader /> : <ScanLoader />)}
+      {view === "loading" && (loadingKind === "meal" ? <MealLoader notice={loadingNotice} /> : <ScanLoader notice={loadingNotice} />)}
       {view === "meal_state" && (
         <MealStateScreen
           kind={mealStateKind}

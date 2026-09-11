@@ -10,7 +10,7 @@ const PHASES = [
 ];
 const TOTAL = PHASES.reduce((s, p) => s + p.d, 0); // 6800
 
-export default function ScanLoader() {
+export default function ScanLoader({ notice }: { notice?: string } = {}) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -44,6 +44,14 @@ export default function ScanLoader() {
         minHeight: 0,
       }}
     >
+      {/* Переброс снимка между анализаторами (backlog п.7): человек видит, ПОЧЕМУ
+          загрузка идёт не в той вкладке, где он снимал, — вместо отказа и пересъёмки. */}
+      {notice && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13.5, lineHeight: 1.4, color: "var(--text2)" }}>
+          <i className="ti ti-arrows-exchange" aria-hidden="true" style={{ fontSize: 16, flex: "none" }} />
+          {notice}
+        </div>
+      )}
       {/* Скелетон карточки результата */}
       <div style={{ position: "relative", borderRadius: 14, border: "1px dashed var(--border)", padding: "18px 18px 14px", opacity: Number(skelOp) }}>
         <span style={{ position: "absolute", top: 10, left: 14, width: 12, height: 12, borderRadius: "50%", background: "var(--bg)", border: "1px dashed var(--border)" }} />

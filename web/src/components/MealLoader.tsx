@@ -16,7 +16,7 @@ const PHASES = [
 ];
 // Суммарно 11200мс ≈ p95 живого API.
 
-export default function MealLoader() {
+export default function MealLoader({ notice }: { notice?: string } = {}) {
   // Считаем по фактически прошедшему времени, а не по числу тиков: setInterval во
   // webview на фоне дрейфует, и счётчик тиков разъезжается с реальностью.
   const [elapsed, setElapsed] = useState(0);
@@ -41,6 +41,14 @@ export default function MealLoader() {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 26px 40px", minHeight: 0 }}>
+      {/* Переброс снимка между анализаторами (backlog п.7): человек видит, ПОЧЕМУ
+          загрузка идёт не в той вкладке, где он снимал, — вместо отказа и пересъёмки. */}
+      {notice && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13.5, lineHeight: 1.4, color: "var(--text2)" }}>
+          <i className="ti ti-arrows-exchange" aria-hidden="true" style={{ fontSize: 16, flex: "none" }} />
+          {notice}
+        </div>
+      )}
       {/* Скелет фото */}
       <div style={{ position: "relative", borderRadius: 14, border: "1px dashed var(--border)", padding: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
