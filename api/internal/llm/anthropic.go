@@ -117,21 +117,44 @@ var anthropicPrices = []struct {
 	{"claude-opus-4", 15, 75},
 }
 
-// anthropicPrice ищет цену по САМОМУ ДЛИННОМУ совпадающему идентификатору: у моделей есть
-// суффикс даты («claude-haiku-4-5-20251001»), а «claude-opus-4» — префикс «claude-opus-4-5».
-// known=false — тариф не установлен, и считать по нему деньги нельзя.
+// anthropicPrice отдаёт цену ТОЛЬКО для точного имени модели или её датированного алиаса
+// («claude-haiku-4-5-20251001»). known=false — тариф не установлен, считать деньги нельзя.
+//
+// Почему не «самый длинный совпадающий префикс»: он не защищает от новых версий. У
+// «claude-opus-4-9» самый длинный известный префикс — «claude-opus-4», и цена $15/$75
+// досталась бы модели, о которой мы ничего не знаем; «claude-sonnet-5-1» получил бы цену
+// Sonnet 5, а «claude-sonnet-50» — тем более. Продолжение имени разрешено ровно одно:
+// суффикс даты, которым провайдер помечает конкретный выпуск той же модели.
 func anthropicPrice(model string) (inPer1M, outPer1M float64, known bool) {
 	m := strings.ToLower(strings.TrimSpace(model))
-	best := -1
-	for i, p := range anthropicPrices {
-		if strings.HasPrefix(m, p.id) && (best < 0 || len(p.id) > len(anthropicPrices[best].id)) {
-			best = i
+	for _, p := range anthropicPrices {
+		if sameModel(m, p.id) {
+			return p.in, p.out, true
 		}
 	}
-	if best < 0 {
-		return 0, 0, false
+	return 0, 0, false
+}
+
+// sameModel — это та же модель: либо имя в точности, либо имя с датированным суффиксом
+// «-YYYYMMDD». Любое другое продолжение — другая модель с неизвестной ценой.
+func sameModel(model, id string) bool {
+	if model == id {
+		return true
 	}
-	return anthropicPrices[best].in, anthropicPrices[best].out, true
+	rest, ok := strings.CutPrefix(model, id+"-")
+	return ok && isDateSuffix(rest)
+}
+
+func isDateSuffix(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // --- типы протокола Messages API ---

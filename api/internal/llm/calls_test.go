@@ -101,16 +101,35 @@ func TestТарифПоМоделям(t *testing.T) {
 		}
 		if in != want[0] || out != want[1] {
 			t.Errorf("%s: $%v/$%v за 1M, ждали $%v/$%v", model, in, out, want[0], want[1])
+			continue
+		}
+		t.Logf("%-28s → $%v/$%v", model, in, out)
+	}
+
+	// Датированный алиас — та же модель: провайдер помечает им конкретный выпуск.
+	for _, model := range []string{"claude-sonnet-5-20260401", "claude-opus-4-1-20250805"} {
+		if in, out, ok := anthropicPrice(model); !ok {
+			t.Errorf("%s: датированный алиас известной модели не распознан", model)
+		} else {
+			t.Logf("%-28s → $%v/$%v (датированный алиас)", model, in, out)
 		}
 	}
 
 	// Незнакомый идентификатор — тариф НЕ установлен. Ни цены соседней версии, ни «примерно
 	// как sonnet»: будущая модель может стоить и вдвое дешевле, и вчетверо дороже.
+	//
+	// Отдельно — имена, которые НАЧИНАЮТСЯ с известного: на них ломается выбор по самому
+	// длинному префиксу. «claude-opus-4-9» получил бы $15/$75 от Opus 4, «claude-sonnet-5-1»
+	// и «claude-sonnet-50» — цену Sonnet 5. Разрешено ровно одно продолжение — суффикс даты.
 	for _, model := range []string{
 		"claude-sonnet-6", "claude-opus-6", "claude-haiku-5", "claude-fable-5-1", "gpt-4o", "",
+		"claude-sonnet-5-1", "claude-opus-4-9", "claude-sonnet-50", "claude-haiku-4-5-turbo",
+		"claude-sonnet-5-2026", "claude-opus-4-123456789",
 	} {
 		if in, out, ok := anthropicPrice(model); ok {
 			t.Errorf("%s: выдан тариф $%v/$%v, а модель незнакомая", model, in, out)
+		} else {
+			t.Logf("%-28s → тариф не установлен", model)
 		}
 	}
 
