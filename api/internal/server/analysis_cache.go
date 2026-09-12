@@ -106,7 +106,13 @@ func (s *Server) thawScanCache(userID int64, sha string, images []llm.Image, was
 
 	// Разморозка идёт в фоне, без попытки человека (op пуст), но платим за неё мы —
 	// значит, в журнале она должна быть (backlog п.9).
-	calls := s.newCallLog(userID, "", "scan")
+	// У фоновой задачи попытки человека нет, но пометить проверочный вызов надо так же,
+	// как в обработчике: иначе разморозка кэша синтетического аккаунта попадёт в отчёт.
+	isTest := false
+	if u, uerr := s.store.GetUserByID(ctx, userID); uerr == nil {
+		isTest = isTestTelegramID(u.TelegramID)
+	}
+	calls := s.newCallLog(userID, "", "scan", isTest)
 	defer calls.flush()
 	ctx = llm.WithRecorder(ctx, calls)
 

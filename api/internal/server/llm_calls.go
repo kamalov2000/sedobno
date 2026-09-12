@@ -32,13 +32,27 @@ type callLog struct {
 	userID   int64
 	opID     string
 	analyzer string
+	isTest   bool
 
 	mu    sync.Mutex
 	calls []store.LLMCall
 }
 
-func (s *Server) newCallLog(userID int64, opID, analyzer string) *callLog {
-	return &callLog{store: s.store, log: s.log, userID: userID, opID: opID, analyzer: analyzer}
+func (s *Server) newCallLog(userID int64, opID, analyzer string, isTest bool) *callLog {
+	return &callLog{store: s.store, log: s.log, userID: userID, opID: opID, analyzer: analyzer, isTest: isTest}
+}
+
+// Синтетические аккаунты проверок заводятся с telegram_id 999xxxxxx (CLAUDE.md). Их вызовы
+// стоят настоящих денег и остаются в журнале, но в рабочих отчётах о себестоимости им
+// делать нечего: это мы сами, а не люди. Раньше их «убирали» удалением пользователя —
+// то есть теряли вместе с ними и расход.
+const (
+	testTelegramIDFrom = 999000000
+	testTelegramIDTo   = 999999999
+)
+
+func isTestTelegramID(id int64) bool {
+	return id >= testTelegramIDFrom && id <= testTelegramIDTo
 }
 
 // RecordCall — реализация llm.Recorder. Зовётся из провайдера, в том числе из горутин
@@ -54,13 +68,15 @@ func (l *callLog) RecordCall(c llm.Call) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, store.LLMCall{
-		UserID: l.userID, OpID: l.opID, Analyzer: l.analyzer,
+		UserID: l.userID, OpID: l.opID, Analyzer: l.analyzer, IsTest: l.isTest,
 		Stage: c.Stage, Model: c.Model, Status: status,
 		DurationMS:       int(c.Duration.Milliseconds()),
 		InputTokens:      c.Usage.InputTokens,
 		OutputTokens:     c.Usage.OutputTokens,
 		CacheReadTokens:  c.Usage.CacheReadInputTokens,
 		CacheWriteTokens: c.Usage.CacheCreationInputTokens,
+		CostUSD:          c.CostUSD,
+		UsdRUB:           c.UsdRUB,
 		CostRUB:          c.CostRUB,
 	})
 }
@@ -75,7 +91,7 @@ func (l *callLog) cached() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, store.LLMCall{
-		UserID: l.userID, OpID: l.opID, Analyzer: l.analyzer,
+		UserID: l.userID, OpID: l.opID, Analyzer: l.analyzer, IsTest: l.isTest,
 		Stage: "cache", Status: store.LLMStatusCached,
 	})
 }

@@ -82,7 +82,7 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 
 	// Журнал вызовов (backlog п.9): описание словами уходит в ту же платную модель, что и
 	// фото, и в себестоимости попытки должно быть видно наравне с ним.
-	calls := s.newCallLog(u.ID, op, "meal")
+	calls := s.newCallLog(u.ID, op, "meal", isTestTelegramID(u.TelegramID))
 	defer calls.flush()
 	ctx = llm.WithRecorder(ctx, calls)
 	if acc := checkAccessWith(u, accessMeal, time.Now(), s.effectiveLimits(u)); !acc.Allowed {

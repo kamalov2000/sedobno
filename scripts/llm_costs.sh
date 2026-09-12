@@ -20,6 +20,10 @@
 #   • Попадание в кэш — строка без модели и без денег. Это скидка, которую нельзя
 #     закладывать в тариф как постоянную: у нового человека кэш пуст.
 #   • Пользовательских данных в журнале нет: ни кадров, ни текста этикеток, ни названий.
+#   • Вызовы синтетических аккаунтов проверок (is_test) из рабочих чисел исключены, но не
+#     удалены: деньги за них потрачены настоящие, и отдельной строкой они показаны.
+#   • Удалённый пользователь не уносит расход: у его строк user_id становится NULL, всё
+#     остальное остаётся. Поэтому суммы за прошлые дни не меняются задним числом.
 #
 # Запуск НА ПРОДЕ:  cd /opt/sostav && bash scripts/llm_costs.sh [с даты]
 set -euo pipefail
@@ -45,14 +49,14 @@ SELECT count(*) AS "вызовов",
        round(sum(cost_rub), 2) AS "потрачено, руб",
        round(sum(input_tokens + cache_read_tokens + cache_write_tokens)) AS "входных токенов",
        round(sum(output_tokens)) AS "выходных токенов"
-  FROM llm_calls WHERE created_at >= '$SINCE';
+  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test;
 SQL
 
 echo
 echo "-- сценарий попытки: во сколько обходится каждый --"
 $PSQL <<SQL
 WITH c AS (
-  SELECT * FROM llm_calls WHERE created_at >= '$SINCE' AND op_id IS NOT NULL
+  SELECT * FROM llm_calls WHERE created_at >= '$SINCE' AND op_id IS NOT NULL AND NOT is_test
 ),
 ops AS (
   SELECT op_id,
@@ -95,7 +99,7 @@ SELECT stage AS "стадия", model AS "модель",
        round(avg(cost_rub)::numeric, 3) AS "в среднем, руб",
        round(sum(cost_rub)::numeric, 2) AS "всего, руб",
        round(avg(duration_ms) / 1000.0, 1) AS "секунд"
-  FROM llm_calls WHERE created_at >= '$SINCE'
+  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test
  GROUP BY 1, 2 ORDER BY 5 DESC NULLS LAST;
 SQL
 
@@ -110,14 +114,23 @@ SELECT created_at::date AS "день", model AS "модель",
        sum(output_tokens)      AS "выход",
        round(sum(cost_rub), 2) AS "наш расчёт, руб"
   FROM llm_calls
- WHERE created_at >= '$SINCE' AND status <> 'cached'
+ WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test
  GROUP BY 1, 2 ORDER BY 1 DESC, 8 DESC;
+SQL
+
+echo
+echo "-- проверочные вызовы (в рабочие числа выше не входят) --"
+$PSQL <<SQL
+SELECT count(*) AS "вызовов", count(DISTINCT op_id) AS "прогонов",
+       round(sum(cost_usd), 4) AS "долларов", round(sum(cost_rub), 2) AS "рублей",
+       count(*) FILTER (WHERE user_id IS NULL) AS "аккаунт уже удалён"
+  FROM llm_calls WHERE created_at >= '$SINCE' AND is_test;
 SQL
 
 echo
 echo "-- что раньше было невидимо: журнал против строк результата --"
 $PSQL <<SQL
-WITH j AS (SELECT coalesce(sum(cost_rub), 0) AS c FROM llm_calls WHERE created_at >= '$SINCE'),
+WITH j AS (SELECT coalesce(sum(cost_rub), 0) AS c FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test),
 r AS (
   SELECT coalesce((SELECT sum(cost_estimate) FROM meals WHERE created_at >= '$SINCE'), 0) +
          coalesce((SELECT sum(cost_estimate) FROM scans WHERE created_at >= '$SINCE'), 0) AS c

@@ -33,7 +33,16 @@ type LLMCall struct {
 	CacheReadTokens  int
 	CacheWriteTokens int
 
+	// Деньги в валюте вызова и курс, по которому посчитан рубль. Курс меняется — история
+	// остаётся проверяемой: рублёвый результат всегда можно пересчитать обратно.
+	CostUSD float64
+	UsdRUB  float64
 	CostRUB float64
+
+	// IsTest — вызов синтетического аккаунта проверок (telegram_id 999xxxxxx). Строка
+	// остаётся в журнале (деньги потрачены по-настоящему), но из рабочих отчётов
+	// исключается.
+	IsTest bool
 }
 
 // InsertLLMCalls пишет вызовы одной попытки пачкой. Ошибку возвращаем, но вызывающий её
@@ -45,8 +54,9 @@ func (s *Store) InsertLLMCalls(ctx context.Context, calls []LLMCall) error {
 	}
 	const q = `
 INSERT INTO llm_calls (user_id, op_id, analyzer, stage, model, status, duration_ms,
-                       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_rub)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+                       input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                       cost_usd, usd_rub, cost_rub, is_test)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	batch := &pgx.Batch{}
 	for _, c := range calls {
@@ -59,7 +69,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 			user = c.UserID
 		}
 		batch.Queue(q, user, op, c.Analyzer, c.Stage, c.Model, c.Status, c.DurationMS,
-			c.InputTokens, c.OutputTokens, c.CacheReadTokens, c.CacheWriteTokens, c.CostRUB)
+			c.InputTokens, c.OutputTokens, c.CacheReadTokens, c.CacheWriteTokens,
+			c.CostUSD, c.UsdRUB, c.CostRUB, c.IsTest)
 	}
 	res := s.pool.SendBatch(ctx, batch)
 	defer res.Close()

@@ -204,18 +204,21 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 	text, usage, err := doWithRetry(ctx, c.name, func() (string, Usage, error) {
 		return c.doOnce(ctx, payload)
 	})
+	usd, rub := c.costOf(model, usage)
 	recordCall(ctx, Call{
 		Provider: c.name, Model: model, Stage: StageFrom(ctx), Usage: usage,
-		CostRUB: c.costRUB(model, usage), Duration: time.Since(started), Err: err,
+		CostUSD: usd, UsdRUB: c.usdRUB, CostRUB: rub, Duration: time.Since(started), Err: err,
 	})
 	return text, usage, err
 }
 
-// costRUB — цена ОДНОГО вызова по модели, которой он сделан. CostRUB(vision, text) считает
-// прогон целиком и для одной строки журнала не годится: там две модели разом.
-func (c *anthropicClient) costRUB(model string, u Usage) float64 {
+// costOf — цена ОДНОГО вызова по модели, которой он сделан: в долларах (как её берёт
+// провайдер) и в рублях по текущему курсу. CostRUB(vision, text) считает прогон целиком и
+// для строки журнала не годится: там две модели разом.
+func (c *anthropicClient) costOf(model string, u Usage) (usd, rub float64) {
 	in, out := anthropicPrice(model)
-	return (inputUSD(u, in) + float64(u.OutputTokens)*out/1e6) * c.usdRUB
+	usd = inputUSD(u, in) + float64(u.OutputTokens)*out/1e6
+	return usd, usd * c.usdRUB
 }
 
 func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, Usage, error) {

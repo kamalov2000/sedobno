@@ -200,7 +200,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	// Журнал фактических вызовов модели (backlog п.9). Стоит ДО кэша и пейволла: попытка,
 	// закончившаяся отказом или кэшем, тоже должна быть видна в себестоимости.
-	calls := s.newCallLog(u.ID, op, "scan")
+	calls := s.newCallLog(u.ID, op, "scan", isTestTelegramID(u.TelegramID))
 	defer calls.flush()
 	ctx = llm.WithRecorder(ctx, calls)
 

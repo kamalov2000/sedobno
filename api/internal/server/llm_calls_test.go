@@ -15,8 +15,8 @@ func TestЖурналВызовов_СтрокаСобираетсяЦелико
 	l := &callLog{userID: 42, opID: "op-1", analyzer: "meal"}
 	l.RecordCall(llm.Call{
 		Provider: "anthropic", Model: "claude-sonnet-5", Stage: llm.StageMeal,
-		Usage:    llm.Usage{InputTokens: 1500, OutputTokens: 400, CacheReadInputTokens: 10, CacheCreationInputTokens: 20},
-		CostRUB:  3.21,
+		Usage:   llm.Usage{InputTokens: 1500, OutputTokens: 400, CacheReadInputTokens: 10, CacheCreationInputTokens: 20},
+		CostUSD: 0.0338, UsdRUB: 95, CostRUB: 3.21,
 		Duration: 7 * time.Second,
 	})
 	if len(l.calls) != 1 {
@@ -27,7 +27,7 @@ func TestЖурналВызовов_СтрокаСобираетсяЦелико
 		UserID: 42, OpID: "op-1", Analyzer: "meal", Stage: llm.StageMeal,
 		Model: "claude-sonnet-5", Status: store.LLMStatusOK, DurationMS: 7000,
 		InputTokens: 1500, OutputTokens: 400, CacheReadTokens: 10, CacheWriteTokens: 20,
-		CostRUB: 3.21,
+		CostUSD: 0.0338, UsdRUB: 95, CostRUB: 3.21,
 	}
 	if got != want {
 		t.Errorf("строка журнала:\n%+v\nждали:\n%+v", got, want)
@@ -41,6 +41,28 @@ func TestЖурналВызовов_НеудачаТожеСтрока(t *testin
 	l.RecordCall(llm.Call{Model: "claude-sonnet-5", Stage: llm.StageExtract, Err: errors.New("таймаут"), Duration: 25 * time.Second})
 	if l.calls[0].Status != store.LLMStatusError || l.calls[0].DurationMS != 25000 {
 		t.Errorf("неудачный вызов записан неверно: %+v", l.calls[0])
+	}
+}
+
+// Вызовы синтетического аккаунта проверок помечаются на входе: строка остаётся (деньги
+// потрачены по-настоящему), но в рабочий отчёт не идёт. Пометка ставится по telegram_id —
+// решение не зависит от того, удалят ли аккаунт потом.
+func TestЖурналВызовов_ПроверочныеВызовыПомечены(t *testing.T) {
+	for id, want := range map[int64]bool{
+		999000046: true, 999999999: true, 999000000: true,
+		123456789: false, 998999999: false, 1000000000: false,
+	} {
+		if got := isTestTelegramID(id); got != want {
+			t.Errorf("telegram_id %d: пометка %v, ждали %v", id, got, want)
+		}
+	}
+	l := &callLog{userID: 508, opID: "op-t", analyzer: "meal", isTest: true}
+	l.RecordCall(llm.Call{Model: "claude-sonnet-5", Stage: llm.StageMeal, CostRUB: 3.04})
+	l.cached()
+	for _, row := range l.calls {
+		if !row.IsTest {
+			t.Errorf("строка проверочного прогона не помечена: %+v", row)
+		}
 	}
 }
 

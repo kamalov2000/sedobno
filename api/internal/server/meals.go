@@ -179,7 +179,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Журнал фактических вызовов модели (backlog п.9). Стоит ДО кэша и пейволла: отказ,
 	// черновик и переброс тоже стоят денег, и до сих пор их цену не видел никто.
-	calls := s.newCallLog(u.ID, op, "meal")
+	calls := s.newCallLog(u.ID, op, "meal", isTestTelegramID(u.TelegramID))
 	defer calls.flush()
 	ctx = llm.WithRecorder(ctx, calls)
 	images, okImg := s.readMealImages(w, r, u.ID)

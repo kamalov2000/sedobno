@@ -33,6 +33,10 @@ type Call struct {
 	Model    string
 	Stage    string
 	Usage    Usage
+	// Деньги вызова: цена в долларах (как её берёт провайдер), применённый курс и рубль.
+	// Хранить только рубль мало — при смене курса старую строку нечем проверить.
+	CostUSD  float64
+	UsdRUB   float64
 	CostRUB  float64
 	Duration time.Duration
 	// Err — вызов не удался (таймаут, отказ API). Токены при этом обычно нулевые, но
