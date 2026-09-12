@@ -43,6 +43,15 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
   const accent = meal ? "var(--cal)" : "var(--accent)";
   const onAccent = meal ? "var(--on-cal)" : "var(--on-accent)";
   const leftWord = meal ? "разборов еды" : "проверок";
+  // Именительный падеж для фразы «Бесплатные … закончились»: leftWord стоит в родительном
+  // («осталось 3 разборов еды») и в этой фразе давал «Бесплатные разборов еды закончились».
+  const outWord = meal ? "разборы еды" : "проверки состава";
+  // Сколько осталось в СОСЕДНЕМ режиме. Когда свой кончился, а там ещё есть, человеку нужен
+  // не только пейволл: снимок можно проверить рядом. Фото на этом экране ещё не выбрано,
+  // поэтому предлагаем просто перейти — кадр он выберет уже там (backlog п.8, P2).
+  const otherLeft = meal ? me.scans_left : me.meals_left;
+  const otherHasQuota = !me.is_subscribed && otherLeft > 0;
+  const otherName = meal ? "Состав" : "Калории";
   // Знаменатель счётчика — с сервера (free_scan_limit/free_meal_limit), не константой:
   // лимит задан в Go, и «из 10» в вёрстке врало бы при любой его правке. Старый бэк поля
   // не шлёт — тогда показываем остаток без «из L», а не выдуманное число.
@@ -185,9 +194,21 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             {trialOver ? (
               <>Неделя полного доступа закончилась.</>
             ) : (
-              <>Бесплатные {leftWord} закончились{activeLimit ? <> (0&nbsp;из&nbsp;{activeLimit})</> : null}.</>
+              <>Бесплатные {outWord} закончились{activeLimit ? <> (0&nbsp;из&nbsp;{activeLimit})</> : null}.</>
             )}{" "}
             249&nbsp;₽ за 30&nbsp;дней — {meal ? "разборы и составы" : "проверки"} без ограничений, отмена в один тап.
+            {/* Соседний режим предлагаем ТОЛЬКО когда там действительно есть бесплатные
+                попытки: обещать доступную проверку, которой нет, — обман. Обе квоты
+                кончились — остаётся подписка, и никаких «попробуйте там». */}
+            {otherHasQuota && (
+              <button
+                type="button"
+                onClick={() => onModeChange(meal ? "scan" : "meal")}
+                style={{ display: "block", margin: "10px auto 0", padding: "9px 16px", background: "none", border: "1px solid var(--border)", borderRadius: 11, fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text)", cursor: "pointer" }}
+              >
+                Перейти в {otherName} — там осталось {otherLeft}
+              </button>
+            )}
           </div>
         ) : (
           // Счётчик кликабелен: это ЕДИНСТВЕННЫЙ вход в оплату, пока доступ ещё работает.

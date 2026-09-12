@@ -239,8 +239,75 @@ describe("HomeScreen — видно оба ограничения доступа
         onHistory={noop} onDiary={noop} onAddManual={noop}
       />,
     );
-    expect(screen.getByText(/Бесплатные разборов еды закончились|Бесплатные .* закончились/)).toBeTruthy();
+    // Именительный падеж: «Бесплатные разборов еды закончились» было ошибкой грамматики,
+    // и прежний тест её закреплял регуляркой с альтернативой.
+    expect(screen.getByText(/Бесплатные разборы еды закончились/)).toBeTruthy();
+    expect(screen.queryByText(/Бесплатные разборов/)).toBeNull();
     expect(screen.queryByText(/Неделя полного доступа закончилась/)).toBeNull();
+  });
+
+  it("проверки состава кончились — фраза тоже в именительном падеже", () => {
+    const me = makeMe("quota");
+    render(
+      <HomeScreen
+        me={{ ...me, is_subscribed: false, scans_left: 0, meals_left: 0, trial_active: true, trial_days_left: 3 }}
+        mode="scan"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.getByText(/Бесплатные проверки состава закончились/)).toBeTruthy();
+  });
+});
+
+// Квота режима кончилась, а в соседнем ещё есть (backlog п.8, P2 + правка 12.09). Фото на
+// этом экране ещё НЕ выбрано: приложение при нулевом остатке закрывает камеру, и без такого
+// перехода человек упирается в пейволл, хотя рядом есть бесплатная проверка.
+describe("HomeScreen — переход в соседний режим при исчерпанной квоте", () => {
+  const cases = [
+    { режим: "meal" as const, me: { meals_left: 0, scans_left: 4 }, кнопка: /Перейти в Состав — там осталось 4/, ждём: "scan" },
+    { режим: "scan" as const, me: { scans_left: 0, meals_left: 2 }, кнопка: /Перейти в Калории — там осталось 2/, ждём: "meal" },
+  ];
+
+  for (const c of cases) {
+    it(`из «${c.режим === "meal" ? "Калорий" : "Состава"}» ведёт в соседний режим`, () => {
+      const switched: string[] = [];
+      render(
+        <HomeScreen
+          me={{ ...makeMe("quota"), is_subscribed: false, trial_active: true, trial_days_left: 3, ...c.me }}
+          mode={c.режим}
+          onModeChange={(m) => switched.push(m)}
+          onScan={noop} onSubscribe={noop} onManageSub={noop}
+          onHistory={noop} onDiary={noop} onAddManual={noop}
+        />,
+      );
+      fireEvent.click(screen.getByText(c.кнопка));
+      expect(switched).toEqual([c.ждём]);
+    });
+  }
+
+  it("обе квоты кончились — бесплатную проверку не обещаем", () => {
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: false, trial_active: true, trial_days_left: 3, meals_left: 0, scans_left: 0 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.queryByText(/Перейти в/)).toBeNull();
+  });
+
+  it("у подписчика перехода нет — у него нет и квот", () => {
+    render(
+      <HomeScreen
+        me={{ ...makeMe("quota"), is_subscribed: true, meals_left: -1, scans_left: -1 }}
+        mode="meal"
+        onModeChange={noop} onScan={noop} onSubscribe={noop} onManageSub={noop}
+        onHistory={noop} onDiary={noop} onAddManual={noop}
+      />,
+    );
+    expect(screen.queryByText(/Перейти в/)).toBeNull();
   });
 });
 
