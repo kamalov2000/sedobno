@@ -19,29 +19,29 @@ func TestЦенаВызоваПоМоделиВызова(t *testing.T) {
 	c := &anthropicClient{visionModel: "claude-sonnet-5", textModel: "claude-haiku-4-5", usdRUB: 100}
 
 	// Sonnet 5: 2 $/1M входных, 10 $/1M выходных. 1000 вход + 500 выход = 0,007 $ = 0,70 ₽.
-	usd, rub := c.costOf("claude-sonnet-5", Usage{InputTokens: 1000, OutputTokens: 500})
+	usd, rub, _ := c.costOf("claude-sonnet-5", Usage{InputTokens: 1000, OutputTokens: 500})
 	if math.Abs(usd-0.007) > 1e-12 || math.Abs(rub-0.70) > 1e-9 {
 		t.Errorf("sonnet: %v $ / %v ₽, ждали 0,007 $ / 0,70 ₽", usd, rub)
 	}
 	// Haiku вдвое дешевле по входу и выходу: 0,0035 $ = 0,35 ₽.
-	usd, rub = c.costOf("claude-haiku-4-5", Usage{InputTokens: 1000, OutputTokens: 500})
+	usd, rub, _ = c.costOf("claude-haiku-4-5", Usage{InputTokens: 1000, OutputTokens: 500})
 	if math.Abs(usd-0.0035) > 1e-12 || math.Abs(rub-0.35) > 1e-9 {
 		t.Errorf("haiku: %v $ / %v ₽, ждали 0,0035 $ / 0,35 ₽", usd, rub)
 	}
 	// Кэш промпта: чтение почти бесплатно (×0,1 = $0,20 за 1M), запись дороже обычного
 	// входа (×1,25 = $2,50 за 1M). Множители от БАЗОВОЙ цены модели, поэтому с тарифом
 	// Sonnet 5 они дают другие рубли, чем раньше.
-	if _, rub = c.costOf("claude-sonnet-5", Usage{CacheReadInputTokens: 1000}); math.Abs(rub-0.02) > 1e-9 {
+	if _, rub, _ = c.costOf("claude-sonnet-5", Usage{CacheReadInputTokens: 1000}); math.Abs(rub-0.02) > 1e-9 {
 		t.Errorf("чтение кэша: %v ₽, ждали 0,02", rub)
 	}
-	if _, rub = c.costOf("claude-sonnet-5", Usage{CacheCreationInputTokens: 1000}); math.Abs(rub-0.25) > 1e-9 {
+	if _, rub, _ = c.costOf("claude-sonnet-5", Usage{CacheCreationInputTokens: 1000}); math.Abs(rub-0.25) > 1e-9 {
 		t.Errorf("запись в кэш: %v ₽, ждали 0,25", rub)
 	}
 
 	// Рубль — это доллар, умноженный на курс вызова. Курс меняется, и хранить один рубль
 	// значило бы потерять возможность проверить старую строку.
 	other := &anthropicClient{visionModel: "claude-sonnet-5", usdRUB: 50}
-	usd2, rub2 := other.costOf("claude-sonnet-5", Usage{InputTokens: 1000, OutputTokens: 500})
+	usd2, rub2, _ := other.costOf("claude-sonnet-5", Usage{InputTokens: 1000, OutputTokens: 500})
 	if math.Abs(usd2-0.007) > 1e-12 || math.Abs(rub2-0.35) > 1e-9 {
 		t.Errorf("при курсе 50: %v $ / %v ₽, ждали те же 0,007 $ и 0,35 ₽", usd2, rub2)
 	}
@@ -78,23 +78,47 @@ func TestЖурналНеТребуетПриёмника(t *testing.T) {
 	recordCall(WithRecorder(context.Background(), nil), Call{Model: "m"})
 }
 
-// ТАРИФ ПО МОДЕЛЯМ (исправление 12.09.2026). До него все sonnet считались по $3/$15 —
-// константу ставили в расчёте на повышение, которого не произошло. Проверяем каждую модель
-// отдельно: «поделить всё на 1,5» нельзя, у Haiku и Opus свои цены, и они не менялись.
+// ТАРИФ ПО МОДЕЛЯМ — только по явной таблице (уточнение владельца 12.09.2026). Цены
+// различаются ВНУТРИ семейства, поэтому «похоже на opus» ничего не значит: у Opus 4 и 4.1
+// вход втрое дороже, чем у Opus 4.5 и новее.
 func TestТарифПоМоделям(t *testing.T) {
-	cases := map[string][2]float64{
+	known := map[string][2]float64{
 		"claude-sonnet-5":            {2, 10},
 		"claude-sonnet-4-5-20250929": {3, 15},
 		"claude-sonnet-4-6":          {3, 15},
 		"claude-haiku-4-5-20251001":  {1, 5},
-		"claude-opus-5":              {5, 25},
-		"что-то незнакомое":          {3, 15}, // консервативно, не занижаем
+		// Различение версий Opus: новые и старые — разные деньги, и путать их нельзя.
+		"claude-opus-5":   {5, 25},
+		"claude-opus-4-5": {5, 25},
+		"claude-opus-4-1": {15, 75},
+		"claude-opus-4":   {15, 75},
 	}
-	for model, want := range cases {
-		in, out := anthropicPrice(model)
+	for model, want := range known {
+		in, out, ok := anthropicPrice(model)
+		if !ok {
+			t.Errorf("%s: тариф не найден, а модель поддерживаемая", model)
+			continue
+		}
 		if in != want[0] || out != want[1] {
 			t.Errorf("%s: $%v/$%v за 1M, ждали $%v/$%v", model, in, out, want[0], want[1])
 		}
+	}
+
+	// Незнакомый идентификатор — тариф НЕ установлен. Ни цены соседней версии, ни «примерно
+	// как sonnet»: будущая модель может стоить и вдвое дешевле, и вчетверо дороже.
+	for _, model := range []string{
+		"claude-sonnet-6", "claude-opus-6", "claude-haiku-5", "claude-fable-5-1", "gpt-4o", "",
+	} {
+		if in, out, ok := anthropicPrice(model); ok {
+			t.Errorf("%s: выдан тариф $%v/$%v, а модель незнакомая", model, in, out)
+		}
+	}
+
+	// У незнакомой модели вызов и токены сохраняются, деньги — нулевые, признак — false.
+	c := &anthropicClient{visionModel: "claude-sonnet-5", usdRUB: 95}
+	usd, rub, ok := c.costOf("claude-sonnet-6", Usage{InputTokens: 10000, OutputTokens: 500})
+	if ok || usd != 0 || rub != 0 {
+		t.Errorf("незнакомая модель: %v $ / %v ₽ / известен=%v — ждали нули и false", usd, rub, ok)
 	}
 }
 
@@ -103,7 +127,10 @@ func TestТарифПоМоделям(t *testing.T) {
 // тест назовёт и модель, и сумму.
 func TestКонтрольныйПрогонПоУточнённомуТарифу(t *testing.T) {
 	c := &anthropicClient{visionModel: "claude-sonnet-5", usdRUB: 95}
-	usd, rub := c.costOf("claude-sonnet-5", Usage{InputTokens: 81849, OutputTokens: 2441})
+	usd, rub, ok := c.costOf("claude-sonnet-5", Usage{InputTokens: 81849, OutputTokens: 2441})
+	if !ok {
+		t.Fatal("тариф Sonnet 5 не найден")
+	}
 	if math.Abs(usd-0.188108) > 1e-9 {
 		t.Errorf("доллары: %v, ждали 0,188108", usd)
 	}
@@ -111,7 +138,7 @@ func TestКонтрольныйПрогонПоУточнённомуТариф�
 		t.Errorf("рубли: %v, ждали 17,87026", rub)
 	}
 	// Тариф другой модели не поехал: те же токены на Haiku 4.5 стоят вдвое дешевле входа.
-	hUsd, _ := c.costOf("claude-haiku-4-5", Usage{InputTokens: 81849, OutputTokens: 2441})
+	hUsd, _, _ := c.costOf("claude-haiku-4-5", Usage{InputTokens: 81849, OutputTokens: 2441})
 	if math.Abs(hUsd-(81849*1.0+2441*5.0)/1e6) > 1e-9 {
 		t.Errorf("haiku: %v $ — тариф изменился, а не должен", hUsd)
 	}

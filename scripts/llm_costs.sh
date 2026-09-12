@@ -20,6 +20,9 @@
 #   • Попадание в кэш — строка без модели и без денег. Это скидка, которую нельзя
 #     закладывать в тариф как постоянную: у нового человека кэш пуст.
 #   • Пользовательских данных в журнале нет: ни кадров, ни текста этикеток, ни названий.
+#   • Деньги считаются только по моделям с ИЗВЕСТНЫМ тарифом (price_known). Вызов незнакомой
+#     модели сохраняется с токенами, но в суммы не идёт и показан отдельным разделом:
+#     подставлять ей цену соседней версии нельзя — внутри семейства цены различаются втрое.
 #   • Строки журнала НЕ переписываются при изменении цен: в них записана стоимость, которую
 #     посчитал код того момента, и применённый тогда курс. Отдельный раздел показывает те же
 #     вызовы, пересчитанные по уточнённому тарифу (Sonnet 5 — $2/$10 с 12.09.2026), по
@@ -53,14 +56,14 @@ SELECT count(*) AS "вызовов",
        round(sum(cost_rub), 2) AS "потрачено, руб",
        round(sum(input_tokens + cache_read_tokens + cache_write_tokens)) AS "входных токенов",
        round(sum(output_tokens)) AS "выходных токенов"
-  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test;
+  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test AND price_known;
 SQL
 
 echo
 echo "-- сценарий попытки: во сколько обходится каждый --"
 $PSQL <<SQL
 WITH c AS (
-  SELECT * FROM llm_calls WHERE created_at >= '$SINCE' AND op_id IS NOT NULL AND NOT is_test
+  SELECT * FROM llm_calls WHERE created_at >= '$SINCE' AND op_id IS NOT NULL AND NOT is_test AND price_known
 ),
 ops AS (
   SELECT op_id,
@@ -103,7 +106,7 @@ SELECT stage AS "стадия", model AS "модель",
        round(avg(cost_rub)::numeric, 3) AS "в среднем, руб",
        round(sum(cost_rub)::numeric, 2) AS "всего, руб",
        round(avg(duration_ms) / 1000.0, 1) AS "секунд"
-  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test
+  FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test AND price_known
  GROUP BY 1, 2 ORDER BY 5 DESC NULLS LAST;
 SQL
 
@@ -118,7 +121,7 @@ SELECT created_at::date AS "день", model AS "модель",
        sum(output_tokens)      AS "выход",
        round(sum(cost_rub), 2) AS "наш расчёт, руб"
   FROM llm_calls
- WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test
+ WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test AND price_known
  GROUP BY 1, 2 ORDER BY 1 DESC, 8 DESC;
 SQL
 
@@ -136,13 +139,28 @@ WITH p AS (
               WHEN model LIKE '%sonnet-5%' THEN 10.0
               ELSE 15.0 END AS out_price
     FROM llm_calls
-   WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test)
+   WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test AND price_known)
 SELECT model AS "модель", count(*) AS "вызовов",
        round(sum(cost_rub), 2) AS "как записано, руб",
        round(sum(((input_tokens + cache_write_tokens * 1.25 + cache_read_tokens * 0.1) * in_price
                   + output_tokens * out_price) / 1e6 * usd_rub)::numeric, 2) AS "по уточнённому тарифу, руб"
   FROM p GROUP BY 1 ORDER BY 2 DESC;
 SQL
+
+echo
+echo "-- вызовы с НЕУСТАНОВЛЕННЫМ тарифом (в деньги выше не входят) --"
+$PSQL <<SQL
+SELECT model AS "модель", count(*) AS "вызовов",
+       sum(input_tokens) AS "вход", sum(output_tokens) AS "выход",
+       round(sum((input_tokens * 15.0 + output_tokens * 75.0) / 1e6 * usd_rub)::numeric, 2)
+         AS "ориентир по самой дорогой известной модели, руб"
+  FROM llm_calls
+ WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT price_known
+ GROUP BY 1 ORDER BY 2 DESC;
+SQL
+echo "   Ориентир НЕ является ни фактической стоимостью, ни гарантированным потолком:"
+echo "   цену новой модели мы не знаем, она может оказаться и выше. Числа — повод внести"
+echo "   тариф в таблицу anthropicPrices, а не основание для расчётов."
 
 echo
 echo "-- проверочные вызовы (в рабочие числа выше не входят) --"
@@ -156,7 +174,7 @@ SQL
 echo
 echo "-- что раньше было невидимо: журнал против строк результата --"
 $PSQL <<SQL
-WITH j AS (SELECT coalesce(sum(cost_rub), 0) AS c FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test),
+WITH j AS (SELECT coalesce(sum(cost_rub), 0) AS c FROM llm_calls WHERE created_at >= '$SINCE' AND NOT is_test AND price_known),
 r AS (
   SELECT coalesce((SELECT sum(cost_estimate) FROM meals WHERE created_at >= '$SINCE'), 0) +
          coalesce((SELECT sum(cost_estimate) FROM scans WHERE created_at >= '$SINCE'), 0) AS c

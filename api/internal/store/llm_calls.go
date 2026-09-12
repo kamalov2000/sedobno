@@ -39,6 +39,11 @@ type LLMCall struct {
 	UsdRUB  float64
 	CostRUB float64
 
+	// PriceKnown — тариф модели известен и деньги в строке настоящие. false: модель нам
+	// незнакома (новая версия), вызов и токены сохранены, а стоимость нулевая — считать по
+	// ней нельзя, в отчёте такие строки идут отдельной, неподтверждённой позицией.
+	PriceKnown bool
+
 	// IsTest — вызов синтетического аккаунта проверок (telegram_id 999xxxxxx). Строка
 	// остаётся в журнале (деньги потрачены по-настоящему), но из рабочих отчётов
 	// исключается.
@@ -55,8 +60,8 @@ func (s *Store) InsertLLMCalls(ctx context.Context, calls []LLMCall) error {
 	const q = `
 INSERT INTO llm_calls (user_id, op_id, analyzer, stage, model, status, duration_ms,
                        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                       cost_usd, usd_rub, cost_rub, is_test)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+                       cost_usd, usd_rub, cost_rub, is_test, price_known)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 
 	batch := &pgx.Batch{}
 	for _, c := range calls {
@@ -70,7 +75,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 		}
 		batch.Queue(q, user, op, c.Analyzer, c.Stage, c.Model, c.Status, c.DurationMS,
 			c.InputTokens, c.OutputTokens, c.CacheReadTokens, c.CacheWriteTokens,
-			c.CostUSD, c.UsdRUB, c.CostRUB, c.IsTest)
+			c.CostUSD, c.UsdRUB, c.CostRUB, c.IsTest, c.PriceKnown)
 	}
 	res := s.pool.SendBatch(ctx, batch)
 	defer res.Close()

@@ -63,8 +63,14 @@ const (
 )
 
 func (c *anthropicClient) CostRUB(vision, text Usage) float64 {
-	vin, vout := anthropicPrice(c.visionModel)
-	tin, tout := anthropicPrice(c.textModel)
+	vin, vout, vok := anthropicPrice(c.visionModel)
+	tin, tout, tok := anthropicPrice(c.textModel)
+	if !vok {
+		vin, vout = 0, 0 // тариф не установлен — лучше ноль, чем правдоподобная выдумка
+	}
+	if !tok {
+		tin, tout = 0, 0
+	}
 	usd := inputUSD(vision, vin) + float64(vision.OutputTokens)*vout/1e6 +
 		inputUSD(text, tin) + float64(text.OutputTokens)*tout/1e6
 	return usd * c.usdRUB
@@ -77,33 +83,55 @@ func inputUSD(u Usage, perM float64) float64 {
 		float64(u.CacheReadInputTokens)*perM*cacheReadMult) / 1e6
 }
 
-// anthropicPrice возвращает цену модели Claude в USD за 1M токенов (вход, выход).
+// anthropicPrices — ЯВНАЯ таблица поддерживаемых моделей и их цен в USD за 1M токенов
+// (вход, выход). Прайс Anthropic, сверено 12.09.2026.
 //
-// ИСТОЧНИК И ПЕРИОД. Прайс Anthropic (platform.claude.com/docs/en/about-claude/pricing),
-// сверено 12.09.2026: Sonnet 5 — $2/$10, Sonnet 4.6 и старше — $3/$15, Haiku 4.5 — $1/$5,
-// Opus 4.5…5 — $5/$25. Цена $2/$10 у Sonnet 5 объявлялась вводной до 31.08.2026 и с тех пор
-// стала стандартной: запланированное повышение до $3/$15 отменено.
+// Почему таблица, а не «всё, что похоже на sonnet». Цены различаются ВНУТРИ семейства:
+// Sonnet 5 стоит $2/$10, а Sonnet 4.6 и старше — $3/$15; Opus 4.5…5 стоят $5/$25, а Opus 4
+// и 4.1 — $15/$75, то есть втрое дороже. Правило «по имени семейства» назначило бы будущей
+// или незнакомой версии подтверждённую цену соседней — и ошиблось бы молча, в любую сторону.
+// Неизвестная модель честно помечается как модель с НЕУСТАНОВЛЕННЫМ тарифом: вызов и токены
+// сохраняются, деньги по ней не выдумываются.
 //
-// ДО 12.09.2026 здесь стояло $3/$15 для ВСЕХ sonnet — константу ставили в расчёте на то
-// самое повышение, которого не случилось. Из-за этого стоимость вызовов Sonnet 5 считалась
-// в полтора раза выше фактической: контрольный прогон 12.09 (81 849 входных, 2 441
-// выходной токен, курс 95) давал 26,81 ₽ вместо 17,87 ₽. Старые строки журнала не
-// переписываем — в них записан применённый курс и цена того момента; пересчёт по
-// уточнённому тарифу делает отчёт (scripts/llm_costs.sh).
-//
-// Неизвестная модель считается по старшему Sonnet — консервативная (не заниженная) оценка.
-func anthropicPrice(model string) (inPer1M, outPer1M float64) {
-	switch {
-	case strings.Contains(model, "haiku"):
-		return 1.0, 5.0
-	case strings.Contains(model, "opus"):
-		return 5.0, 25.0
-	case strings.Contains(model, "sonnet-5"):
-		// Именно "sonnet-5": у "sonnet-4-5" этой подстроки нет, и он остаётся на $3/$15.
-		return 2.0, 10.0
-	default: // sonnet 4.x и всё прочее
-		return 3.0, 15.0
+// Цена $2/$10 у Sonnet 5 объявлялась вводной до 31.08.2026 и с тех пор стала стандартной:
+// запланированное повышение до $3/$15 отменено. До 12.09.2026 здесь стояло $3/$15 для всех
+// sonnet — из-за этого стоимость вызовов Sonnet 5 считалась в полтора раза выше фактической.
+// Старые строки журнала не переписываем; пересчёт делает scripts/llm_costs.sh.
+var anthropicPrices = []struct {
+	id      string
+	in, out float64
+}{
+	{"claude-sonnet-5", 2, 10},
+	{"claude-sonnet-4-6", 3, 15},
+	{"claude-sonnet-4-5", 3, 15},
+	{"claude-sonnet-4", 3, 15},
+	{"claude-haiku-4-5", 1, 5},
+	{"claude-haiku-3-5", 0.8, 4},
+	{"claude-opus-5", 5, 25},
+	{"claude-opus-4-8", 5, 25},
+	{"claude-opus-4-7", 5, 25},
+	{"claude-opus-4-6", 5, 25},
+	{"claude-opus-4-5", 5, 25},
+	// Opus 4 и 4.1 втрое дороже новых: путать их с Opus 4.5+ нельзя.
+	{"claude-opus-4-1", 15, 75},
+	{"claude-opus-4", 15, 75},
+}
+
+// anthropicPrice ищет цену по САМОМУ ДЛИННОМУ совпадающему идентификатору: у моделей есть
+// суффикс даты («claude-haiku-4-5-20251001»), а «claude-opus-4» — префикс «claude-opus-4-5».
+// known=false — тариф не установлен, и считать по нему деньги нельзя.
+func anthropicPrice(model string) (inPer1M, outPer1M float64, known bool) {
+	m := strings.ToLower(strings.TrimSpace(model))
+	best := -1
+	for i, p := range anthropicPrices {
+		if strings.HasPrefix(m, p.id) && (best < 0 || len(p.id) > len(anthropicPrices[best].id)) {
+			best = i
+		}
 	}
+	if best < 0 {
+		return 0, 0, false
+	}
+	return anthropicPrices[best].in, anthropicPrices[best].out, true
 }
 
 // --- типы протокола Messages API ---
@@ -220,10 +248,11 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 	text, usage, err := doWithRetry(ctx, c.name, func() (string, Usage, error) {
 		return c.doOnce(ctx, payload)
 	})
-	usd, rub := c.costOf(model, usage)
+	usd, rub, priceKnown := c.costOf(model, usage)
 	recordCall(ctx, Call{
 		Provider: c.name, Model: model, Stage: StageFrom(ctx), Usage: usage,
-		CostUSD: usd, UsdRUB: c.usdRUB, CostRUB: rub, Duration: time.Since(started), Err: err,
+		CostUSD: usd, UsdRUB: c.usdRUB, CostRUB: rub, PriceKnown: priceKnown,
+		Duration: time.Since(started), Err: err,
 	})
 	return text, usage, err
 }
@@ -231,10 +260,17 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 // costOf — цена ОДНОГО вызова по модели, которой он сделан: в долларах (как её берёт
 // провайдер) и в рублях по текущему курсу. CostRUB(vision, text) считает прогон целиком и
 // для строки журнала не годится: там две модели разом.
-func (c *anthropicClient) costOf(model string, u Usage) (usd, rub float64) {
-	in, out := anthropicPrice(model)
+//
+// known=false — тариф модели не установлен. Тогда деньги нулевые, но вызов и токены всё
+// равно записываются: анализ из-за незнакомой цены обрывать нельзя, а показывать выдуманную
+// сумму как факт — тем более.
+func (c *anthropicClient) costOf(model string, u Usage) (usd, rub float64, known bool) {
+	in, out, known := anthropicPrice(model)
+	if !known {
+		return 0, 0, false
+	}
 	usd = inputUSD(u, in) + float64(u.OutputTokens)*out/1e6
-	return usd, usd * c.usdRUB
+	return usd, usd * c.usdRUB, true
 }
 
 func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, Usage, error) {

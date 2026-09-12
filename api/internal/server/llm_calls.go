@@ -78,6 +78,7 @@ func (l *callLog) RecordCall(c llm.Call) {
 		CostUSD:          c.CostUSD,
 		UsdRUB:           c.UsdRUB,
 		CostRUB:          c.CostRUB,
+		PriceKnown:       c.PriceKnown,
 	})
 }
 
@@ -92,7 +93,7 @@ func (l *callLog) cached() {
 	defer l.mu.Unlock()
 	l.calls = append(l.calls, store.LLMCall{
 		UserID: l.userID, OpID: l.opID, Analyzer: l.analyzer, IsTest: l.isTest,
-		Stage: "cache", Status: store.LLMStatusCached,
+		Stage: "cache", Status: store.LLMStatusCached, PriceKnown: true,
 	})
 }
 
