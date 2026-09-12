@@ -944,7 +944,7 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
       {dish.assumed && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, padding: "8px 10px", background: "var(--bg-soft)", border: "1px dashed var(--border)", borderRadius: 10 }}>
           <span style={{ flex: 1, fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, lineHeight: 1.35, color: "var(--text2)" }}>
-            По фото не видно, пили ли вы это. В итог пока не считаем.
+            По фото не понять, пили ли вы это и сколько. В итог пока не считаем.
           </span>
           <button
             type="button"
