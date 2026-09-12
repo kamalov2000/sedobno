@@ -83,6 +83,10 @@ type mealDiaryItem struct {
 	Total      *llm.MealMacros `json:"total,omitempty"`
 	Edited     bool            `json:"edited"`
 	Confidence *float64        `json:"confidence,omitempty"`
+	// AssumedInTotal — предположенные добавки, которые уже входят в сохранённый итог
+	// (приём сохранён до 11.09.2026). Экран правки обязан спросить про них до сохранения:
+	// иначе пересчёт по нынешнему правилу молча уменьшил бы итог. Пусто — обычный приём.
+	AssumedInTotal []meal.AssumedAddon `json:"assumed_in_total,omitempty"`
 }
 
 // validMealTypes — допустимые типы приёма (проставляются пользователем в дневник).
@@ -483,6 +487,11 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		Dishes   *[]dishInput `json:"dishes"`
 		EatenAt  *time.Time   `json:"eaten_at"`
 		MealType *string      `json:"meal_type"`
+		// Assumed — решение человека по НАСЛЕДНЫМ предположенным добавкам: keep (оставить,
+		// они станут подтверждёнными) или remove (удалить, итог уменьшится осознанно).
+		// Пусто — решения не было: старый клиент или человек закрыл вопрос. Тогда добавки
+		// остаются предположенными, но из итога НЕ выпадают (backlog п.11).
+		Assumed string `json:"assumed"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
@@ -498,6 +507,10 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !meal.ValidAssumedDecision(req.Assumed) {
+		writeError(w, http.StatusBadRequest, "bad_request", "assumed: keep|remove")
+		return
+	}
 
 	// Владение + существование: читаем приём (404 если нет или чужой — существование не палим).
 	m, err := s.store.GetMeal(ctx, id)
@@ -506,25 +519,15 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemsJSON := []byte(m.Items)
+	patch, errMsg := applyMealPatch(m, req.Dishes, req.Assumed)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, "bad_request", errMsg)
+		return
+	}
+	itemsJSON, newDishes := patch.Items, patch.Dishes
 	kcal, protein, fat, carb := m.Kcal, m.ProteinG, m.FatG, m.CarbG
-	var newDishes []llm.MealItem
-	if req.Dishes != nil {
-		parsed, errMsg := parseDishes(*req.Dishes)
-		if errMsg != "" {
-			writeError(w, http.StatusBadRequest, "bad_request", errMsg)
-			return
-		}
-		// Ручные блюда проходят ту же санитизацию, что и распознанные: согласование
-		// ккал с БЖУ и серверный пересчёт тотала — одна логика на оба источника.
-		dishes, total := meal.SanitizeDishes(parsed)
-		if len(dishes) == 0 {
-			writeError(w, http.StatusBadRequest, "bad_request", "нельзя оставить приём без блюд — удалите приём целиком")
-			return
-		}
-		newDishes = dishes
-		itemsJSON, _ = json.Marshal(dishes)
-		kcal, protein, fat, carb = &total.Kcal, &total.ProteinG, &total.FatG, &total.CarbG
+	if patch.Macros != nil {
+		kcal, protein, fat, carb = &patch.Macros.Kcal, &patch.Macros.ProteinG, &patch.Macros.FatG, &patch.Macros.CarbG
 	}
 
 	updated, err := s.store.UpdateMeal(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType)
@@ -850,6 +853,56 @@ func (s *Server) readMealImages(w http.ResponseWriter, r *http.Request, userID i
 	return images, true
 }
 
+// mealPatch — что правка делает с сохранённой записью. Macros == nil означает «суммы не
+// трогаем»: блюд в запросе не было (меняли время или тип приёма), и пересчитывать нечего.
+type mealPatch struct {
+	Items  []byte
+	Dishes []llm.MealItem
+	Macros *llm.MealMacros
+}
+
+// applyMealPatch решает, чем станет приём после правки. Вынесено из обработчика отдельной
+// функцией сознательно: здесь живёт защита наследных добавок, и проверять её на живой БД
+// через HTTP значило бы не проверять вовсе — сценариев восемь, а спорное место одно.
+//
+// Наследный приём (сохранённый итог ВКЛЮЧАЕТ предположенные добавки) определяется по
+// СОХРАНЁННОЙ записи и до пересчёта: после него обе версии дают одно число, и отличить
+// «итог их включал» от «уже не включал» нельзя.
+func applyMealPatch(m store.Meal, in *[]dishInput, decision string) (mealPatch, string) {
+	if in == nil {
+		// Блюда не присылали: правка времени или типа приёма итог не пересчитывает —
+		// значит, и уронить его не может.
+		return mealPatch{Items: []byte(m.Items)}, ""
+	}
+
+	var storedDishes []llm.MealItem
+	if len(m.Items) > 0 {
+		_ = json.Unmarshal(m.Items, &storedDishes)
+	}
+	legacy := meal.AssumedInTotal(storedDishes, llm.MealMacros{
+		Kcal: deref(m.Kcal), ProteinG: deref(m.ProteinG), FatG: deref(m.FatG), CarbG: deref(m.CarbG),
+	})
+
+	parsed, errMsg := parseDishes(*in)
+	if errMsg != "" {
+		return mealPatch{}, errMsg
+	}
+	// Ручные блюда проходят ту же санитизацию, что и распознанные: согласование
+	// ккал с БЖУ и серверный пересчёт тотала — одна логика на оба источника.
+	dishes, total := meal.SanitizeDishes(parsed)
+	if len(dishes) == 0 {
+		return mealPatch{}, "нельзя оставить приём без блюд — удалите приём целиком"
+	}
+	// Наследный приём: без явного решения человека предположенные добавки остаются в
+	// итоге. Работает и когда человек поменял калории самого блюда — пересчёт берёт новые
+	// числа блюда и прежний вклад добавок.
+	if len(legacy) > 0 {
+		dishes, total = meal.ApplyAssumedDecision(dishes, decision)
+	}
+	itemsJSON, _ := json.Marshal(dishes)
+	return mealPatch{Items: itemsJSON, Dishes: dishes, Macros: &total}, ""
+}
+
 // toDiaryItem разворачивает строку meals в элемент дневника: блюда из JSON, суммы —
 // из денормализованных колонок (если есть).
 func toDiaryItem(m store.Meal) mealDiaryItem {
@@ -871,6 +924,7 @@ func toDiaryItem(m store.Meal) mealDiaryItem {
 		item.Total = &llm.MealMacros{
 			Kcal: deref(m.Kcal), ProteinG: deref(m.ProteinG), FatG: deref(m.FatG), CarbG: deref(m.CarbG),
 		}
+		item.AssumedInTotal = meal.AssumedInTotal(item.Dishes, *item.Total)
 	}
 	return item
 }

@@ -160,6 +160,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   });
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   const [busy, setBusy] = useState(false);
+  // Вопрос про наследные добавки: показывается по нажатию «Сохранить изменения» у приёма,
+  // сохранённого до 11.09.2026. Закрыть вопрос = не сохранять: решение за человеком.
+  const [askAssumed, setAskAssumed] = useState(false);
 
   // Шер-карточка: рендер идёт в фоне, поэтому кнопке нужно занятое состояние, а ошибке —
   // место рядом с ней. Уводить с экрана из-за неудавшейся картинки нельзя: приём может
@@ -358,9 +361,34 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           };
     });
 
+  // Предположенные добавки, которые УЖЕ сидят в сохранённом итоге (сервер сравнил
+  // сохранённые суммы с пересчётом). Пересчёт по нынешнему правилу выбросил бы их и молча
+  // уменьшил итог — поэтому сначала спрашиваем, а уже потом сохраняем (backlog п.11).
+  const legacyAddons = saved?.assumed_in_total ?? [];
+  const legacyKcal = Math.round(legacyAddons.reduce((a, x) => a + x.kcal, 0));
+
+  // Правка с явным решением: keep — добавки становятся подтверждёнными, remove — уходят.
+  const saveWithDecision = async (assumed: "keep" | "remove") => {
+    setAskAssumed(false);
+    if (busy || blocked || id == null) return;
+    setBusy(true);
+    try {
+      await patchMeal(id, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}), assumed });
+      notify("success");
+      onDone();
+    } catch {
+      notify("error");
+      setBusy(false);
+    }
+  };
+
   const onSave = async () => {
     if (busy || blocked) return;
     if (!manual && !draft && id == null) return;
+    if (!manual && !draft && legacyAddons.length > 0) {
+      setAskAssumed(true);
+      return;
+    }
     setBusy(true);
     try {
       if (manual || draft) {
@@ -761,6 +789,59 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
         <button type="button" disabled={busy} onClick={onRetakeClick} style={{ width: "100%", height: 40, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, color: "var(--text2)", cursor: busy ? "default" : "pointer", marginTop: 4 }}>
           {manual ? "Отмена" : isSaved ? "Закрыть" : "Переснять"}
         </button>
+        {askAssumed && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Неподтверждённый продукт"
+            style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 12 }}
+          >
+            <div style={{ width: "100%", maxWidth: 440, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 16, padding: 16 }}>
+              <p style={{ margin: "0 0 8px", fontFamily: "'Golos Text',sans-serif", fontSize: 15, lineHeight: 1.4, color: "var(--text)" }}>
+                {legacyAddons.length > 1
+                  ? "В этом приёме есть неподтверждённые продукты — оставить их или удалить?"
+                  : "В этом приёме есть неподтверждённый продукт — оставить его или удалить?"}
+              </p>
+              <ul style={{ margin: "0 0 10px", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                {legacyAddons.map((a) => (
+                  <li key={a.kind} style={{ fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text2)" }}>
+                    {a.label} · {pieceCountLabel(a.kind, a.count)} —{" "}
+                    <span style={{ fontFamily: "'PT Mono',monospace", fontWeight: 600 }}>{Math.round(a.kcal)} ккал</span>
+                  </li>
+                ))}
+              </ul>
+              {/* Констатация, без упрёка: человек не виноват, что мы когда-то досчитали за него. */}
+              <p style={{ margin: "0 0 14px", fontSize: 12.5, lineHeight: 1.4, color: "var(--text3)" }}>
+                {legacyAddons.length > 1 ? "Их посчитала" : "Её посчитала"} модель, когда разбирала фото, и {legacyAddons.length > 1 ? "они входят" : "она входит"} в итог приёма. Если {legacyAddons.length > 1 ? "их" : "её"} не было — итог уменьшится на {legacyKcal} ккал.
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => saveWithDecision("keep")}
+                  style={{ flex: 1, height: 46, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, fontWeight: 600, cursor: "pointer" }}
+                >
+                  {legacyAddons.length > 1 ? "Оставить все" : "Оставить"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveWithDecision("remove")}
+                  style={{ flex: 1, height: 46, background: "none", color: "var(--text2)", border: "1px solid var(--border)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, cursor: "pointer" }}
+                >
+                  {legacyAddons.length > 1 ? "Удалить все" : "Удалить"}
+                </button>
+              </div>
+              {/* Закрыть = не сохранять вовсе: подсунуть втихую любое из решений мы не вправе. */}
+              <button
+                type="button"
+                onClick={() => setAskAssumed(false)}
+                aria-label="Закрыть, не сохраняя"
+                style={{ width: "100%", height: 38, marginTop: 6, background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text3)", cursor: "pointer" }}
+              >
+                Не сейчас
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

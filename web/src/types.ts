@@ -272,6 +272,18 @@ export interface MealDiaryItem {
   total?: MealMacros;
   edited: boolean;
   confidence?: number;
+  /** Предположенные добавки, которые УЖЕ входят в сохранённый итог: приём сохранён до
+   *  11.09.2026, когда «≈» ещё считалось молча. Экран правки обязан спросить про них до
+   *  сохранения — иначе пересчёт по нынешнему правилу уронил бы итог без объяснений. */
+  assumed_in_total?: AssumedAddon[];
+}
+
+/** Наследная предположенная добавка: чем её назвать человеку и во сколько она ему обходится. */
+export interface AssumedAddon {
+  kind: string;
+  label: string;
+  count: number;
+  kcal: number;
 }
 
 /** Позиция справочника частых продуктов (GET /api/food-reference) — КБЖУ на 100 г.
