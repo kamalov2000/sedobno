@@ -253,6 +253,19 @@ describe("квота", () => {
     expect(scanPhoto.mock.calls[0][0]).toBe(analyzeMeal.mock.calls[0][0]); // без повторной загрузки
   });
 
+  it("обратная сторона: скан упёрся в квоту — тот же снимок предлагается «Калориям»", async () => {
+    bootMe = { ...bootMe, scans_left: 1, meals_left: 9 } as Me;
+    scanPhoto.mockResolvedValue({ kind: "paywall", reason: "trial_quota" });
+    analyzeMeal.mockResolvedValue(mealStatus("ok"));
+    start();
+    await shootIn("Состав");
+
+    expect(await screen.findByText(/В этом режиме попытки закончились\. Можно проверить фотографию в режиме «Калории» либо оформить подписку\./)).toBeTruthy();
+    fireEvent.click(screen.getByText("Проверить в режиме «Калории»"));
+    await waitFor(() => expect(analyzeMeal).toHaveBeenCalledTimes(1));
+    expect(analyzeMeal.mock.calls[0][0]).toBe(scanPhoto.mock.calls[0][0]); // тот же файл, без пересъёмки
+  });
+
   it("в соседнем режиме попыток тоже нет — переключатель не предлагаем", async () => {
     bootMe = { ...bootMe, meals_left: 1, scans_left: 0 } as Me;
     analyzeMeal.mockResolvedValue({ kind: "paywall", reason: "trial_quota" });
