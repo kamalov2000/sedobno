@@ -419,6 +419,11 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 func sumMacros(dishes []llm.MealItem) llm.MealMacros {
 	var m llm.MealMacros
 	for _, d := range dishes {
+		// Неподтверждённое блюдо (напиток в закрытой на вид ёмкости) в итог не входит,
+		// пока человек не подтвердит его тапом — как и предположенная добавка (п.10).
+		if d.Assumed {
+			continue
+		}
 		m.Kcal += d.Kcal
 		m.ProteinG += d.ProteinG
 		m.FatG += d.FatG

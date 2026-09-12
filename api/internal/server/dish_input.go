@@ -65,6 +65,11 @@ type dishInput struct {
 	// (oil_veg/butter/sugar). КБЖУ считает сервер по константам, клиентские числа для них
 	// игнорируются (как у dish_kind=eggs). Флаг assumed переживает правку (модель предположила).
 	Pieces []llm.MealPiece `json:"pieces"`
+
+	// Assumed — позиция, в употреблении которой модель не уверена (напиток в ёмкости рядом).
+	// Возвращается как есть: снятие флага — это и есть подтверждение тапом, и потерять его
+	// при правке значило бы либо приписать человеку выпитое, либо спрятать подтверждённое.
+	Assumed bool `json:"assumed"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -94,6 +99,7 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, AlcoholG: d.AlcoholG,
 			Confidence: d.Confidence,
 			Pieces:     d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
+			Assumed:    d.Assumed,
 		}
 
 		switch {

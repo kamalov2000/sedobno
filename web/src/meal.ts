@@ -31,6 +31,9 @@ export function scaleDish(dish: MealItem, newGrams: number): MealItem {
 export function totalOf(dishes: MealItem[]): MealMacros {
   const t = dishes.reduce(
     (a, d) => {
+      // Неподтверждённая позиция (напиток рядом с тарелкой) в итог не входит, пока человек
+      // не подтвердит её тапом — тот же контракт, что у предположенной добавки (п.10).
+      if (d.assumed) return a;
       const p = pieceMacros(d.pieces);
       return {
         kcal: a.kcal + d.kcal + p.kcal,

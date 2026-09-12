@@ -263,6 +263,14 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
     setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name, touched: true } : d)));
   };
 
+  // Позиция под вопросом (напиток в ёмкости рядом): тап по «Учесть» означает «да, я это
+  // пил» — и она входит в итог. Отдельной кнопки «не пил» не заводим: для этого есть
+  // крестик, которым убирают любое блюдо. Два способа убрать одно и то же только путают.
+  const confirmDish = (i: number) => {
+    haptic("light");
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, assumed: false, touched: true } : d)));
+  };
+
   // Яичное блюдо: тап по счётчику штук пересчитывает КБЖУ детерминированно (те же
   // константы, что на сервере), тотал приёма обновляется на лету — как вода пересчитывает
   // мл. К числам ни LLM, ни ручной ввод не подпускаются: только штуки.
@@ -357,6 +365,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             // Спирт несём обратно: без него санитизация сочтёт бокал вина по одним
             // углеводам и уронит его калорийность на порядок.
             ...(d.alcohol_g ? { alcohol_g: d.alcohol_g } : {}),
+            // Признак «под вопросом» возвращаем, пока он стоит: снятый флаг — это и есть
+            // подтверждение человеком, и присылать его обратно значило бы спросить дважды.
+            ...(d.assumed ? { assumed: true } : {}),
             ...pieces,
           };
     });
@@ -621,7 +632,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
                   onRemove={() => removeDish(i)}
                 />
               ) : (
-                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} />
+                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} onConfirm={() => confirmDish(i)} />
               )}
               {/* Примитивы блюда чипсами: штучные (яйца ×4) и ложечные добавки (масло 1 ч.л.).
                   Их КБЖУ считает сервер, тотал обновляется на лету. Ряд рисуется у КАЖДОГО
@@ -885,7 +896,7 @@ function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { valu
 // разборе модели: у приёма, вписанного руками, распознавания не было, и говорить о нём
 // нечего. «Изменено вами» перебивает распознанное — это и есть то, что человек хочет
 // видеть, вернувшись к приёму через неделю.
-function DishCard({ dish, origin, onName, onStep, onSet, onRemove }: { dish: MealItem; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void }) {
+function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: { dish: MealItem; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void; onConfirm?: () => void }) {
   const timer = useRef<number | null>(null);
   const iv = useRef<number | null>(null);
   const stop = () => {
@@ -920,11 +931,31 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove }: { dish: Mea
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <DishNameInput value={dish.name} onChange={onName} />
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{fmtInt(effectiveDishKcal(dish))} ккал</span>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: dish.assumed ? "var(--text3)" : "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+          {dish.assumed ? "≈ " : ""}{fmtInt(effectiveDishKcal(dish))} ккал
+        </span>
         <button type="button" onClick={onRemove} aria-label="Удалить блюдо" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", borderRadius: 8, color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />
         </button>
       </div>
+      {/* Позиция под вопросом: банка рядом с тарелкой — это или 150 ккал, или ноль. Считать
+          молча нельзя (припишем выпитое), выбрасывать молча тоже (спрячем законные калории).
+          Показываем и оставляем решение человеку (backlog п.10). */}
+      {dish.assumed && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, padding: "8px 10px", background: "var(--bg-soft)", border: "1px dashed var(--border)", borderRadius: 10 }}>
+          <span style={{ flex: 1, fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, lineHeight: 1.35, color: "var(--text2)" }}>
+            По фото не видно, пили ли вы это. В итог пока не считаем.
+          </span>
+          <button
+            type="button"
+            onClick={onConfirm}
+            aria-label={`Учесть: ${dish.name}`}
+            style={{ flex: "none", height: 32, padding: "0 12px", background: "var(--cal-soft)", border: "1px solid var(--cal-border)", borderRadius: 9, fontFamily: "'Golos Text',sans-serif", fontSize: 13, color: "var(--cal-num)", cursor: "pointer" }}
+          >
+            Учесть
+          </button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
         <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44 }}>
           <button type="button" onPointerDown={() => start(-GRAM_STEP)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label="Меньше грамм" style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
