@@ -335,6 +335,16 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		if d.Name == "" {
 			continue
 		}
+		// Ёмкость с напитком: решение принимает сервер, а не модель (см. ContainerState).
+		// Закрытая — человек её не пил, позиции нет вовсе. Открытая — показываем под
+		// вопросом: сколько выпито, по кадру не видно, и решает человек тапом.
+		switch normContainerState(d.ContainerState) {
+		case containerClosed:
+			continue
+		case containerOpen:
+			d.Assumed = true
+		}
+
 		d.Grams = clampNonNeg(d.Grams, maxDishGrams)
 		d.ProteinG = clampNonNeg(d.ProteinG, maxDishGrams)
 		d.FatG = clampNonNeg(d.FatG, maxDishGrams)
