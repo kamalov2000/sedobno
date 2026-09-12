@@ -149,7 +149,12 @@ SELECT coalesce(props->>'initial_mode', '?')   AS "выбрал",
        coalesce(props->>'reroute_reason', '—') AS "причина переброса",
        coalesce(props->>'result', '?')         AS "итог",
        count(*) AS "попыток",
-       count(*) FILTER (WHERE (props->>'quota_charged')::boolean) AS "со списанием",
+       -- Три состояния, а не два: списали / не списали / квоты нет вовсе. У подписчика
+       -- остаток безлимитный, клиент про списание ничего не утверждает и поле не шлёт;
+       -- считать это «не списали» — значит мерить подпиской качество маршрутизации.
+       count(*) FILTER (WHERE props->>'quota_charged' = 'true')  AS "со списанием",
+       count(*) FILTER (WHERE props->>'quota_charged' = 'false') AS "без списания",
+       count(*) FILTER (WHERE props->>'quota_charged' IS NULL)   AS "без квоты",
        round(avg((SELECT sum(x::numeric)
                     FROM jsonb_array_elements_text(props::jsonb -> 'durations_ms') AS x)) / 1000, 1)
          AS "секунд на попытку"
