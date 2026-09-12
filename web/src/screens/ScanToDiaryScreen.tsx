@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ScanResult, MealType } from "../types";
 import { createManualMeal } from "../api";
 import { haptic, notify } from "../telegram";
-import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS } from "../meal";
+import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
 
 // Экран «Скан → дневник» (backlog п.1). Сканер и калории были двумя разъединёнными
 // треками — юзер отсканировал продукт в магазине, но добавить его в дневник было
@@ -15,43 +15,28 @@ import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS } from "../meal";
 // сканер уже прочитал: вся пачка / половина / своя — тривиальный пересчёт, КБЖУ ведь уже
 // на 100 г/мл.
 
-const MIN_GRAMS = 1;
-const MAX_GRAMS = 3000;
-
-type Portion = "full" | "half" | "custom";
-
 interface Props {
   result: ScanResult;
   onBack: () => void;
   onSaved: () => void;
 }
 
-// baseUnit — единица порции по basis нутриента: "100ml" → мл, иначе г (твёрдые продукты).
-function baseUnit(basis?: string): "г" | "мл" {
-  return basis === "100ml" ? "мл" : "г";
-}
-
 export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const nutrition = result.nutrition;
-  const unit = baseUnit(nutrition?.basis);
+  const unit = labelPortionUnit(nutrition?.basis);
   const netAmount = nutrition?.net_amount;
 
   const [name, setName] = useState("");
-  const [portion, setPortion] = useState<Portion>(netAmount ? "full" : "custom");
+  const [portion, setPortion] = useState<LabelPortion>(netAmount ? "full" : "custom");
   const [customRaw, setCustomRaw] = useState("100");
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const grams = (() => {
-    if (portion === "full" && netAmount) return netAmount;
-    if (portion === "half" && netAmount) return netAmount / 2;
-    const n = parseFloat(customRaw.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  })();
-
-  const gramsValid = grams >= MIN_GRAMS && grams <= MAX_GRAMS;
+  const grams = labelPortionGrams(netAmount, portion, customRaw);
+  const gramsValid = labelPortionValid(grams);
   const nameValid = name.trim().length > 0;
-  const kcalPreview = nutrition?.kcal != null && gramsValid ? Math.round((nutrition.kcal / 100) * grams) : null;
+  const portionMacros = labelPortionMacros(nutrition, grams);
+  const kcalPreview = portionMacros ? Math.round(portionMacros.kcal) : null;
   const blocked = !nameValid || !gramsValid || busy;
 
   const save = async () => {
@@ -142,7 +127,7 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         </div>
         {portion === "custom" && !gramsValid && (
           <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 6 }}>
-            Порция — от {MIN_GRAMS} до {MAX_GRAMS} {unit}
+            Порция — от {LABEL_MIN_GRAMS} до {LABEL_MAX_GRAMS} {unit}
           </div>
         )}
 

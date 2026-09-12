@@ -1,7 +1,7 @@
 // Чистые помощники модуля калорий (feature/calories): клиентский пересчёт КБЖУ при
 // правке граммовки и маппинг статуса разбора на экран. Без React — тестируется юнит-тестом.
 
-import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType } from "./types";
+import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType, ScanNutrition } from "./types";
 
 export function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -373,4 +373,51 @@ export function guessMealType(now: Date): MealType {
   if (h >= 11 && h < 16) return "lunch";
   if (h >= 16 && h < 22) return "dinner";
   return "snack";
+}
+
+// --- ПОРЦИЯ ПО ТАБЛИЦЕ ПИЩЕВОЙ ЦЕННОСТИ (backlog пп. 1 и 13) ---
+//
+// Таблица даёт КБЖУ на 100 г/мл и, если повезло, нетто упаковки. Человеку остаётся сказать,
+// сколько он съел: вся упаковка, половина или своя граммовка. Раньше этот счёт жил внутри
+// экрана «Скан → дневник»; вынесен сюда, потому что тем же путём пойдут калории по таблице
+// без состава (п.13), и два места считали бы одно и то же по-разному.
+
+export type LabelPortion = "full" | "half" | "custom";
+
+/** Границы ручной граммовки — те же, что у бэка (dish_input.go): дальше он всё равно завернёт. */
+export const LABEL_MIN_GRAMS = 1;
+export const LABEL_MAX_GRAMS = 3000;
+
+/** Сколько граммов (или мл) в выбранной порции. Нет нетто — «вся упаковка» и «половина»
+ *  посчитать не из чего, остаётся своя граммовка. Нечисло — ноль, а не NaN: ноль экран
+ *  покажет как «не выбрано», NaN утёк бы в запрос. */
+export function labelPortionGrams(netAmount: number | undefined, portion: LabelPortion, customRaw: string): number {
+  if (portion === "full" && netAmount) return netAmount;
+  if (portion === "half" && netAmount) return netAmount / 2;
+  const n = parseFloat((customRaw ?? "").replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Граммовка годится для сохранения: в границах бэка. */
+export function labelPortionValid(grams: number): boolean {
+  return grams >= LABEL_MIN_GRAMS && grams <= LABEL_MAX_GRAMS;
+}
+
+/** КБЖУ порции из таблицы «на 100». Возвращает null, когда считать не из чего: нет
+ *  калорийности или граммовка невалидна. Отсутствующие макросы остаются нулями — врать
+ *  про белки, которых на этикетке нет, нельзя. */
+export function labelPortionMacros(n: ScanNutrition | undefined, grams: number): MealMacros | null {
+  if (!n || n.kcal == null || !labelPortionValid(grams)) return null;
+  const k = grams / 100;
+  return {
+    kcal: round1(n.kcal * k),
+    protein_g: round1((n.protein_g ?? 0) * k),
+    fat_g: round1((n.fat_g ?? 0) * k),
+    carb_g: round1((n.carb_g ?? 0) * k),
+  };
+}
+
+/** Единица порции по basis таблицы: «100ml» — миллилитры, иначе граммы. */
+export function labelPortionUnit(basis?: string): "г" | "мл" {
+  return basis === "100ml" ? "мл" : "г";
 }
