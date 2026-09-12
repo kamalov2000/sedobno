@@ -7,6 +7,7 @@ package server
 import (
 	"testing"
 
+	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
 	"github.com/sostav/api/internal/pipeline"
 )
@@ -21,6 +22,16 @@ func TestMealIsDraft(t *testing.T) {
 		{"обычное фото еды — сохраняется сразу", false, &meal.Result{Status: meal.StatusOK}, false},
 		{"переброс из сканера — черновик", true, &meal.Result{Status: meal.StatusOK}, true},
 		{"смешанный кадр — черновик", false, &meal.Result{Status: meal.StatusOK, Mixed: true}, true},
+		// Напиток под вопросом (п.10): автосохранение положило бы приём в дневник без него,
+		// человек увидел бы в итоге одну еду и про вопрос не узнал бы вовсе.
+		{"позиция под вопросом — черновик", false, &meal.Result{Status: meal.StatusOK, Dishes: []llm.MealItem{
+			{Name: "гречка", Kcal: 300},
+			{Name: "пиво", Kcal: 210, Assumed: true},
+		}}, true},
+		{"все позиции подтверждены — сохраняется сразу", false, &meal.Result{Status: meal.StatusOK, Dishes: []llm.MealItem{
+			{Name: "гречка", Kcal: 300},
+			{Name: "пиво", Kcal: 210},
+		}}, false},
 		{"без результата не падает", false, nil, false},
 	}
 	for _, c := range cases {
