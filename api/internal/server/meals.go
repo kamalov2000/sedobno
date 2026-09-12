@@ -226,7 +226,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case res.Status == meal.StatusNotFood:
-		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", mealDiagProps(res))
+		_ = s.store.InsertEvent(ctx, &u.ID, "meal_not_food", withOp(op, mealDiagProps(res)))
 		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
 			Status: res.Status, Message: mealNotFoodMessage, MealsLeft: s.remainingMeals(u),

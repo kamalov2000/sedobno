@@ -323,7 +323,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == pipeline.StatusMixedFrames:
 		// Кадры от разных продуктов — попытку не списываем, просим снимать по одному.
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_mixed_frames", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_mixed_frames", withOp(op, nil))
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Кадры от разных продуктов. Проверяйте по одному продукту за раз — несколько кадров нужны, только если состав одного продукта не влез в один снимок.",
@@ -334,7 +334,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// Алкоголь (§14.3): балла нет, но факты показываем — состав и КБЖУ, как их
 		// прочитала модель. Состав отдаём СЫРЫМ (без нормализации по словарю): вердикты
 		// по добавкам на этом экране не показываются, а фаза 2 стоит денег.
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_scored", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_scored", withOp(op, nil))
 		ings := make([]scanIngredientView, 0, len(res.IngredientsRaw))
 		for i, raw := range res.IngredientsRaw {
 			ings = append(ings, scanIngredientView{Raw: raw, Position: i + 1})
@@ -350,7 +350,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == pipeline.StatusNotFood:
 		// Косметика/химия/лекарство — оценку съедобности не считаем, попытку не списываем.
-		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", nil)
+		_ = s.store.InsertEvent(ctx, &u.ID, "scan_not_food", withOp(op, nil))
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Message:   "Похоже, это не еда — косметика, бытовая химия или другое несъедобное. Оценку состава для таких продуктов не считаем.",
@@ -362,8 +362,10 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// на три разных случая: снял не этикетку (чаще всего — еду не в той вкладке), снял
 		// не тот блок, не прочиталось. 06.09 по 14 провалам подряд нельзя было сказать,
 		// что именно чинить, — props были nil, и пришлось догадываться по косвенным.
+		// С op_id (12.09.2026): без него отказ виден в цепочке попытки только как
+		// scan_started, и «остался с подсказкой» неотличимо от «загрузка не дошла».
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_label_not_found",
-			map[string]any{"reason": res.Reason})
+			withOp(op, map[string]any{"reason": res.Reason}))
 		s.writeAndCacheScan(ctx, w, u.ID, sha, strength, scanResponse{
 			Status:    res.Status,
 			Reason:    res.Reason,

@@ -34,6 +34,9 @@ SINCE="${2:-1970-01-01}"
 # Дата, с которой пишутся клиентские шаги воронки и op_id. Меняется только вместе с
 # релизом, который их вводит.
 TRACK_FROM="2026-09-09"
+# Дата, с которой клиент шлёт итог маршрутизации (photo_routing_result). Раньше этого
+# события нет физически — как и клиентских шагов до TRACK_FROM.
+ROUTING_FROM="2026-09-11"
 
 [ -f .env ] || { echo "запускать из корня проекта (нужен .env)"; exit 1; }
 DB=$(sed -n 's/^POSTGRES_DB=//p' .env | head -1)
@@ -110,7 +113,13 @@ ops AS (
          bool_or(name IN ('meal_analysis_success','label_analysis_success')) AS ok,
          bool_or(name IN ('meal_error','meal_text_error','scan_error')) AS failed,
          bool_or(name IN ('meal_paywall_shown','paywall_shown')) AS paywall,
-         bool_or(name IN ('diary_entry_saved','meal_manual')) AS saved
+         bool_or(name IN ('diary_entry_saved','meal_manual')) AS saved,
+         -- Отказ с подсказкой: анализатор не взялся за кадр и объяснил почему. Это не
+         -- ошибка и не пейволл — попытка дошла до модели, но человеку вернули совет
+         -- переснять. Без этой строки такие попытки оседали в «сервер принял» без исхода.
+         bool_or(name IN ('scan_label_not_found','scan_not_food','scan_mixed_frames',
+                          'scan_not_scored','meal_label_detected','meal_not_food',
+                          'meal_package_front','meal_label_unreadable','meal_unclear')) AS rejected
     FROM events
    WHERE user_id IN (SELECT id FROM cohort) AND props->>'op_id' IS NOT NULL
    GROUP BY 1, 2
@@ -121,7 +130,30 @@ UNION ALL SELECT '  загрузка не дошла до сервера', count
 UNION ALL SELECT '  упёрлись в пейволл', count(*), count(DISTINCT user_id) FROM ops WHERE paywall
 UNION ALL SELECT '  получили результат', count(*), count(DISTINCT user_id) FROM ops WHERE ok
 UNION ALL SELECT '  получили ошибку', count(*), count(DISTINCT user_id) FROM ops WHERE failed
+UNION ALL SELECT '  отказ, но переброс спас', count(*), count(DISTINCT user_id) FROM ops WHERE rejected AND ok
+UNION ALL SELECT '  остались с подсказкой', count(*), count(DISTINCT user_id) FROM ops WHERE rejected AND NOT ok
 UNION ALL SELECT '  сохранили в дневник', count(*), count(DISTINCT user_id) FROM ops WHERE saved;
+SQL
+
+echo
+echo "-- маршрутизация фото: куда попал снимок (клиент шлёт с $ROUTING_FROM) --"
+$COMPOSE exec -T postgres psql -U "$DBUSER" -d "$DB" -v ON_ERROR_STOP=1 <<SQL
+WITH cohort AS (SELECT id FROM users WHERE $COHORT AND created_at >= '$SINCE'),
+r AS (
+  SELECT props FROM events
+   WHERE name = 'photo_routing_result' AND user_id IN (SELECT id FROM cohort)
+     AND created_at >= '$SINCE'
+)
+SELECT coalesce(props->>'initial_mode', '?')   AS "выбрал",
+       coalesce(props->>'final_mode', '?')     AS "считал",
+       coalesce(props->>'reroute_reason', '—') AS "причина переброса",
+       coalesce(props->>'result', '?')         AS "итог",
+       count(*) AS "попыток",
+       count(*) FILTER (WHERE (props->>'quota_charged')::boolean) AS "со списанием",
+       round(avg((SELECT sum(x::numeric)
+                    FROM jsonb_array_elements_text(props::jsonb -> 'durations_ms') AS x)) / 1000, 1)
+         AS "секунд на попытку"
+  FROM r GROUP BY 1, 2, 3, 4 ORDER BY 5 DESC;
 SQL
 
 echo
