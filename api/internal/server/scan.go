@@ -198,6 +198,12 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Журнал фактических вызовов модели (backlog п.9). Стоит ДО кэша и пейволла: попытка,
+	// закончившаяся отказом или кэшем, тоже должна быть видна в себестоимости.
+	calls := s.newCallLog(u.ID, op, "scan")
+	defer calls.flush()
+	ctx = llm.WithRecorder(ctx, calls)
+
 	// Чтение фото из multipart. Поле photo может повторяться: 1–3 кадра ОДНОЙ этикетки
 	// с разных ракурсов (круглая/изогнутая упаковка — §8). Все кадры уходят в ОДИН
 	// vision-вызов, сохраняя порядок состава и не дублируя ингредиенты на стыке.
@@ -268,6 +274,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		// за время между прогонами он мог потратить попытки на другие сканы или
 		// оформить подписку.
 		cached.ScansLeft = s.remainingScans(u)
+		calls.cached()
 		_ = s.store.InsertEvent(ctx, &u.ID, "scan_cache_hit", withOp(op, map[string]any{"status": cached.Status}))
 		s.log.Info("scan: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
 		writeJSON(w, http.StatusOK, cached)

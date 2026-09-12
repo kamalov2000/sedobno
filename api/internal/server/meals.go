@@ -176,6 +176,12 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
+
+	// Журнал фактических вызовов модели (backlog п.9). Стоит ДО кэша и пейволла: отказ,
+	// черновик и переброс тоже стоят денег, и до сих пор их цену не видел никто.
+	calls := s.newCallLog(u.ID, op, "meal")
+	defer calls.flush()
+	ctx = llm.WithRecorder(ctx, calls)
 	images, okImg := s.readMealImages(w, r, u.ID)
 	if !okImg {
 		return // readMealImages уже ответил ошибкой
@@ -187,6 +193,7 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 	// считать его заново незачем. Но ровно один раз за день (см. finishMealFromCache).
 	sha := imagesSHA(images)
 	if cached, hit := s.cachedMealResult(ctx, u.ID, sha); hit {
+		calls.cached()
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_cache_hit", withOp(op, map[string]any{"status": cached.Status}))
 		s.log.Info("meal: попадание в кэш разбора", "user", u.ID, "sha", sha[:12])
 		s.finishMealFromCache(ctx, w, u, cached, sha, localDateFromForm(r), op, rerouted)

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
 	"time"
 )
@@ -78,6 +79,12 @@ func (s *Server) handleMealText(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")
 		return
 	}
+
+	// Журнал вызовов (backlog п.9): описание словами уходит в ту же платную модель, что и
+	// фото, и в себестоимости попытки должно быть видно наравне с ним.
+	calls := s.newCallLog(u.ID, op, "meal")
+	defer calls.flush()
+	ctx = llm.WithRecorder(ctx, calls)
 	if acc := checkAccessWith(u, accessMeal, time.Now(), s.effectiveLimits(u)); !acc.Allowed {
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_paywall_shown",
 			withOp(op, map[string]any{"entry": "text", "reason": acc.Reason}))

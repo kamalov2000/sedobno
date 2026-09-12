@@ -398,7 +398,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 				e, err = primary.ext, primary.err
 			}
 		} else {
-			e, uf, err = p.extractEntryWith(ctx, p.fallback, images)
+			e, uf, err = p.extractEntryWith(ctx, p.fallback, images, llm.StageExtractStrong)
 		}
 		fbUsage = fbUsage.Add(uf)
 		if err != nil {
@@ -725,17 +725,17 @@ func (p *Pipeline) finalize(res *Result, vision, text, fb llm.Usage, start time.
 // extractEntry — входная фаза 1 основной модели под НЕблокирующим шлюзом (§15):
 // нет свободного слота → ErrBusy сразу (нагрузку сбрасываем, не копим очередь).
 func (p *Pipeline) extractEntry(ctx context.Context, images []llm.Image) (*llm.Extraction, llm.Usage, error) {
-	return p.extractEntryWith(ctx, p.llm, images)
+	return p.extractEntryWith(ctx, p.llm, images, llm.StageExtract)
 }
 
 // extractEntryWith — фаза 1 указанным провайдером под тем же НЕблокирующим шлюзом
 // допуска (§15). Нужен, чтобы вход мультикадра сразу шёл на сильную модель.
-func (p *Pipeline) extractEntryWith(ctx context.Context, prov llm.LLMProvider, images []llm.Image) (*llm.Extraction, llm.Usage, error) {
+func (p *Pipeline) extractEntryWith(ctx context.Context, prov llm.LLMProvider, images []llm.Image, stage string) (*llm.Extraction, llm.Usage, error) {
 	if !p.tryAcquire() {
 		return nil, llm.Usage{}, ErrBusy
 	}
 	defer p.release()
-	return prov.ExtractIngredients(ctx, images)
+	return prov.ExtractIngredients(llm.WithStage(ctx, stage), images)
 }
 
 // extractWith выполняет фазу 1 указанным провайдером под общим семафором (§15),
@@ -745,7 +745,9 @@ func (p *Pipeline) extractWith(ctx context.Context, prov llm.LLMProvider, images
 		return nil, llm.Usage{}, err
 	}
 	defer p.release()
-	return prov.ExtractIngredients(ctx, images)
+	// Сюда ходят только за повторным извлечением сильной моделью: в журнале это отдельные
+	// деньги — её вызов втрое дороже обычного прохода.
+	return prov.ExtractIngredients(llm.WithStage(ctx, llm.StageExtractStrong), images)
 }
 
 // lowConfidence решает, звать ли сильную модель на повторное извлечение. Смысл
@@ -897,7 +899,7 @@ func (p *Pipeline) matchLLM(ctx context.Context, unmatched []string) (map[string
 		return nil, llm.Usage{}, err
 	}
 	defer p.release()
-	return p.llm.MatchIngredients(ctx, unmatched, p.candidates)
+	return p.llm.MatchIngredients(llm.WithStage(ctx, llm.StageMatch), unmatched, p.candidates)
 }
 
 func (p *Pipeline) fill(r *rec, a dict.Additive) {
@@ -950,7 +952,7 @@ func (p *Pipeline) explain(ctx context.Context, sc scoring.Result) (string, llm.
 	}
 	text, usage, err := func() (string, llm.Usage, error) {
 		defer p.release()
-		return p.llm.Explain(ctx, in)
+		return p.llm.Explain(llm.WithStage(ctx, llm.StageExplain), in)
 	}()
 	if err != nil {
 		p.log.Warn("фаза 4: объяснение LLM не удалось, используем шаблон", "err", err)

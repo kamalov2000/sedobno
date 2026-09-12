@@ -110,7 +110,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	}
 
 	res := &Result{Provider: primary.Name(), Status: StatusError}
-	ma, usage, err := p.callGated(ctx, primary, images)
+	ma, usage, err := p.callGated(ctx, primary, images, llm.StageMeal)
 	res.Usage = usage
 	res.CostRUB = primary.CostRUB(usage, llm.Usage{})
 	if err != nil {
@@ -132,7 +132,7 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 			trigger = eggFruitTrigger(res.Dishes)
 		}
 		if trigger != "" {
-			fbMa, fbUsage, fbErr := p.callGated(ctx, p.fallback, images)
+			fbMa, fbUsage, fbErr := p.callGated(ctx, p.fallback, images, llm.StageMealStrong)
 			if fbErr != nil {
 				// Sonnet перегружен/упал — оставляем Haiku-результат: он лучше ошибки, и за
 				// его вызов уже заплачено. Приём НЕ помечаем как escalated (эскалация не
@@ -202,12 +202,12 @@ func (p *Pipeline) RunText(ctx context.Context, text string) (*Result, error) {
 
 // callGated делает один vision-вызов под шлюзом допуска (§15): нет свободного слота →
 // ErrBusy, работа не начиналась. Общий семафор на основной и эскалационный проходы.
-func (p *Pipeline) callGated(ctx context.Context, a llm.MealAnalyzer, images []llm.Image) (*llm.MealAnalysis, llm.Usage, error) {
+func (p *Pipeline) callGated(ctx context.Context, a llm.MealAnalyzer, images []llm.Image, stage string) (*llm.MealAnalysis, llm.Usage, error) {
 	if !p.tryAcquire() {
 		return nil, llm.Usage{}, ErrBusy
 	}
 	defer p.release()
-	return a.AnalyzeMeal(ctx, images)
+	return a.AnalyzeMeal(llm.WithStage(ctx, stage), images)
 }
 
 // callTextGated — то же для текстового разбора: общий с фото семафор, потому что общий
@@ -217,7 +217,7 @@ func (p *Pipeline) callTextGated(ctx context.Context, a llm.MealAnalyzer, text s
 		return nil, llm.Usage{}, ErrBusy
 	}
 	defer p.release()
-	return a.AnalyzeMealText(ctx, text)
+	return a.AnalyzeMealText(llm.WithStage(ctx, llm.StageMealText), text)
 }
 
 // applyAnalysis переносит vision-ответ в Result: confidence/note, маппинг статуса и

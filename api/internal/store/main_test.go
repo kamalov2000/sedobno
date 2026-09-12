@@ -171,7 +171,7 @@ func resetDB(t *testing.T) {
 	t.Helper()
 	_, err := testPool.Exec(context.Background(),
 		`TRUNCATE users, subscriptions, sbp_payments, scans, meals, events, feedback,
-		          weigh_ins, water_intake, analysis_cache RESTART IDENTITY CASCADE`)
+		          weigh_ins, water_intake, analysis_cache, llm_calls RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("resetDB: %v", err)
 	}

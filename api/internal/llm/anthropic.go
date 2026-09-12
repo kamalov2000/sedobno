@@ -197,9 +197,25 @@ func (c *anthropicClient) message(ctx context.Context, model, system string, con
 		return "", Usage{}, err
 	}
 
-	return doWithRetry(ctx, c.name, func() (string, Usage, error) {
+	// Журнал вызовов (backlog п.9): считаем ФАКТ — токены из ответа провайдера, цену
+	// именно этой модели и время, которое человек прождал. Ретрай внутри — часть одного
+	// вызова: пользователь ждал его целиком, и платим мы за него один раз.
+	started := time.Now()
+	text, usage, err := doWithRetry(ctx, c.name, func() (string, Usage, error) {
 		return c.doOnce(ctx, payload)
 	})
+	recordCall(ctx, Call{
+		Provider: c.name, Model: model, Stage: StageFrom(ctx), Usage: usage,
+		CostRUB: c.costRUB(model, usage), Duration: time.Since(started), Err: err,
+	})
+	return text, usage, err
+}
+
+// costRUB — цена ОДНОГО вызова по модели, которой он сделан. CostRUB(vision, text) считает
+// прогон целиком и для одной строки журнала не годится: там две модели разом.
+func (c *anthropicClient) costRUB(model string, u Usage) float64 {
+	in, out := anthropicPrice(model)
+	return (inputUSD(u, in) + float64(u.OutputTokens)*out/1e6) * c.usdRUB
 }
 
 func (c *anthropicClient) doOnce(ctx context.Context, payload []byte) (string, Usage, error) {

@@ -104,6 +104,12 @@ func (s *Server) thawScanCache(userID int64, sha string, images []llm.Image, was
 	ctx, cancel := context.WithTimeout(context.Background(), thawCacheTimeout)
 	defer cancel()
 
+	// Разморозка идёт в фоне, без попытки человека (op пуст), но платим за неё мы —
+	// значит, в журнале она должна быть (backlog п.9).
+	calls := s.newCallLog(userID, "", "scan")
+	defer calls.flush()
+	ctx = llm.WithRecorder(ctx, calls)
+
 	// Обычный Run: детекторы внутри пайплайна сработают на тех же кадрах и сами уведут
 	// разбор на сильную модель. Отдельного «принудительного» режима не заводим — иначе
 	// правило эскалации существовало бы в двух местах и разъехалось бы.

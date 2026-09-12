@@ -62,14 +62,14 @@ func (p *Pipeline) extractPair(ctx context.Context, prov llm.LLMProvider, images
 	go func() {
 		defer wg.Done()
 		defer p.release()
-		primary.ext, primary.usage, primary.err = prov.ExtractIngredients(ctx, images)
+		primary.ext, primary.usage, primary.err = prov.ExtractIngredients(llm.WithStage(ctx, llm.StageExtractStrong), images)
 	}()
 	if hasControl {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer p.release()
-			control.ext, control.usage, control.err = prov.ExtractIngredients(ctx, images)
+			control.ext, control.usage, control.err = prov.ExtractIngredients(llm.WithStage(ctx, llm.StageSelfCheck), images)
 		}()
 	}
 	wg.Wait()
