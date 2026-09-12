@@ -23,10 +23,13 @@ func TestСостояниеЁмкостиРешаетСервер(t *testing.T) 
 		{"закрытая банка — позиции нет вовсе", "closed", false, false, 300},
 		{"открытая банка — под вопросом, вне итога", "open", true, true, 300},
 		{"налито в стакан — обычная позиция", "poured", true, false, 440},
-		{"состояние не указано — как раньше, обычная позиция", "", true, false, 440},
-		{"незнакомое значение не роняет разбор", "неизвестно", true, false, 440},
+		{"еда без поля — обычная позиция", "", true, false, 440},
+
 		{"синоним sealed — та же закрытая", "sealed", false, false, 300},
 		{"синоним opened — та же открытая", "OPENED", true, true, 300},
+		// «Не разобрать» — это не «можно посчитать»: позиция остаётся, но под вопросом.
+		{"состояние не разобрать — под вопросом", "unknown", true, true, 300},
+		{"чужое слово в поле — тоже под вопросом", "мусор", true, true, 300},
 	}
 
 	for _, c := range cases {
@@ -66,6 +69,25 @@ func TestНенадёжныйНалитыйНапитокОстаётсяПод�
 	}
 }
 
+// Напиток, у которого модель вовсе не назвала состояние ёмкости, считать нельзя: «поля нет»
+// у напитка значит «мы не знаем», а не «всё в порядке». Еду это не задевает — у неё поля нет
+// по определению (уточнение владельца 12.09.2026).
+func TestНапитокБезСостоянияЁмкостиПодВопросом(t *testing.T) {
+	dishes, total := SanitizeDishes([]llm.MealItem{
+		{Name: "рис отварной", Grams: 200, Kcal: 260, ProteinG: 5, FatG: 1, CarbG: 57, Confidence: 0.8},
+		{Name: "лимонад", Grams: 300, Kcal: 120, ProteinG: 0, FatG: 0, CarbG: 30, Confidence: 0.5, Drink: true},
+	})
+	if len(dishes) != 2 {
+		t.Fatalf("блюд %d, ждали 2: напиток показываем, а не выбрасываем", len(dishes))
+	}
+	if !dishes[1].Assumed {
+		t.Error("напиток без состояния ёмкости посчитан молча")
+	}
+	if total.Kcal != 260 {
+		t.Errorf("итог %v ккал, ждали 260", total.Kcal)
+	}
+}
+
 // Еду состояние ёмкости не касается: поле ставится только напиткам, и обычная тарелка
 // ведёт себя как прежде.
 func TestЕдаБезСостоянияЁмкости(t *testing.T) {
@@ -83,7 +105,9 @@ func TestНормализацияСостоянияЁмкости(t *testing.T) 
 		"poured": containerPoured, " Poured ": containerPoured,
 		"open": containerOpen, "opened": containerOpen,
 		"closed": containerClosed, "SEALED": containerClosed, "unopened": containerClosed,
-		"": "", "мусор": "", "bottle": "",
+		"unknown": containerUnknown, " UNKNOWN ": containerUnknown,
+		// Пусто — поля не было (еда). Чужое слово — «не знаем», а не «можно считать».
+		"": "", "мусор": containerUnknown, "bottle": containerUnknown,
 	}
 	for in, want := range cases {
 		if got := normContainerState(in); got != want {
