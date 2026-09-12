@@ -20,6 +20,10 @@
 #   • Попадание в кэш — строка без модели и без денег. Это скидка, которую нельзя
 #     закладывать в тариф как постоянную: у нового человека кэш пуст.
 #   • Пользовательских данных в журнале нет: ни кадров, ни текста этикеток, ни названий.
+#   • Строки журнала НЕ переписываются при изменении цен: в них записана стоимость, которую
+#     посчитал код того момента, и применённый тогда курс. Отдельный раздел показывает те же
+#     вызовы, пересчитанные по уточнённому тарифу (Sonnet 5 — $2/$10 с 12.09.2026), по
+#     историческому курсу каждой строки.
 #   • Вызовы синтетических аккаунтов проверок (is_test) из рабочих чисел исключены, но не
 #     удалены: деньги за них потрачены настоящие, и отдельной строкой они показаны.
 #   • Удалённый пользователь не уносит расход: у его строк user_id становится NULL, всё
@@ -116,6 +120,28 @@ SELECT created_at::date AS "день", model AS "модель",
   FROM llm_calls
  WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test
  GROUP BY 1, 2 ORDER BY 1 DESC, 8 DESC;
+SQL
+
+echo
+echo "-- пересчёт по уточнённому тарифу (константа исправлена 12.09.2026) --"
+$PSQL <<SQL
+WITH p AS (
+  SELECT *,
+         CASE WHEN model LIKE '%haiku%'    THEN 1.0
+              WHEN model LIKE '%opus%'     THEN 5.0
+              WHEN model LIKE '%sonnet-5%' THEN 2.0
+              ELSE 3.0 END AS in_price,
+         CASE WHEN model LIKE '%haiku%'    THEN 5.0
+              WHEN model LIKE '%opus%'     THEN 25.0
+              WHEN model LIKE '%sonnet-5%' THEN 10.0
+              ELSE 15.0 END AS out_price
+    FROM llm_calls
+   WHERE created_at >= '$SINCE' AND status <> 'cached' AND NOT is_test)
+SELECT model AS "модель", count(*) AS "вызовов",
+       round(sum(cost_rub), 2) AS "как записано, руб",
+       round(sum(((input_tokens + cache_write_tokens * 1.25 + cache_read_tokens * 0.1) * in_price
+                  + output_tokens * out_price) / 1e6 * usd_rub)::numeric, 2) AS "по уточнённому тарифу, руб"
+  FROM p GROUP BY 1 ORDER BY 2 DESC;
 SQL
 
 echo
