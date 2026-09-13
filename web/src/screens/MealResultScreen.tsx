@@ -550,6 +550,21 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           </div>
         )}
 
+        {/* Старый приём с предположенной добавкой внутри итога: в дневнике он на 703, а здесь
+            658, и без объяснения это читается как ошибка счёта (наблюдение владельца 13.09).
+            Вопрос «оставить или удалить» по-прежнему задаётся при сохранении; здесь — только
+            почему числа разные и что будет дальше. */}
+        {isSaved && legacyAddons.length > 0 && saved?.total && (
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12, padding: "10px 12px", borderRadius: 12, background: "var(--bg-soft)", border: "1px solid var(--border)" }}>
+            <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: 16, color: "var(--cal-num)", flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 13, lineHeight: 1.45, color: "var(--text2)" }}>
+              В дневнике этот приём — {Math.round(saved.total.kcal)} ккал. В них {legacyAddons.length > 1 ? "входят предположенные добавки" : "входит предположенная добавка"}:{" "}
+              {legacyAddons.map((a) => `${a.label} · ${pieceCountLabel(a.kind, a.count)} (${Math.round(a.kcal)} ккал)`).join(", ")}.
+              Здесь {legacyAddons.length > 1 ? "они" : "она"} в итог не {legacyAddons.length > 1 ? "включены" : "включена"} до вашего ответа — при сохранении спросим, оставить или удалить.
+            </span>
+          </div>
+        )}
+
         {/* Карточка-герой */}
         <div style={{ marginTop: 16, borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>

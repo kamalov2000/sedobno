@@ -99,6 +99,17 @@ describe("наследная предположенная добавка", () =>
     expect(decision()).toBe("remove");
   });
 
+  it("карточка сразу объясняет, почему в дневнике 307, а здесь 270", () => {
+    const saved = { ...savedMeal([butter]), total: { kcal: 307, protein_g: 8, fat_g: 10.1, carb_g: 45 } };
+    render(<MealResultScreen result={result()} saved={saved} isSubscribed onDone={noop} onRetake={noop} />);
+    // Число из дневника, добавка с ценой и обещание спросить — до всякого сохранения.
+    expect(screen.getByText(/В дневнике этот приём — 307 ккал/)).toBeTruthy();
+    expect(screen.getByText(/Сливочное · 1 ч\.л\. \(37 ккал\)/)).toBeTruthy();
+    expect(screen.getByText(/при сохранении спросим/)).toBeTruthy();
+    // А вопрос ещё не задан: он появляется только по «Сохранить изменения».
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("обычный приём сохраняется как раньше, без вопросов", async () => {
     openEdit();
     await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));

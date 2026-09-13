@@ -27,6 +27,10 @@ interface Props {
   loadWeight?: () => Promise<WeightResponse>;
   /** Инкремент воды в мл. Инъекция по той же причине. */
   saveWater?: (deltaMl: number, date: string) => Promise<WaterResponse>;
+  /** Тап по строке приёма открывает его на правку — так же, как из «Истории приёмов».
+   *  До 13.09.2026 строка дневника умела только удалять, и человек, ожидавший открыть
+   *  приём тапом, упирался в глухую строку (наблюдение владельца в Telegram Web). */
+  onOpen?: (item: MealDiaryItem) => void;
   /** Открыть пустой разбор для приёма, вписанного руками. Не задан — входы скрыты. */
   onAddManual?: () => void;
 }
@@ -56,7 +60,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onOpen,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -299,6 +303,7 @@ export default function DiaryScreen({
             onPrev={() => goDay(-1)}
             onNext={() => goDay(1)}
             onTrash={onTrash}
+            onOpen={onOpen}
             onOpenWizard={onOpenWizard}
             water={data ? { ml: data.water_ml, goalMl: data.water_goal_ml } : undefined}
             streak={streak}
@@ -347,6 +352,7 @@ function DayView({
   onPrev,
   onNext,
   onTrash,
+  onOpen,
   onOpenWizard,
   water,
   streak,
@@ -371,6 +377,7 @@ function DayView({
   onPrev: () => void;
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
+  onOpen?: (item: MealDiaryItem) => void;
   onOpenWizard: () => void;
 }) {
   const atToday = day != null && today !== "" && day >= today;
@@ -440,11 +447,11 @@ function DayView({
         <>
           <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)", margin: "18px 0 4px" }}>ПРИЁМЫ ПИЩИ</div>
           {profile && budgets ? (
-            <MealBudgetList items={items} target={profile.daily_kcal_target} budgets={budgets} onTrash={onTrash} />
+            <MealBudgetList items={items} target={profile.daily_kcal_target} budgets={budgets} onTrash={onTrash} onOpen={onOpen} />
           ) : (
             <div style={{ display: "flex", flexDirection: "column" }}>
               {items.map((it) => (
-                <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} />
+                <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} onOpen={onOpen ? () => onOpen(it) : undefined} />
               ))}
             </div>
           )}
@@ -580,16 +587,23 @@ function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boo
 // Строка приёма. Внутри группы бюджета (inGroup) тип не подписываем — его назвал
 // заголовок группы, и повторять «Обед» под «Обедом» значит тратить строку впустую;
 // вместо этого крупнее время и состав, по которым приём и узнают.
-function MealRow({ item, onTrash, inGroup = false }: { item: MealDiaryItem; onTrash: () => void; inGroup?: boolean }) {
+function MealRow({ item, onTrash, onOpen, inGroup = false }: { item: MealDiaryItem; onTrash: () => void; onOpen?: () => void; inGroup?: boolean }) {
   const names = item.dishes.map((d) => d.name).join(", ");
   const kcal = item.total ? fmtInt(item.total.kcal) : "—";
   const icon = item.meal_type ? MEAL_TYPE_ICONS[item.meal_type] : "ti-tools-kitchen-2";
+  // Содержимое строки — кнопка «открыть приём», корзина — отдельная кнопка рядом. Кнопка
+  // в кнопке недопустима, поэтому строка не оборачивается целиком: тап по корзине не должен
+  // открывать приём, а тап по имени — не должен удалять.
+  const openStyle = { flex: 1, minWidth: 0, display: "flex", alignItems: "center", background: "none", border: "none", padding: 0, textAlign: "left" as const, fontFamily: "inherit", cursor: onOpen ? "pointer" : "default", color: "inherit" };
+  const openLabel = `Открыть приём: ${names || "без названия"}`;
   if (inGroup) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0 9px 2px", borderTop: "1px solid var(--border)" }}>
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", flex: "none", width: 38 }}>{fmtTime(item.eaten_at)}</span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names || "—"}</span>
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 12.5, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{kcal}</span>
+        <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={openLabel} style={{ ...openStyle, gap: 10 }}>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", flex: "none", width: 38 }}>{fmtTime(item.eaten_at)}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: "var(--text2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names || "—"}</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 12.5, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{kcal}</span>
+        </button>
         <button type="button" onClick={onTrash} aria-label="Удалить приём" style={{ width: 28, height: 28, flex: "none", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 15 }} />
         </button>
@@ -598,17 +612,19 @@ function MealRow({ item, onTrash, inGroup = false }: { item: MealDiaryItem; onTr
   }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 2px", borderBottom: "1px solid var(--border)" }}>
-      <span style={{ width: 38, height: 38, borderRadius: 11, background: "var(--cal-soft)", color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-        <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 19 }} />
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{item.meal_type ? { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин", snack: "Перекус" }[item.meal_type] : "Приём"}</span>
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{fmtTime(item.eaten_at)}</span>
-        </div>
-        <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names || "—"}</div>
-      </div>
-      <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{kcal}</span>
+      <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={openLabel} style={{ ...openStyle, gap: 12 }}>
+        <span style={{ width: 38, height: 38, borderRadius: 11, background: "var(--cal-soft)", color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+          <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 19 }} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0, display: "block" }}>
+          <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{item.meal_type ? { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин", snack: "Перекус" }[item.meal_type] : "Приём"}</span>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{fmtTime(item.eaten_at)}</span>
+          </span>
+          <span style={{ display: "block", fontSize: 12.5, color: "var(--text2)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names || "—"}</span>
+        </span>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 13, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{kcal}</span>
+      </button>
       <button type="button" onClick={onTrash} aria-label="Удалить приём" style={{ width: 30, height: 30, flex: "none", background: "none", border: "none", color: "var(--text3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <i className="ti ti-trash" aria-hidden="true" style={{ fontSize: 16 }} />
       </button>
@@ -632,12 +648,13 @@ const BUDGET_LABELS: Record<MealType, string> = {
 };
 
 function MealBudgetList({
-  items, target, budgets, onTrash,
+  items, target, budgets, onTrash, onOpen,
 }: {
   items: MealDiaryItem[];
   target?: number;
   budgets: Partial<Record<MealType, number>>;
   onTrash: (item: MealDiaryItem) => void;
+  onOpen?: (item: MealDiaryItem) => void;
 }) {
   const byType = new Map<string, MealDiaryItem[]>();
   for (const it of items) {
@@ -658,10 +675,11 @@ function MealBudgetList({
           items={byType.get(t) ?? []}
           budget={mealBudgetKcal(target, budgets[t])}
           onTrash={onTrash}
+          onOpen={onOpen}
         />
       ))}
       {untyped.length > 0 && (
-        <MealTypeGroup label="Без типа" icon="ti-tools-kitchen-2" items={untyped} budget={null} onTrash={onTrash} />
+        <MealTypeGroup label="Без типа" icon="ti-tools-kitchen-2" items={untyped} budget={null} onTrash={onTrash} onOpen={onOpen} />
       )}
     </div>
   );
@@ -671,13 +689,14 @@ function MealBudgetList({
 // под ним. Перебор бюджета — серым, как и перебор дневной нормы: съесть за обедом больше
 // доли не ошибка, красный тут читался бы как запрет.
 function MealTypeGroup({
-  label, icon, items, budget, onTrash,
+  label, icon, items, budget, onTrash, onOpen,
 }: {
   label: string;
   icon: string;
   items: MealDiaryItem[];
   budget: number | null;
   onTrash: (item: MealDiaryItem) => void;
+  onOpen?: (item: MealDiaryItem) => void;
 }) {
   const eaten = Math.round(items.reduce((a, m) => a + (m.total?.kcal ?? 0), 0));
   const empty = items.length === 0;
@@ -706,7 +725,7 @@ function MealTypeGroup({
       {!empty && (
         <div style={{ display: "flex", flexDirection: "column", marginTop: 10 }}>
           {items.map((it) => (
-            <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} inGroup />
+            <MealRow key={it.id} item={it} onTrash={() => onTrash(it)} onOpen={onOpen ? () => onOpen(it) : undefined} inGroup />
           ))}
         </div>
       )}

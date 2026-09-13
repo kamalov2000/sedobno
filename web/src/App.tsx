@@ -778,6 +778,14 @@ export default function App() {
         <DiaryScreen
           onBack={() => setView("home")}
           profile={me?.nutrition_profile}
+          onOpen={(item) => {
+            // Тот же путь, что из «Истории приёмов»: приём уже сохранён, экран — правка.
+            setSavedMeal(item);
+            setMealResult(diaryItemToResult(item, me?.meals_left ?? -1));
+            setMealPhoto(null);
+            setReturnTo("meal_diary");
+            setView("meal_result");
+          }}
           onOpenWizard={() => {
             // Профиль заполнен — открываем экран просмотра/правки (03); пустой —
             // полный онбординг из визарда (первое заполнение нормы).
@@ -936,7 +944,7 @@ export default function App() {
           photo={mealPhoto}
           // «Поделиться» — про МОМЕНТ: свежий разбор показывают, приём, открытый из
           // истории для правки, — нет. В дневнике кнопки нет вовсе.
-          canShare={returnTo !== "meal_history"}
+          canShare={returnTo !== "meal_history" && returnTo !== "meal_diary"}
           // Кадр уже разбирался сегодня — экран говорит об этом вслух, иначе «ПРИЁМ В
           // ДНЕВНИКЕ» вместо ожидаемого разбора читается как сбой.
           alreadyInDiary={mealResult.already_in_diary}
