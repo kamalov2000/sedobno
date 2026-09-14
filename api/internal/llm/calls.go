@@ -25,6 +25,9 @@ const (
 	StageMeal          = "meal"           // разбор фото еды, основная модель
 	StageMealStrong    = "meal_strong"    // эскалация разбора на сильную модель
 	StageMealText      = "meal_text"      // разбор блюда по текстовому описанию
+	// StageLabelCheck — фаза 1 сканера на кадре, который калории отвергли как «упаковка без
+	// читаемого состава» (pipeline/label_check.go): один дополнительный вызов на отказ.
+	StageLabelCheck = "label_check"
 )
 
 // Call — один фактический вызов модели.

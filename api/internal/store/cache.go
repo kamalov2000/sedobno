@@ -92,6 +92,16 @@ WHERE EXCLUDED.strength >= analysis_cache.strength`
 	return err
 }
 
+// DeleteAnalysisCache удаляет одну запись по ключу. Нужен, когда лежащий в кэше ответ
+// признан негодным к выдаче (отрицательный вердикт о читаемом составе, 14.09.2026): такую
+// запись не просто пропускают, а убирают — иначе она всплывала бы в отчётах по кэшу и
+// пережила бы любую правку правила пропуска. Отсутствие записи — не ошибка.
+func (s *Store) DeleteAnalysisCache(ctx context.Context, userID int64, kind, sha string) error {
+	const q = `DELETE FROM analysis_cache WHERE user_id = $1 AND kind = $2 AND image_sha = $3`
+	_, err := s.pool.Exec(ctx, q, userID, kind, sha)
+	return err
+}
+
 // PurgeAnalysisCache удаляет записи старше TTL и возвращает их число. Вызывается
 // подметальщиком (cmd/subsweep) вместе с прочей периодикой — отдельного демона под
 // это заводить незачем.

@@ -49,6 +49,36 @@ func assertSameJSON(t *testing.T, got, want []byte) {
 	}
 }
 
+// Удаление адресное: соседние ключи (другой сканер, другой файл) не задевает, а
+// отсутствующая запись — не ошибка (server/analysis_cache.go убирает так старые
+// отрицательные вердикты о составе, 14.09.2026).
+func TestAnalysisCache_УдалениеПоКлючу(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7010)
+	put := func(kind, sha string) {
+		if err := s.PutAnalysisCache(ctx, uid, kind, sha, []byte(`{"x":1}`), CacheStrengthBase); err != nil {
+			t.Fatalf("запись %s/%s: %v", kind, sha, err)
+		}
+	}
+	put(CacheKindMeal, "sha-a")
+	put(CacheKindScan, "sha-a")
+	put(CacheKindMeal, "sha-b")
+	if err := s.DeleteAnalysisCache(ctx, uid, CacheKindMeal, "sha-a"); err != nil {
+		t.Fatalf("удаление: %v", err)
+	}
+	if _, _, found, _ := s.GetAnalysisCache(ctx, uid, CacheKindMeal, "sha-a"); found {
+		t.Error("запись осталась после удаления")
+	}
+	for _, k := range [][2]string{{CacheKindScan, "sha-a"}, {CacheKindMeal, "sha-b"}} {
+		if _, _, found, _ := s.GetAnalysisCache(ctx, uid, k[0], k[1]); !found {
+			t.Errorf("задета соседняя запись %v", k)
+		}
+	}
+	if err := s.DeleteAnalysisCache(ctx, uid, CacheKindMeal, "no-such"); err != nil {
+		t.Errorf("удаление отсутствующей записи — не ошибка, а получили %v", err)
+	}
+}
+
 // Ключ — тройка (пользователь, сканер, хэш). Промах по любому из трёх — это промах,
 // а не «похожая запись»: чужой разбор отдавать нельзя, а один файл в сканере составов
 // и в счётчике калорий даёт два несовместимых ответа.

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/sostav/api/internal/imaging"
 	"github.com/sostav/api/internal/llm"
 	"github.com/sostav/api/internal/meal"
+	"github.com/sostav/api/internal/pipeline"
 	"github.com/sostav/api/internal/store"
 )
 
@@ -221,6 +223,12 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Метка «упаковка без читаемого состава» не окончательна: кадр перечитывает фаза 1
+	// сканера, и читаемый состав превращает отказ в label_detected (см. checkReadableLabel).
+	if perr == nil && res != nil && mealNegativeAboutLabel(res.Status) {
+		s.checkReadableLabel(ctx, u.ID, op, images, res)
+	}
+
 	switch {
 	case perr != nil || res.Status == meal.StatusError:
 		s.log.Error("meal: пайплайн", "err", perr, "user", u.ID)
@@ -246,7 +254,8 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 
 	case res.Status == meal.StatusPackageFront, res.Status == meal.StatusLabelUnreadable, res.Status == meal.StatusUnclear:
 		// Упаковка без состава, нечитаемый текст или непонятный кадр — снимок остаётся во
-		// вкладке «Калории»: переброс тут не поможет. Лимит не списываем.
+		// вкладке «Калории»: переброс тут не поможет. Лимит не списываем. Первые два
+		// исхода уже перепроверены сканером (checkReadableLabel) и в кэш не пишутся.
 		_ = s.store.InsertEvent(ctx, &u.ID, "meal_"+res.Status, withOp(op, mealDiagProps(res)))
 		s.cacheMealResult(ctx, u.ID, sha, res)
 		writeJSON(w, http.StatusOK, mealResponse{
@@ -263,6 +272,52 @@ func (s *Server) handleMealCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		s.finishMealOK(ctx, w, u, res, sha, localDateFromForm(r), op)
 	}
+}
+
+// checkReadableLabel — прицельная проверка читаемого состава перед окончательным отказом
+// калорий (pipeline/label_check.go; backlog п.12, сценарий 2, 14.09.2026). Метка
+// package_front / label_unreadable модели калорий, даже с уверенностью 0,9, не должна
+// перекрывать реально читаемый список ингредиентов: оборот сметаны с крупным «Состав:
+// сливки нормализованные…» получил package_front и оставался во вкладке «Калории» с
+// подсказкой «сфотографируйте таблицу пищевой ценности». Если фаза 1 сканера читает
+// строки состава — разбор становится label_detected, и приложение перебрасывает снимок в
+// «Состав» тем же путём, что и при ingredients_label. Без сканера (тесты) и при его
+// перегрузке отказ остаётся как есть: проверка — подстраховка, а не условие ответа.
+func (s *Server) checkReadableLabel(ctx context.Context, userID int64, op string, images []llm.Image, res *meal.Result) {
+	if s.pipe == nil {
+		return
+	}
+	props := map[string]any{"from": res.Status}
+	lc, err := s.pipe.CheckReadableLabel(ctx, images)
+	if err != nil {
+		s.log.Warn("meal: проверка читаемого состава не удалась, отказ остаётся", "err", err, "user", userID)
+		props["error"] = true
+		_ = s.store.InsertEvent(ctx, &userID, "meal_label_check", withOp(op, props))
+		return
+	}
+	props["readable"] = lc.Readable
+	props["ingredients"] = lc.Ingredients
+	props["frame_content"] = lc.FrameContent
+	props["cost_rub"] = math.Round(lc.CostRUB*10000) / 10000
+	props["latency_ms"] = lc.LatencyMs
+	_ = s.store.InsertEvent(ctx, &userID, "meal_label_check", withOp(op, props))
+	if applyLabelCheck(res, lc) {
+		s.log.Info("meal: калории отвергли кадр как упаковку без состава, сканер прочитал состав — переброс",
+			"user", userID, "from", props["from"], "ingredients", lc.Ingredients)
+	}
+}
+
+// applyLabelCheck — чистое правило: читаемый состав перекрывает метку отказа. Цена и
+// время проверки прибавляются к разбору — это часть той же попытки. Отчёт: изменился ли
+// статус.
+func applyLabelCheck(res *meal.Result, lc pipeline.LabelCheck) bool {
+	if res == nil || !lc.Readable || !mealNegativeAboutLabel(res.Status) {
+		return false
+	}
+	res.Status = meal.StatusLabelDetected
+	res.CostRUB += lc.CostRUB
+	res.LatencyMs += lc.LatencyMs
+	return true
 }
 
 // Переброс снимка между анализаторами. Приложение помечает второй запрос попытки этим

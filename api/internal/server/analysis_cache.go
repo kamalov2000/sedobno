@@ -77,7 +77,42 @@ func (s *Server) cachedScanResponse(ctx context.Context, userID int64, sha strin
 		s.log.Warn("scan: разбор кэша", "err", err, "user", userID)
 		return scanResponse{}, 0, false
 	}
+	if scanNegativeAboutLabel(resp) {
+		// Запись из времён, когда такие отказы ещё замораживались: отдавать её — значит ещё
+		// 90 дней повторять промах модели. Убираем и считаем промахом кэша.
+		s.dropNegativeCache(ctx, userID, store.CacheKindScan, sha, resp.Status+"/"+resp.Reason)
+		return scanResponse{}, 0, false
+	}
 	return resp, strength, true
+}
+
+// Отрицательный вердикт о читаемом составе не кэшируется (backlog п.12, сценарий 2,
+// 14.09.2026). «Состава не видно» — не свойство кадра, а промах читающей модели: на
+// обороте сметаны с крупным «Состав: …» калории ответили package_front, и отказ лёг в
+// кэш на 90 дней. Такие ответы не пишем, а уже лежащие — не отдаём и убираем.
+//
+// Что НЕ считается таким вердиктом и кэшируется по-прежнему: успешные разборы, «не еда»
+// (уверенное опознание кадра), «только блюдо» у сканера (это опознание еды, а не вывод о
+// составе — и именно оно даёт мгновенный переброс в калории при повторе) и «непонятный
+// кадр» калорий (не про состав).
+func mealNegativeAboutLabel(status string) bool {
+	return status == meal.StatusPackageFront || status == meal.StatusLabelUnreadable
+}
+
+func scanNegativeAboutLabel(resp scanResponse) bool {
+	return resp.Status == pipeline.StatusLabelNotFound && resp.Reason != pipeline.ReasonDishOnly
+}
+
+// dropNegativeCache убирает негодную запись и оставляет след в событиях: по ним видно,
+// сколько старых отказов реально всплыло после правки. Ошибка удаления не фатальна —
+// запись всё равно не отдаётся.
+func (s *Server) dropNegativeCache(ctx context.Context, userID int64, kind, sha, verdict string) {
+	if err := s.store.DeleteAnalysisCache(ctx, userID, kind, sha); err != nil {
+		s.log.Warn("кэш: удаление отрицательной записи", "err", err, "user", userID, "kind", kind)
+	}
+	_ = s.store.InsertEvent(ctx, &userID, "cache_negative_dropped", map[string]any{"kind": kind, "verdict": verdict})
+	s.log.Info("кэш: старый отрицательный вердикт о составе не отдан и удалён",
+		"user", userID, "kind", kind, "verdict", verdict, "sha", sha[:12])
 }
 
 // thawCacheTimeout — потолок фоновой перепроверки. Больше обычного скана: она идёт
@@ -247,6 +282,10 @@ func scanCacheStrength(res *pipeline.Result) int16 {
 // strength решает конфликт с уже лежащей записью: сильный ответ вытесняет слабый,
 // слабый поверх сильного не пишется (store.PutAnalysisCache).
 func (s *Server) writeAndCacheScan(ctx context.Context, w http.ResponseWriter, userID int64, sha string, strength int16, resp scanResponse) {
+	if scanNegativeAboutLabel(resp) {
+		writeJSON(w, http.StatusOK, resp) // отказ «состава не видно» не замораживаем
+		return
+	}
 	body, err := json.Marshal(resp)
 	if err == nil {
 		if perr := s.store.PutAnalysisCache(ctx, userID, store.CacheKindScan, sha, body, strength); perr != nil {
@@ -273,6 +312,10 @@ func (s *Server) cachedMealResult(ctx context.Context, userID int64, sha string)
 		s.log.Warn("meal: разбор кэша", "err", err, "user", userID)
 		return nil, false
 	}
+	if mealNegativeAboutLabel(res.Status) {
+		s.dropNegativeCache(ctx, userID, store.CacheKindMeal, sha, res.Status)
+		return nil, false
+	}
 	return &res, true
 }
 
@@ -281,6 +324,9 @@ func (s *Server) cachedMealResult(ctx context.Context, userID int64, sha string)
 // res.Escalated: разбор целиком выполнила сильная модель, частичной подмены, как у
 // сканера, здесь нет.
 func (s *Server) cacheMealResult(ctx context.Context, userID int64, sha string, res *meal.Result) {
+	if mealNegativeAboutLabel(res.Status) {
+		return // отказ «упаковка без читаемого состава» не замораживаем
+	}
 	body, err := json.Marshal(res)
 	if err != nil {
 		return
