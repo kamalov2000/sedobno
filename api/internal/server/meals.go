@@ -41,6 +41,11 @@ const (
 	// числа посчитала модель, но фото не было. Отличать от manual важно и аналитике (сколько
 	// людей пишут вместо фото), и экрану разбора (у текстового приёма есть уверенность и note).
 	mealSourceText = "text"
+	// mealSourceRepeat — приём, повторённый из прошлого одним тапом (backlog п.16, идея
+	// Numify «сохранить как приём»). Модель не вызывалась: числа взяты из прежней записи.
+	// Отдельный источник нужен для замера: повтор задуман ради возвращаемости, и без него
+	// нельзя сказать, пользуются ли им вообще.
+	mealSourceRepeat = "repeat"
 )
 
 // mealResponse — ответ POST /api/meals. При ok несёт разбор (id, блюда, суммы); при
@@ -372,7 +377,7 @@ func mealRejectMessage(status string) string {
 // кнопкой: из скана, из текстового разбора и из фото-черновика (переброс или смешанный
 // кадр — модель уже посчитала, квота уже списана, сохраняет человек).
 func validManualSource(v string) bool {
-	return v == mealSourceScan || v == mealSourceText || v == mealSourcePhoto
+	return v == mealSourceScan || v == mealSourceText || v == mealSourcePhoto || v == mealSourceRepeat
 }
 
 // finishMealDraft — успешный разбор, который НЕ пишется в дневник сам (mealIsDraft).
@@ -1112,7 +1117,8 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		Date     string      `json:"date"`
 		// Source — клиентские значения с явным допуском: mealSourceScan (приём из результата
 		// сканера составов) и mealSourceText (числа посчитала модель по текстовому описанию,
-		// POST /meals/text). Пусто — обычный ручной ввод (mealSourceManual, как было).
+		// POST /meals/text), mealSourceRepeat (повтор прошлого приёма одним тапом). Пусто —
+		// обычный ручной ввод (mealSourceManual, как было).
 		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
@@ -1132,7 +1138,7 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 	source := mealSourceManual
 	if req.Source != "" {
 		if !validManualSource(req.Source) {
-			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan", "text" или "photo" (или не указывать)`)
+			writeError(w, http.StatusBadRequest, "bad_request", `source: допустимо только "scan", "text", "photo" или "repeat" (или не указывать)`)
 			return
 		}
 		source = req.Source

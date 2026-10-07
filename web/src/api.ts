@@ -442,7 +442,7 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
  *  Тот же эндпоинт, что и у фото: сущность одна, различается только Content-Type.
  *  Квота НЕ списывается — vision не вызывается, платить не за что.
  *  date — локальный день клиента: без него вечерний приём уехал бы во вчера. */
-export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" | "photo" }): Promise<MealResult> {
+export async function createManualMeal(body: { dishes: DishPatch[]; meal_type?: MealType; source?: "scan" | "text" | "photo" | "repeat" }): Promise<MealResult> {
   const res = await apiFetch("/api/meals", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...opHeaders() },

@@ -152,6 +152,47 @@ export function diaryItemToResult(item: MealDiaryItem, mealsLeft: number): MealR
   };
 }
 
+/** Сколько прошлых приёмов предлагать повторить на главном экране. Три — столько
+ *  помещается в строку на телефоне без прокрутки и покрывает «обычный завтрак / обед /
+ *  перекус». */
+export const REPEAT_LIMIT = 3;
+
+/** Подпись приёма в одну строку: названия блюд через запятую. */
+export function mealTitle(item: MealDiaryItem): string {
+  return item.dishes.map((d) => d.name.trim()).filter(Boolean).join(", ");
+}
+
+/** Прошлые приёмы, которые есть смысл повторить одним тапом (backlog п.16, идея Numify
+ *  «сохранить как приём»). Берём свежие сверху; одинаковый набор блюд показываем один раз
+ *  (овсянка каждый день — одна кнопка, а не три одинаковые); пустые и нулевые пропускаем.
+ *  items — первая страница истории, уже отсортированная сервером от новых к старым. */
+export function repeatCandidates(items: MealDiaryItem[], limit = REPEAT_LIMIT): MealDiaryItem[] {
+  const seen = new Set<string>();
+  const out: MealDiaryItem[] = [];
+  for (const it of items) {
+    if (it.status !== "ok" || it.dishes.length === 0 || !(it.total && it.total.kcal > 0)) continue;
+    const key = it.dishes.map((d) => d.name.trim().toLowerCase()).sort().join("|");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Повтор приёма — новый, НЕсохранённый разбор с теми же блюдами: без id (иначе экран
+ *  правил бы старую запись вместо создания новой), без уверенности модели и её ремарки
+ *  (модель в этот раз не вызывалась). Блюда копируются, чтобы правка граммов в повторе
+ *  не задела исходную запись в памяти. */
+export function repeatToResult(item: MealDiaryItem, mealsLeft: number): MealResult {
+  return {
+    status: "ok",
+    dishes: item.dishes.map((d) => ({ ...d, pieces: d.pieces?.map((p) => ({ ...p })) })),
+    total: item.total,
+    meals_left: mealsLeft,
+  };
+}
+
 // Яичное блюдо считается ЧАСТЯМИ ЯЙЦА (желток + белок), не граммовкой (см. бэкенд eggs.go).
 // Целое яйцо = 1 желток + 1 белок; желток = целое − белок (сумма частей = целое). Константы
 // ДУБЛИРУЮТ серверные — фронт считает КБЖУ мгновенно для предпросмотра тотала при тапе, но

@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { pluralDaysRu } from "../plural";
-import type { Me } from "../types";
+import type { Me, MealDiaryItem } from "../types";
+import { mealTitle } from "../meal";
 import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
 import { haptic } from "../telegram";
@@ -26,6 +27,10 @@ interface Props {
    *  его читают с упаковки. */
   onAddManual?: () => void;
   todayHasMeals?: boolean;
+  /** Прошлые приёмы для повтора одним тапом (backlog п.16). Пусто или не задано — блока
+   *  нет: у нового человека повторять нечего, и экран остаётся прежним. */
+  recent?: MealDiaryItem[];
+  onRepeat?: (item: MealDiaryItem) => void;
 }
 
 const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
@@ -36,7 +41,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 const MEAL_HINT = <>Сфотографируйте всю тарелку целиком, сверху. Одного кадра достаточно; добавьте ещё ракурс, только если хотите точнее — все кадры уйдут одним разбором.</>;
 const SCAN_HINT = <>Сфотографируйте список ингредиентов — мелкий текст после слова «Состав» на обороте упаковки. Таблица с белками, жирами и углеводами — другой блок, он не подойдёт.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals, onManageSub }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddManual, todayHasMeals, onManageSub, recent, onRepeat }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -176,6 +181,39 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
 
       {/* Счётчик / бейдж подписки + CTA (или стейджинг при наборе кадров) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* Повтор прошлого приёма (backlog п.16, идея Numify «сохранить как приём»). Люди
+            едят одно и то же чаще, чем кажется, и каждый раз снимать ту же овсянку — лишний
+            повод бросить дневник. Тап открывает тот же экран приёма с теми же блюдами: вес
+            можно поправить, сохраняет человек. Модель не вызывается — квота не тратится,
+            поэтому блок виден и при исчерпанных бесплатных разборах. */}
+        {meal && onRepeat && recent && recent.length > 0 && (
+          <div>
+            <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)", marginBottom: 7 }}>ПОВТОРИТЬ</div>
+            <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+              {recent.map((it) => {
+                const title = mealTitle(it) || "Приём";
+                const kcal = Math.round(it.total?.kcal ?? 0);
+                return (
+                  <button
+                    key={it.id}
+                    type="button"
+                    aria-label={`Повторить: ${title}, ${kcal} ккал`}
+                    onClick={() => {
+                      haptic("light");
+                      onRepeat(it);
+                    }}
+                    style={{ flex: "none", maxWidth: 210, height: 36, padding: "0 12px", display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 18, border: "1px solid var(--border)", background: "var(--bg)", cursor: "pointer", fontFamily: "'Golos Text',sans-serif", fontSize: 13, color: "var(--text)" }}
+                  >
+                    <i className="ti ti-repeat" aria-hidden="true" style={{ fontSize: 15, color: "var(--cal-num)", flex: "none" }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+                    <span style={{ flex: "none", color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>{kcal}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {me.is_subscribed ? (
           <button
             type="button"
@@ -262,6 +300,8 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             было найти, лишь догадавшись зайти в дневник: экран съёмки обещал, что
             единственный способ добавить еду — сфотографировать её.
             Кнопка вторичная: фото остаётся основным путём, руками — запасной.
+            Подпись — «Написать, что съели», а не «Добавить без фото» (п.16): у Numify ввод
+            словами — первый шаг, и человек должен видеть, что фото не обязательно.
             Показываем и при исчерпанной квоте: вписать приём цифрами она не списывает,
             и в этот момент это ценнее всего — иначе пейволл читается как «дневник закрыт». */}
         {meal && onAddManual && (
@@ -275,7 +315,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
               style={{ height: 40, padding: "0 14px", background: "none", border: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, color: "var(--cal-num)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
             >
               <i className="ti ti-pencil-plus" aria-hidden="true" style={{ fontSize: 17 }} />
-              Добавить без фото
+              Написать, что съели
             </button>
             {outOfActive && (
               <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45 }}>

@@ -46,7 +46,7 @@ interface Props {
    *  текстовому описанию (backlog п.2). Тогда экран ведёт себя как после разбора фото —
    *  показывает строку «AI оценил», ремарку модели и плашку «на глаз», — а сохраняет
    *  приём с source="text". По умолчанию у ручного приёма чисел от модели нет. */
-  origin?: "text";
+  origin?: "text" | "repeat";
   /** Открыть мастер расчёта нормы. Передаётся ТОЛЬКО когда профиль не заполнен (решает
    *  App) — тогда под итогом разбора появляется строка «это много или мало?». Не задан —
    *  строки нет: у человека с нормой она бессмысленна. */
@@ -143,6 +143,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   const source = manual ? (origin ?? "manual") : (saved?.source ?? "photo");
   const fromPhoto = source === "photo";
   const fromText = source === "text";
+  // Повтор прошлого приёма: числа из старой записи, модель не звали — значит, ни «AI
+  // распознал», ни уверенности. В дневник уходит с source=repeat (замер п.16).
+  const fromRepeat = source === "repeat";
   const fromModel = fromPhoto || fromText;
 
   // Ручной приём стартует пустым блюдом — КРОМЕ случая, когда блюда уже оценены по
@@ -408,7 +411,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           ...(mealType ? { meal_type: mealType } : {}),
           // source различает в аналитике «вписал цифрами», «описал словами» и «сохранил
           // черновик фото»: второе и третье — платный вызов модели.
-          ...(draft ? { source: "photo" as const } : fromText ? { source: "text" as const } : {}),
+          ...(draft ? { source: "photo" as const } : fromText ? { source: "text" as const } : fromRepeat ? { source: "repeat" as const } : {}),
         });
       } else {
         // Правка сохранённого приёма: PATCH идёт ВСЕГДА при нажатии кнопки, без гейта по

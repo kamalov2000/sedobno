@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -18,7 +18,7 @@ import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
 import ProfileScreen from "./screens/ProfileScreen";
 import { dayCardData, downloadShareCard } from "./shareCard";
-import { diaryItemToResult, scanDiaryPrefill } from "./meal";
+import { diaryItemToResult, repeatCandidates, repeatToResult, scanDiaryPrefill } from "./meal";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, LABEL_NOT_A_LABEL_HINTS, LABEL_WRONG_BLOCK_HINTS } from "./screens/ErrorScreen";
@@ -277,6 +277,9 @@ export default function App() {
   // что и ручной, но с числами от модели и source="text" при сохранении. null — обычный
   // ручной ввод цифрами.
   const [textMeal, setTextMeal] = useState<MealResult | null>(null);
+  // Повтор прошлого приёма (п.16): прошлые приёмы для главной и выбранный для повтора.
+  const [recentMeals, setRecentMeals] = useState<MealDiaryItem[]>([]);
+  const [repeatMeal, setRepeatMeal] = useState<MealResult | null>(null);
   // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
   // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
   const [mealTextPrefill, setMealTextPrefill] = useState("");
@@ -290,6 +293,14 @@ export default function App() {
     if (phase !== "ready") return;
     void getMeals().then((d) => setTodayHasMeals(d.items.length > 0)).catch(() => {});
   }, [phase]);
+
+  // Прошлые приёмы для блока «Повторить» на главном (п.16) — при каждом показе главной в
+  // режиме «Калории»: человек мог только что сохранить новый приём. Best-effort: не
+  // загрузилось — блока просто нет, экран съёмки от этого не зависит.
+  useEffect(() => {
+    if (phase !== "ready" || view !== "home" || mode !== "meal") return;
+    void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
+  }, [phase, view, mode]);
 
   // Остаток бесплатных попыток на главном — с сервера при КАЖДОМ возврате на него.
   //
@@ -383,6 +394,7 @@ export default function App() {
         setView(back);
       } else if (view === "meal_manual" || view === "meal_text") {
         setTextMeal(null);
+        setRepeatMeal(null);
         setView(returnTo ?? "meal_diary");
       } else if (view === "scan_to_diary") {
         // Открывается только с result/not_scored (returnTo проставляется там же) —
@@ -738,6 +750,15 @@ export default function App() {
           }}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
+          recent={recentMeals}
+          onRepeat={(item) => {
+            // Повтор — новый приём на том же экране, что и ручной: правка граммов, тип
+            // приёма, «В дневник». Модель не вызывается, квота не тратится.
+            setTextMeal(null);
+            setRepeatMeal(repeatToResult(item, me?.meals_left ?? -1));
+            setReturnTo("home");
+            setView("meal_manual");
+          }}
           // Тап по бейджу подписки — экран управления (тариф, следующее списание, отмена).
           onManageSub={() => setView("subscription")}
         />
@@ -1008,12 +1029,12 @@ export default function App() {
           и второй их экземпляр разъехался бы с первым на первой же правке. */}
       {view === "meal_manual" && (
         <MealResultScreen
-          result={textMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
+          result={textMeal ?? repeatMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
           onQuotaSpent={applyMealsLeft}
           canShare
           manual
-          origin={textMeal ? "text" : undefined}
+          origin={textMeal ? "text" : repeatMeal ? "repeat" : undefined}
           // Тот же призыв к расчёту нормы, что и после фото: приём, вписанный словами или
           // руками, ставит перед человеком ровно тот же вопрос «а сколько мне можно».
           onOpenWizard={me && !me.nutrition_profile.filled ? () => { setProfileEditStep(null); setWizardReturnTo("meal_manual"); setView("profile_wizard"); } : undefined}
@@ -1023,6 +1044,7 @@ export default function App() {
           onDone={() => {
             setReturnTo(null);
             setTextMeal(null);
+            setRepeatMeal(null);
             setTodayHasMeals(true);
             setView("meal_diary");
           }}
@@ -1031,6 +1053,7 @@ export default function App() {
             // человек уже написал фразу — вероятнее всего он хочет её поправить.
             const back = textMeal ? "meal_text" : (returnTo ?? "meal_diary");
             setTextMeal(null);
+            setRepeatMeal(null);
             if (!textMeal) setReturnTo(null);
             setView(back);
           }}

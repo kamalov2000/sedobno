@@ -45,7 +45,7 @@ export default function ChooseModeScreen({ onPick }: Props) {
             <i className="ti ti-tools-kitchen-2" aria-hidden="true" style={{ fontSize: 20, color: "var(--cal-num)" }} />
             <span style={{ fontSize: 16.5, fontWeight: 600, color: "var(--text)" }}>Еда на тарелке</span>
           </span>
-          <span style={{ fontSize: 13.5, lineHeight: 1.45, color: "var(--text2)" }}>Калории, БЖУ, порция и дневник.</span>
+          <span style={{ fontSize: 13.5, lineHeight: 1.45, color: "var(--text2)" }}>Калории, БЖУ, порция и дневник. Можно и без фото — написать словами.</span>
           <span style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 7, height: 40, padding: "0 16px", borderRadius: 11, background: "var(--cal)", color: "var(--on-cal)", fontSize: 14.5, fontWeight: 500 }}>
             <i className="ti ti-camera" aria-hidden="true" style={{ fontSize: 17 }} />
             Сфотографировать еду

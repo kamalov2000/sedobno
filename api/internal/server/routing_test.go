@@ -87,7 +87,7 @@ func TestScanForHistory(t *testing.T) {
 }
 
 func TestValidManualSource(t *testing.T) {
-	for _, ok := range []string{"scan", "text", "photo"} {
+	for _, ok := range []string{"scan", "text", "photo", "repeat"} {
 		if !validManualSource(ok) {
 			t.Errorf("%q отвергнут", ok)
 		}

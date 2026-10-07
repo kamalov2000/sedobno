@@ -31,18 +31,18 @@ function renderHome(mode: "scan" | "meal", opts: { mealsLeft?: number; onAddManu
 describe("HomeScreen — вход в ручной приём", () => {
   it("в режиме «Калории» есть — добавить еду можно, не заходя в дневник", () => {
     renderHome("meal");
-    expect(screen.getByText("Добавить без фото")).toBeTruthy();
+    expect(screen.getByText("Написать, что съели")).toBeTruthy();
   });
 
   it("в режиме «Состав» его нет: состав придумать нельзя, его читают с упаковки", () => {
     renderHome("scan");
-    expect(screen.queryByText("Добавить без фото")).toBeNull();
+    expect(screen.queryByText("Написать, что съели")).toBeNull();
   });
 
   it("тап зовёт обработчик", () => {
     const onAddManual = vi.fn();
     renderHome("meal", { onAddManual });
-    fireEvent.click(screen.getByText("Добавить без фото"));
+    fireEvent.click(screen.getByText("Написать, что съели"));
     expect(onAddManual).toHaveBeenCalledTimes(1);
   });
 
@@ -51,7 +51,7 @@ describe("HomeScreen — вход в ручной приём", () => {
     // Пейволл показан…
     expect(screen.getByText("Оформить подписку")).toBeTruthy();
     // …но дневник не закрыт: руками вписать по-прежнему можно, и это сказано вслух.
-    expect(screen.getByText("Добавить без фото")).toBeTruthy();
+    expect(screen.getByText("Написать, что съели")).toBeTruthy();
     expect(screen.getByText("Без подписки и без списания разборов")).toBeTruthy();
   });
 
