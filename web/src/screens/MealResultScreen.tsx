@@ -89,7 +89,23 @@ const MANUAL_START_GRAMS = 100;
 // touched — человек правил ЭТУ строку (граммовку, имя, штуки, добавки). APP-08: после
 // правки должно быть видно, откуда взялось число, иначе распознанное и исправленное
 // выглядят одинаково, и доверять нельзя ни тому, ни другому.
-type Draft = MealItem & { manual?: boolean; touched?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number };
+type Draft = MealItem & {
+  manual?: boolean; touched?: boolean; per100Raw?: string; proteinPer100?: number; fatPer100?: number; carbPer100?: number;
+  /** Поля Б/Ж/У на 100 г, как их видит человек (строки ввода). */
+  macroRaw?: { p: string; f: string; c: string };
+  /** БЖУ подставлены справочником, а не введены: правка ккал/100 их сбрасывает (они были
+   *  про тот продукт). Введённые человеком не сбрасываются — это его числа. */
+  macrosFromRef?: boolean;
+};
+
+const MAX_MACRO_PER100 = 100; // граммов макронутриента на 100 г — выше физически некуда
+
+/** Значение поля Б/Ж/У: пусто — неизвестно (undefined), иначе число 0..100 или null (ошибка). */
+function macroField(raw: string): number | undefined | null {
+  if (raw.trim() === "") return undefined;
+  const n = parseNum(raw);
+  return n != null && n >= 0 && n <= MAX_MACRO_PER100 ? n : null;
+}
 
 /** Компактный слепок состава приёма для сравнения «трогали или нет». Сравниваем ровно
  *  то, о чём говорит ремарка модели: блюда, их вес, калорийность и штуки. Служебные поля
@@ -114,11 +130,14 @@ function parseNum(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Ручное блюдо готово к отправке, когда есть имя и осмысленная калорийность. */
+/** Ручное блюдо готово к отправке, когда есть имя, осмысленная калорийность и в полях
+ *  Б/Ж/У нет ошибок (пустое поле — «не знаю», это допустимо). */
 function manualReady(d: Draft): boolean {
   if (!d.manual) return true;
   const per = parseNum(d.per100Raw ?? "");
-  return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100;
+  const m = d.macroRaw;
+  const macrosOk = !m || [m.p, m.f, m.c].every((v) => macroField(v) !== null);
+  return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100 && macrosOk;
 }
 
 /** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
@@ -332,6 +351,8 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             proteinPer100: item.protein_g,
             fatPer100: item.fat_g,
             carbPer100: item.carb_g,
+            macroRaw: { p: String(item.protein_g), f: String(item.fat_g), c: String(item.carb_g) },
+            macrosFromRef: true,
           },
           d.grams,
         );
@@ -342,17 +363,33 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // Имя и ккал/100 правятся раздельно; kcal держим в синхроне, чтобы итог приёма
   // пересчитывался на лету, как у степперов граммовки. Ручная правка ккал/100 сбрасывает
   // подставленные из справочника БЖУ: они относились к тому продукту, а не к новому числу.
-  const setManual = (i: number, patch: { name?: string; per100Raw?: string }) => {
+  const setManual = (i: number, patch: { name?: string; per100Raw?: string; macro?: { key: "p" | "f" | "c"; raw: string } }) => {
     setDishes((ds) =>
       ds.map((d, idx) => {
         if (idx !== i) return d;
-        const next = { ...d, ...patch };
-        // Ручная правка ккал/100 отвязывает блюдо от справочной позиции — БЖУ той позиции
-        // больше не относятся к новому числу, сбрасываем (уйдут только ккал).
-        if (patch.per100Raw !== undefined) {
+        const { macro, ...rest } = patch;
+        const next: Draft = { ...d, ...rest };
+        // Ручная правка ккал/100 отвязывает блюдо от справочной позиции — БЖУ ТОЙ позиции
+        // больше не относятся к новому числу, сбрасываем. Введённые человеком БЖУ — его
+        // числа, их не трогаем.
+        if (patch.per100Raw !== undefined && d.macrosFromRef) {
           next.proteinPer100 = undefined;
           next.fatPer100 = undefined;
           next.carbPer100 = undefined;
+          next.macroRaw = undefined;
+          next.macrosFromRef = false;
+        }
+        if (macro) {
+          const raw = { ...(next.macroRaw ?? { p: "", f: "", c: "" }), [macro.key]: macro.raw };
+          next.macroRaw = raw;
+          next.macrosFromRef = false;
+          const val = (v: string) => {
+            const x = macroField(v);
+            return x == null ? undefined : x;
+          };
+          next.proteinPer100 = val(raw.p);
+          next.fatPer100 = val(raw.f);
+          next.carbPer100 = val(raw.c);
         }
         return manualAt(next, next.grams);
       }),
@@ -386,9 +423,11 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             name: d.name.trim(), grams: d.grams, kcal_per_100: parseNum(d.per100Raw ?? "") ?? 0,
             // БЖУ/100 — только если подставлены из справочника; при ручном вводе с нуля их
             // нет, и сервер посчитает приём по одним ккал (прежнее поведение).
-            ...(d.proteinPer100 != null
-              ? { protein_per_100: d.proteinPer100, fat_per_100: d.fatPer100, carb_per_100: d.carbPer100 }
-              : {}),
+            // Каждое известное значение — по отдельности; неизвестное (пустое поле) не шлём,
+            // и сервер не выдаёт его за достоверный ноль в сверке калорий (kcal_by_user).
+            ...(d.proteinPer100 != null ? { protein_per_100: d.proteinPer100 } : {}),
+            ...(d.fatPer100 != null ? { fat_per_100: d.fatPer100 } : {}),
+            ...(d.carbPer100 != null ? { carb_per_100: d.carbPer100 } : {}),
             ...pieces,
           }
         : {
@@ -400,6 +439,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             // Признак «под вопросом» возвращаем, пока он стоит: снятый флаг — это и есть
             // подтверждение человеком, и присылать его обратно значило бы спросить дважды.
             ...(d.assumed ? { assumed: true } : {}),
+            // Калории ввёл человек — возвращаем признак, иначе правка уже сохранённого
+            // ручного блюда отдала бы его число на «сверку» с неполными БЖУ.
+            ...(d.kcal_by_user ? { kcal_by_user: true } : {}),
             ...pieces,
           };
     });
@@ -694,6 +736,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
                   onPick={(item) => onPickFood(i, item)}
                   onName={(v) => setManual(i, { name: v })}
                   onPer100={(v) => setManual(i, { per100Raw: v })}
+                  onMacro={(key, raw) => setManual(i, { macro: { key, raw } })}
                   onStep={(delta) => stepGrams(i, delta)}
                   onSet={(g) => setGrams(i, g)}
                   onRemove={() => removeDish(i)}
@@ -1084,13 +1127,14 @@ export function reviewHint(dish: { pieces?: { kind: string; count: number }[] })
 // нет ккал/100 г, от которых можно оттолкнуться степпером, — поэтому и имя, и
 // калорийность вводятся руками, на той же decimal-клавиатуре, что и вес.
 function ManualDishCard({
-  dish, suggestions, onPick, onName, onPer100, onStep, onSet, onRemove,
+  dish, suggestions, onPick, onName, onPer100, onMacro, onStep, onSet, onRemove,
 }: {
   dish: Draft;
   suggestions: FoodRefItem[];
   onPick: (item: FoodRefItem) => void;
   onName: (v: string) => void;
   onPer100: (v: string) => void;
+  onMacro: (key: "p" | "f" | "c", raw: string) => void;
   onStep: (delta: number) => void;
   onSet: (grams: number) => void;
   onRemove: () => void;
@@ -1098,6 +1142,7 @@ function ManualDishCard({
   const per = parseNum(dish.per100Raw ?? "");
   const perBad = dish.per100Raw !== "" && (per == null || per < MIN_PER100 || per > MAX_PER100);
   const nameBad = dish.name.trim() === "";
+  const macroBad = !!dish.macroRaw && [dish.macroRaw.p, dish.macroRaw.f, dish.macroRaw.c].some((v) => macroField(v) === null);
 
   // Автоподсказка: подстрочный фильтр справочника по имени. Список прячем, когда поле не в
   // фокусе или единственное совпадение точно равно введённому (значит уже выбрал).
@@ -1183,9 +1228,40 @@ function ManualDishCard({
         </div>
       </div>
 
-      {(nameBad || perBad) && (
+      {/* Б/Ж/У на 100 г — необязательные: кто знает их с упаковки, вписывает; пустое поле —
+          «не знаю», а не ноль. Единица та же, что у калорий, — на 100 г. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+        {(["p", "f", "c"] as const).map((k) => {
+          const label = { p: "Б", f: "Ж", c: "У" }[k];
+          const full = { p: "Белки", f: "Жиры", c: "Углеводы" }[k];
+          const raw = dish.macroRaw?.[k] ?? "";
+          const bad = macroField(raw) === null;
+          return (
+            <label key={k} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 4, border: "1px solid", borderColor: bad ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 10, height: 38, padding: "0 8px", background: "var(--bg)" }}>
+              <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{label}</span>
+              <input
+                className="cal-g"
+                type="text"
+                inputMode="decimal"
+                value={raw}
+                onChange={(e) => onMacro(k, e.target.value)}
+                placeholder="—"
+                aria-label={`${full} на 100 грамм`}
+                style={{ width: "100%", minWidth: 0, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 13.5, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+              />
+              <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)" }}>г</span>
+            </label>
+          );
+        })}
+      </div>
+
+      {(nameBad || perBad || macroBad) && (
         <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 8 }}>
-          {nameBad ? "Впишите название" : `Калорийность — от ${MIN_PER100} до ${MAX_PER100} ккал на 100 г`}
+          {nameBad
+            ? "Впишите название"
+            : perBad
+              ? `Калорийность — от ${MIN_PER100} до ${MAX_PER100} ккал на 100 г`
+              : `Белки, жиры и углеводы — от 0 до ${MAX_MACRO_PER100} г на 100 г; пустое поле — «не знаю»`}
         </div>
       )}
     </div>

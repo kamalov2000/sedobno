@@ -135,3 +135,58 @@ describe("Г. видимая ошибка сохранения и безопас
     await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
   });
 });
+
+describe("В. известные калории и БЖУ вводятся напрямую", () => {
+  const renderManual = () =>
+    render(<MealResultScreen result={{ status: "ok", dishes: [], meals_left: 7 }} manual isSubscribed={false} onDone={noop} onRetake={noop} />);
+  const field = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  it("ккал и только белок на 100 г: уходит белок, неизвестные жиры/углеводы не выдаются за нули", async () => {
+    renderManual();
+    fireEvent.change(screen.getAllByLabelText("Название блюда").at(-1)!, { target: { value: "Батончик" } });
+    fireEvent.change(field("Калорийность на 100 грамм"), { target: { value: "200" } });
+    fireEvent.change(field("Белки на 100 грамм"), { target: { value: "10,5" } });
+    fireEvent.change(screen.getAllByLabelText("Граммовка").at(-1)!, { target: { value: "50" } });
+    fireEvent.click(screen.getByText("В дневник"));
+    await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
+    const d = (createManualMeal.mock.calls[0][0] as { dishes: Record<string, unknown>[] }).dishes[0];
+    expect(d).toMatchObject({ name: "Батончик", grams: 50, kcal_per_100: 200, protein_per_100: 10.5 });
+    expect(d).not.toHaveProperty("fat_per_100");
+    expect(d).not.toHaveProperty("carb_per_100");
+  });
+
+  it("БЖУ из справочника видны в полях; правка ккал/100 их сбрасывает, а введённые руками — нет", async () => {
+    renderManual();
+    const name = screen.getAllByLabelText("Название блюда").at(-1) as HTMLInputElement;
+    fireEvent.focus(name);
+    fireEvent.change(name, { target: { value: "твор" } });
+    fireEvent.pointerDown(await screen.findByText("Творог 5%"));
+    expect(field("Белки на 100 грамм").value).toBe("17.2");
+    fireEvent.change(field("Калорийность на 100 грамм"), { target: { value: "130" } });
+    expect(field("Белки на 100 грамм").value).toBe("");
+
+    fireEvent.change(field("Белки на 100 грамм"), { target: { value: "18" } });
+    fireEvent.change(field("Калорийность на 100 грамм"), { target: { value: "135" } });
+    expect(field("Белки на 100 грамм").value).toBe("18");
+  });
+
+  it("невозможное значение (150 г белка на 100 г) — подсказка и сохранение заблокировано", () => {
+    renderManual();
+    fireEvent.change(screen.getAllByLabelText("Название блюда").at(-1)!, { target: { value: "X" } });
+    fireEvent.change(field("Калорийность на 100 грамм"), { target: { value: "200" } });
+    fireEvent.change(field("Белки на 100 грамм"), { target: { value: "150" } });
+    expect((screen.getByText("В дневник").closest("button") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/от 0 до 100 г на 100 г/)).toBeTruthy();
+  });
+
+  it("правка сохранённого ручного блюда возвращает признак — сервер не переписывает его калории", async () => {
+    const dish = { name: "Батончик", grams: 50, kcal: 100, protein_g: 5.3, fat_g: 0, carb_g: 0, confidence: 1, kcal_by_user: true };
+    const saved = { id: 77, eaten_at: "2026-10-08T10:00:00Z", created_at: "2026-10-08T10:00:00Z", status: "ok" as const, source: "manual", dishes: [dish], total: { kcal: 100, protein_g: 5.3, fat_g: 0, carb_g: 0 }, edited: false };
+    render(<MealResultScreen result={{ status: "ok", id: 77, dishes: [dish], meals_left: -1 }} saved={saved as never} isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.change(screen.getByLabelText("Граммовка"), { target: { value: "100" } });
+    fireEvent.click(screen.getByText("Сохранить изменения"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const d = (patchMeal.mock.calls[0][1] as { dishes: Record<string, unknown>[] }).dishes[0];
+    expect(d).toMatchObject({ grams: 100, kcal: 200, kcal_by_user: true });
+  });
+});

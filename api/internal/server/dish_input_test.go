@@ -83,9 +83,12 @@ func TestParseDishes_ManualWithoutMacros(t *testing.T) {
 	}
 }
 
-// Кривые БЖУ у ручного блюда должны санитизироваться тем же правилом, что и у
-// распознанных: расхождение с ккал больше 30% → пересчёт по 4Б+4У+9Ж.
-func TestParseDishes_ManualInconsistentMacrosSanitized(t *testing.T) {
+// Калории ручного блюда — число человека, и сверка с БЖУ его НЕ переписывает (задание
+// владельца 08.10.2026, 1В). До этого правило было общим с распознанными: расхождение с
+// 4Б+4У+9Ж больше 30% → пересчёт по макросам. Для ручного ввода это подмена: калории
+// с упаковки законно расходятся с формулой (клетчатка, сахарозаменители), а при неполных
+// БЖУ «сверка» давала заведомо неверное число (200 ккал и белок 10 г → 40 ккал).
+func TestParseDishes_ManualKcalKeptDespiteMacros(t *testing.T) {
 	// 100 г, заявлено 100 ккал, но БЖУ дают 4*20 + 4*20 + 9*20 = 340.
 	in := []dishInput{{
 		Name: "спорное", Grams: 100, KcalPer100: f(100),
@@ -99,8 +102,8 @@ func TestParseDishes_ManualInconsistentMacrosSanitized(t *testing.T) {
 	if len(dishes) != 1 {
 		t.Fatalf("ожидалось одно блюдо: %+v", dishes)
 	}
-	if dishes[0].Kcal != 340 {
-		t.Fatalf("ккал = %v, ожидался пересчёт по макросам в 340", dishes[0].Kcal)
+	if dishes[0].Kcal != 100 {
+		t.Fatalf("ккал = %v, ждали введённые человеком 100 — сверка с БЖУ их не трогает", dishes[0].Kcal)
 	}
 }
 
@@ -157,5 +160,25 @@ func TestParseDishes_BoundariesAccepted(t *testing.T) {
 				t.Fatalf("границу отвергли: %s", errMsg)
 			}
 		})
+	}
+}
+
+// Ручное блюдо помечается «калории от человека»; распознанное несёт флаг, только если его
+// прислал клиент (правка сохранённого ручного блюда).
+func TestParseDishes_КалорииЧеловека(t *testing.T) {
+	kcal, p := 200.0, 10.0
+	out, msg := parseDishes([]dishInput{
+		{Name: "батончик", Grams: 50, KcalPer100: &kcal, ProteinPer100: &p},
+		{Name: "суп", Grams: 300, Kcal: 150, ProteinG: 5},
+		{Name: "ручное после правки", Grams: 50, Kcal: 100, ProteinG: 5, KcalByUser: true},
+	})
+	if msg != "" {
+		t.Fatalf("ошибка разбора: %s", msg)
+	}
+	if !out[0].KcalByUser || out[1].KcalByUser || !out[2].KcalByUser {
+		t.Errorf("флаги %v %v %v, ждали true false true", out[0].KcalByUser, out[1].KcalByUser, out[2].KcalByUser)
+	}
+	if out[0].Kcal != 100 || out[0].ProteinG != 5 || out[0].FatG != 0 {
+		t.Errorf("пересчёт на порцию: %+v", out[0])
 	}
 }

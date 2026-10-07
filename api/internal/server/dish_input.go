@@ -70,6 +70,10 @@ type dishInput struct {
 	// Возвращается как есть: снятие флага — это и есть подтверждение тапом, и потерять его
 	// при правке значило бы либо приписать человеку выпитое, либо спрятать подтверждённое.
 	Assumed bool `json:"assumed"`
+
+	// KcalByUser — калорийность ввёл человек: при правке сохранённого ручного блюда клиент
+	// возвращает флаг, и сверка с БЖУ его число не трогает (llm.MealItem.KcalByUser).
+	KcalByUser bool `json:"kcal_by_user"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -100,6 +104,7 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			Confidence: d.Confidence,
 			Pieces:     d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
 			Assumed:    d.Assumed,
+			KcalByUser: d.KcalByUser,
 		}
 
 		switch {
@@ -166,5 +171,6 @@ func manualToPortion(name string, idx int, d dishInput) (llm.MealItem, string) {
 		CarbG:    carb100 * k,
 		// Ручное блюдо не проходило распознавание — метим максимальной уверенностью.
 		Confidence: manualDishConfidence,
+		KcalByUser: true,
 	}, ""
 }

@@ -70,3 +70,18 @@ func TestБезПометкиВсёСчитаетсяКакРаньше(t *testi
 		t.Errorf("итог %v ккал, ждали 300", total.Kcal)
 	}
 }
+
+// Калории, введённые человеком, сверка с БЖУ не переписывает (задание 08.10.2026, 1В):
+// человек знал 200 ккал и только белок — «сверка» по неполным макросам дала бы 40.
+func TestSanitize_КалорииЧеловекаНеПереписываются(t *testing.T) {
+	byUser := llm.MealItem{Name: "батончик", Grams: 100, Kcal: 200, ProteinG: 10, Confidence: 1, KcalByUser: true}
+	byModel := byUser
+	byModel.KcalByUser = false
+	got, _ := SanitizeDishes([]llm.MealItem{byUser, byModel})
+	if got[0].Kcal != 200 {
+		t.Errorf("введённые человеком 200 ккал стали %v", got[0].Kcal)
+	}
+	if got[1].Kcal != 40 {
+		t.Errorf("у оценки модели сверка должна работать как раньше: %v, ждали 40", got[1].Kcal)
+	}
+}

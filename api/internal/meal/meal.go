@@ -398,7 +398,7 @@ func sanitizeDishes(in []llm.MealItem) []llm.MealItem {
 		// оставляем. Этанол в формуле обязателен: он даёт 7 ккал/г и в БЖУ не входит, так
 		// что без него любой алкоголь схлопывался в свои углеводы (см. skipAlcoholRecalc).
 		computed := 4*d.ProteinG + 4*d.CarbG + 9*d.FatG + kcalPerGramAlc*d.AlcoholG
-		if computed > 0 && !skipAlcoholRecalc(d) {
+		if computed > 0 && !skipAlcoholRecalc(d) && !d.KcalByUser {
 			if d.Kcal <= 0 || math.Abs(d.Kcal-computed)/computed > kcalTolerance {
 				d.Kcal = computed
 			}
