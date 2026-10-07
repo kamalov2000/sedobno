@@ -324,3 +324,54 @@ func TestStartGreeting_СрокИзКонстанты(t *testing.T) {
 		}
 	}
 }
+
+// Фото еды прямо в чат (08.10.2026): до этого бот на него молчал, а половина пришедших
+// по рекламе так и не открыла мини-приложение. Теперь — ответ, где разобрать фото, и
+// кнопка «Открыть». Сжатое фото и картинка «файлом» — одно и то же для человека.
+func TestWebhook_PhotoInChatGetsOpenButton(t *testing.T) {
+	for name, msg := range map[string]string{
+		"фото":            `"photo":[{"file_id":"a","width":90,"height":90},{"file_id":"b","width":1280,"height":1280}]`,
+		"картинка файлом": `"document":{"file_id":"c","mime_type":"image/jpeg"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			spy := newTGSpy()
+			cfg := &config.Config{TelegramAPIBase: spy.srv.URL, TelegramBotToken: "T", TelegramWebhookSecret: "sekret", WebAppURL: "https://example.test/app/"}
+			srv := httptest.NewServer(New(cfg, nil, nil, slog.Default()).Router())
+			t.Cleanup(func() { srv.Close(); spy.srv.Close() })
+
+			upd := `{"update_id":9,"message":{"message_id":4,"chat":{"id":42,"type":"private"},"from":{"id":42},` + msg + `}}`
+			resp := postWebhook(t, srv, "sekret", upd)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("статус=%d", resp.StatusCode)
+			}
+			spy.mu.Lock()
+			defer spy.mu.Unlock()
+			if spy.method != "sendMessage" || spy.body["text"] != chatPhotoReply {
+				t.Fatalf("ответ %q / %v, ждали подсказку про приложение", spy.method, spy.body["text"])
+			}
+			raw, _ := json.Marshal(spy.body["reply_markup"])
+			if !strings.Contains(string(raw), `"web_app"`) || !strings.Contains(string(raw), "example.test") {
+				t.Errorf("под ответом нет кнопки открытия приложения: %s", raw)
+			}
+		})
+	}
+}
+
+// Документ, который не картинка (PDF, архив), — не фото еды: старое поведение, молчим.
+func TestIsImageMessage(t *testing.T) {
+	cases := map[string]struct {
+		msg  tgMessage
+		want bool
+	}{
+		"фото":  {tgMessage{Photo: []json.RawMessage{json.RawMessage(`{}`)}}, true},
+		"jpeg":  {tgMessage{Document: &tgDocument{MimeType: "image/jpeg"}}, true},
+		"pdf":   {tgMessage{Document: &tgDocument{MimeType: "application/pdf"}}, false},
+		"текст": {tgMessage{Text: "привет"}, false},
+	}
+	for name, c := range cases {
+		if got := isImageMessage(&c.msg); got != c.want {
+			t.Errorf("%s: %v, ждали %v", name, got, c.want)
+		}
+	}
+}

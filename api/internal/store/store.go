@@ -73,6 +73,14 @@ RETURNING id, telegram_id, COALESCE(username, ''), free_scans_used, free_meals_u
 	return u, err
 }
 
+// UserIDByTelegramID — внутренний id по telegram_id. Нужен вебхуку бота, где известен
+// только отправитель сообщения (замер фото, присланных в чат). Нет такого — pgx.ErrNoRows.
+func (s *Store) UserIDByTelegramID(ctx context.Context, tgID int64) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE telegram_id = $1`, tgID).Scan(&id)
+	return id, err
+}
+
 // GetUserByID читает пользователя по внутреннему id (пре-чек лимита в /api/scan).
 func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	const q = `

@@ -36,6 +36,22 @@ type tgMessage struct {
 	Chat              *tgChat              `json:"chat"`
 	Text              string               `json:"text"`
 	SuccessfulPayment *tgSuccessfulPayment `json:"successful_payment"`
+	// Photo/Document/Caption — картинка, присланная прямо в чат бота. Содержимое (file_id
+	// размеров) пока не читаем: разбор живёт в мини-приложении, здесь важен сам факт фото.
+	Photo    []json.RawMessage `json:"photo"`
+	Document *tgDocument       `json:"document"`
+	Caption  string            `json:"caption"`
+}
+
+// tgDocument — файл в сообщении. Картинку, отправленную «без сжатия», Telegram присылает
+// документом, а не photo — человек при этом прислал то же самое фото еды.
+type tgDocument struct {
+	MimeType string `json:"mime_type"`
+}
+
+// isImageMessage — в сообщении картинка: сжатое фото или файл-изображение.
+func isImageMessage(msg *tgMessage) bool {
+	return len(msg.Photo) > 0 || (msg.Document != nil && strings.HasPrefix(msg.Document.MimeType, "image/"))
 }
 
 type tgUser struct {
@@ -105,6 +121,11 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// уехало бы в поддержку как обращение.
 	case upd.Message != nil && isPrivateChat(upd.Message) && isStopDigestCommand(upd.Message.Text):
 		s.handleStopDigest(w, r.Context(), upd.Message)
+	// Фото еды прямо в чат — самое естественное действие в Telegram, и до 08.10.2026 бот на
+	// него молчал. Половина пришедших по рекламе (40 из 79, волна tg_ovz) так и не открыла
+	// мини-приложение — молчание бота на фото было для них тупиком.
+	case upd.Message != nil && isPrivateChat(upd.Message) && isImageMessage(upd.Message):
+		s.handleChatPhoto(w, r.Context(), upd.Message)
 	case upd.Message != nil && isPrivateChat(upd.Message) && strings.TrimSpace(upd.Message.Text) != "":
 		s.handleText(w, r.Context(), upd.Message)
 	default:
@@ -185,7 +206,18 @@ const supportButtonText = "✍️ Написать в поддержку"
 // supportHint — ответ на произвольное сообщение в личку. Раньше в поддержку улетал
 // ЛЮБОЙ текст (шум); теперь — только осознанное обращение. Не молчим и не заставляем
 // вспоминать команду: под сообщением сразу кнопка входа в поддержку (§8).
-const supportHint = "Не понял сообщение. Если это вопрос или проблема — нажмите кнопку ниже, и я передам разработчику."
+const supportHint = "Записать еду словами можно в приложении: «Открыть» → «Написать, что съели». " +
+	"Если это вопрос или проблема — нажмите «Написать в поддержку», и я передам разработчику."
+
+// chatPhotoReply — ответ на фото, присланное прямо в чат. Разбор фото пока живёт только в
+// мини-приложении (там можно поправить вес и сохранить приём), поэтому честно говорим, где
+// он, и даём кнопку туда же. Без давления и без «вы сделали не так».
+const chatPhotoReply = "Фото разбираю в приложении — там можно поправить вес и сохранить приём в дневник.\n\n" +
+	"Нажмите «Открыть» → «Сфотографировать еду» и выберите это фото из галереи."
+
+// chatPhotoNoCaption — тело обращения, когда в режиме поддержки прислали фото без подписи:
+// само фото бот не пересылает, и владелец должен знать, что оно было.
+const chatPhotoNoCaption = "(прислал фото без подписи)"
 
 // supportPrompt — приглашение прислать обращение после входа в режим поддержки
 // (кнопка или голый /support). Дальше сработает supportState.consume.
@@ -251,8 +283,41 @@ func (s *Server) handleText(w http.ResponseWriter, ctx context.Context, msg *tgM
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportHint, tg.CallbackButton(supportButtonText, callbackSupport)); err != nil {
+	if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportHint, tg.StartMarkup("Открыть", s.cfg.WebAppURL, supportButtonText, callbackSupport)); err != nil {
 		s.log.Warn("webhook: подсказка про поддержку", "err", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleChatPhoto — картинка в личку боту. В режиме поддержки это почти всегда скриншот
+// проблемы: передаём владельцу подпись (или отметку, что фото было), как обычное обращение.
+// Иначе — фото еды: отвечаем, где его разобрать, с кнопкой открытия приложения.
+func (s *Server) handleChatPhoto(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
+	if msg.From == nil || msg.Chat == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if s.support.consume(msg.From.ID) {
+		body := strings.TrimSpace(msg.Caption)
+		if body == "" {
+			body = chatPhotoNoCaption
+		}
+		s.forwardSupport(ctx, msg, body)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := s.tg.SendMessage(ctx, msg.Chat.ID, chatPhotoReply, tg.StartMarkup("Открыть", s.cfg.WebAppURL, supportButtonText, callbackSupport)); err != nil {
+		s.log.Warn("webhook: ответ на фото в чате", "err", err)
+	}
+	// Замер: сколько людей шлют фото в чат вместо приложения — от этого зависит, делать ли
+	// разбор прямо в чате (backlog п.17). Пользователя по telegram_id без БД-записи не
+	// заводим: фото до /start почти невозможно, а событие без user_id всё равно считается.
+	if s.pool != nil {
+		var uid *int64
+		if id, err := s.store.UserIDByTelegramID(ctx, msg.From.ID); err == nil {
+			uid = &id
+		}
+		_ = s.store.InsertEvent(ctx, uid, "chat_photo", map[string]any{"document": msg.Document != nil})
 	}
 	w.WriteHeader(http.StatusOK)
 }
