@@ -1,29 +1,61 @@
 // Чистые помощники модуля калорий (feature/calories): клиентский пересчёт КБЖУ при
 // правке граммовки и маппинг статуса разбора на экран. Без React — тестируется юнит-тестом.
 
-import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType, ScanNutrition } from "./types";
+import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType, ScaleBase, ScanNutrition } from "./types";
 
 export function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
 
-/** Пропорциональный пересчёт КБЖУ блюда при изменении граммовки: все макросы
- *  масштабируются на newGrams/grams. Если исходная граммовка 0 — масштабировать не от
- *  чего, меняем только граммы (макросы остаются). Отрицательные граммы обрезаются в 0. */
+/** Пропорциональный пересчёт КБЖУ блюда при изменении граммовки.
+ *
+ *  Пересчёт идёт от БАЗЫ (scale_base) — чисел блюда при последнем ненулевом весе, — а не
+ *  от текущих значений. Раньше база была текущей: «300 г → 0 → 300 г» обнулял калории
+ *  навсегда, а цепочка правок копила ошибку округления (задание владельца 08.10.2026).
+ *  0 г — допустимое промежуточное состояние ввода: числа становятся нулями, база остаётся,
+ *  и следующий ненулевой вес их восстанавливает. Сохранить 0 г экран не даёт.
+ *
+ *  База устарела (числа блюда поменяли мимо этой функции — яйца, справочник, ручной
+ *  ввод) — строим новую из текущих значений. Нет ни базы, ни веса — масштабировать не от
+ *  чего, меняем только граммы. Отрицательные граммы обрезаются в 0. */
 export function scaleDish(dish: MealItem, newGrams: number): MealItem {
   const g = Math.max(0, newGrams);
-  if (dish.grams <= 0) return { ...dish, grams: round1(g) };
-  const k = g / dish.grams;
+  const base = freshBase(dish);
+  if (!base) return { ...dish, grams: round1(g) };
+  const k = g / base.grams;
   return {
     ...dish,
     grams: round1(g),
-    kcal: round1(dish.kcal * k),
-    protein_g: round1(dish.protein_g * k),
-    fat_g: round1(dish.fat_g * k),
-    carb_g: round1(dish.carb_g * k),
+    kcal: round1(base.kcal * k),
+    protein_g: round1(base.protein_g * k),
+    fat_g: round1(base.fat_g * k),
+    carb_g: round1(base.carb_g * k),
     // Спирт масштабируется вместе с остальными: половина бокала — половина этанола.
-    ...(dish.alcohol_g ? { alcohol_g: round1(dish.alcohol_g * k) } : {}),
+    ...(base.alcohol_g ? { alcohol_g: round1(base.alcohol_g * k) } : {}),
+    scale_base: base,
   };
+}
+
+/** Действующая база пересчёта: сохранённая, если текущие числа блюда из неё и получены,
+ *  иначе — снимок текущих (при ненулевом весе). */
+function freshBase(dish: MealItem): ScaleBase | undefined {
+  const b = dish.scale_base;
+  if (b && b.grams > 0) {
+    if (dish.grams <= 0) return b; // 0 г — числа обнулены пересчётом, база настоящая
+    const expect = round1((b.kcal * dish.grams) / b.grams);
+    if (Math.abs(expect - dish.kcal) <= 0.15) return b;
+  }
+  if (dish.grams <= 0) return undefined;
+  return {
+    grams: dish.grams, kcal: dish.kcal, protein_g: dish.protein_g, fat_g: dish.fat_g, carb_g: dish.carb_g,
+    ...(dish.alcohol_g ? { alcohol_g: dish.alcohol_g } : {}),
+  };
+}
+
+/** Блюдо без веса — сохранить нельзя: 0 г означает «не ел». Исключения — блюда, которые
+ *  считаются штуками (яйца) или целиком состоят из счётных добавок: у них вес выводится. */
+export function zeroGrams(d: MealItem): boolean {
+  return d.grams <= 0 && d.dish_kind !== "eggs" && !(d.pieces && d.pieces.length > 0);
 }
 
 /** Сумма КБЖУ по блюдам — клиентский предпросмотр итога (сервер пересчитает при PATCH).

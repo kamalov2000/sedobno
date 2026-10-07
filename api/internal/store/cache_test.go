@@ -294,3 +294,38 @@ func agePastTTL(t *testing.T, ctx context.Context, sha string, age time.Duration
 		t.Fatalf("состаривание записи: %v", err)
 	}
 }
+
+// Ключ идемпотентности сохранения (миграция 0028): повтор с тем же ключом не создаёт
+// вторую запись и возвращает id первой; другой ключ и запись без ключа — новые строки.
+func TestInsertMealOnce_ПовторСТемЖеКлючом(t *testing.T) {
+	s, ctx := newStore(t)
+	uid := mkUser(t, s, ctx, 7020)
+	kcal := 300.0
+	row := MealRow{UserID: uid, Status: "ok", Source: "manual", Items: []byte(`[]`), Kcal: &kcal, ClientKey: "key-abc-123"}
+
+	id1, created1, err := s.InsertMealOnce(ctx, row)
+	if err != nil || !created1 {
+		t.Fatalf("первая запись: id=%d created=%v err=%v", id1, created1, err)
+	}
+	id2, created2, err := s.InsertMealOnce(ctx, row)
+	if err != nil || created2 || id2 != id1 {
+		t.Fatalf("повтор: id=%d created=%v err=%v, ждали id=%d и created=false", id2, created2, err, id1)
+	}
+	other := row
+	other.ClientKey = "key-other-456"
+	if _, created, _ := s.InsertMealOnce(ctx, other); !created {
+		t.Error("другой ключ должен создать новую запись")
+	}
+	noKey := row
+	noKey.ClientKey = ""
+	for i := 0; i < 2; i++ {
+		if _, created, _ := s.InsertMealOnce(ctx, noKey); !created {
+			t.Error("без ключа запись создаётся всегда")
+		}
+	}
+	var n int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM meals WHERE user_id = $1`, uid).Scan(&n)
+	if n != 4 {
+		t.Errorf("строк %d, ждали 4", n)
+	}
+}

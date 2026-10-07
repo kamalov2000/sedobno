@@ -376,6 +376,19 @@ func mealRejectMessage(status string) string {
 // validManualSource — источники, которые клиент вправе указать у приёма, сохраняемого
 // кнопкой: из скана, из текстового разбора и из фото-черновика (переброс или смешанный
 // кадр — модель уже посчитала, квота уже списана, сохраняет человек).
+// validClientKey — ключ идемпотентности от клиента: 8–64 символа [a-z0-9-] (UUID подходит).
+func validClientKey(v string) bool {
+	if len(v) < 8 || len(v) > 64 {
+		return false
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 func validManualSource(v string) bool {
 	return v == mealSourceScan || v == mealSourceText || v == mealSourcePhoto || v == mealSourceRepeat
 }
@@ -1120,6 +1133,9 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		// POST /meals/text), mealSourceRepeat (повтор прошлого приёма одним тапом). Пусто —
 		// обычный ручной ввод (mealSourceManual, как было).
 		Source string `json:"source"`
+		// ClientKey — ключ одного сохранения с экрана: повтор после потерянного ответа с тем
+		// же ключом вернёт уже созданный приём, а не второй (миграция 0028).
+		ClientKey string `json:"client_key"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "ожидается JSON {dishes, meal_type, date}")
@@ -1164,15 +1180,34 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		}
 	}
 
+	if req.ClientKey != "" && !validClientKey(req.ClientKey) {
+		writeError(w, http.StatusBadRequest, "bad_request", "client_key: 8–64 символа: латиница, цифры, дефис")
+		return
+	}
+
 	itemsJSON, _ := json.Marshal(dishes)
-	id, err := s.store.InsertMeal(ctx, store.MealRow{
+	id, created, err := s.store.InsertMealOnce(ctx, store.MealRow{
 		UserID: userID, Status: meal.StatusOK, Source: source, Items: itemsJSON,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
-		MealType: req.MealType, EatenAt: req.EatenAt, LocalDate: localDate,
+		MealType: req.MealType, EatenAt: req.EatenAt, LocalDate: localDate, ClientKey: req.ClientKey,
 	})
 	if err != nil {
 		s.log.Error("meal: сохранение ручного приёма", "err", err, "user", userID)
 		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
+		return
+	}
+	if !created {
+		// Повтор того же сохранения (ответ на первое потерялся): приём уже есть — отдаём его
+		// как есть, без второй записи и без вторых событий в воронке.
+		existing, gerr := s.store.GetMeal(ctx, id)
+		if gerr != nil {
+			s.log.Error("meal: чтение уже сохранённого приёма", "err", gerr, "user", userID)
+			writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
+			return
+		}
+		item := toDiaryItem(existing)
+		u, _ := s.store.GetUserByID(ctx, userID)
+		writeJSON(w, http.StatusOK, mealResponse{Status: meal.StatusOK, ID: id, Dishes: item.Dishes, Total: item.Total, MealsLeft: s.remainingMeals(u)})
 		return
 	}
 	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes), "source": source})

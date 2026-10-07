@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
+import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
 import EggCounter from "../components/EggCounter";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
@@ -121,6 +121,29 @@ function manualReady(d: Draft): boolean {
   return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100;
 }
 
+/** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
+function newSaveKey(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 10)).join("-");
+}
+
+/** Ручное блюдо при заданном весе: ккал — из поля «на 100 г», Б/Ж/У — из справочника,
+ *  если продукт оттуда (иначе неизвестны — нули, как и раньше; на сервер уходят только ккал). */
+function manualAt(d: Draft, grams: number): Draft {
+  const per = parseNum(d.per100Raw ?? "");
+  const at = (v: number | undefined) => (v != null ? round1((v * grams) / 100) : 0);
+  return {
+    ...d,
+    grams,
+    kcal: per != null ? Math.round((per * grams) / 100) : 0,
+    protein_g: at(d.proteinPer100),
+    fat_g: at(d.fatPer100),
+    carb_g: at(d.carbPer100),
+    scale_base: undefined,
+  };
+}
+
 /** Пустое ручное блюдо. Ручной приём стартует с одного такого: пустой экран с одной
  *  кнопкой «Добавить блюдо» — лишний тап на пути, который и так запасной. */
 function blankManual(): Draft {
@@ -199,12 +222,16 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   const lowConfidence = fromModel && (result.confidence ?? 1) < LOW_CONFIDENCE;
   const emptied = dishes.length === 0;
 
+  // Ручное блюдо считается от своих значений на 100 г (ккал — из поля, БЖУ — из
+  // справочника), распознанное — от базы пересчёта (scaleDish). Иначе у продукта из
+  // справочника калории были, а Б/Ж/У порции оставались нулями до сохранения.
+  const regram = (d: Draft, grams: number): Draft => (d.manual ? manualAt(d, Math.max(0, grams)) : scaleDish(d, grams));
   const setGrams = (i: number, grams: number) => {
     if (!Number.isFinite(grams)) return;
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...scaleDish(d, grams), touched: true } : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...regram(d, grams), touched: true } : d)));
   };
   const stepGrams = (i: number, delta: number) =>
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...scaleDish(d, d.grams + delta), touched: true } : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...regram(d, d.grams + delta), touched: true } : d)));
   const removeDish = (i: number) => {
     haptic("light");
     setDishes((ds) => ds.filter((_, idx) => idx !== i));
@@ -296,16 +323,18 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
     setDishes((ds) =>
       ds.map((d, idx) => {
         if (idx !== i) return d;
-        return {
-          ...d,
-          manual: true,
-          name: item.name,
-          per100Raw: String(item.kcal_per_100),
-          proteinPer100: item.protein_g,
-          fatPer100: item.fat_g,
-          carbPer100: item.carb_g,
-          kcal: Math.round((item.kcal_per_100 * d.grams) / 100),
-        };
+        return manualAt(
+          {
+            ...d,
+            manual: true,
+            name: item.name,
+            per100Raw: String(item.kcal_per_100),
+            proteinPer100: item.protein_g,
+            fatPer100: item.fat_g,
+            carbPer100: item.carb_g,
+          },
+          d.grams,
+        );
       }),
     );
   };
@@ -325,9 +354,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           next.fatPer100 = undefined;
           next.carbPer100 = undefined;
         }
-        const per = parseNum(next.per100Raw ?? "");
-        next.kcal = per != null ? Math.round((per * next.grams) / 100) : 0;
-        return next;
+        return manualAt(next, next.grams);
       }),
     );
   };
@@ -338,7 +365,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // То же правило и для переименованных распознанных: сервер завернёт пустое имя
   // (parseDishes), поэтому до запроса дело доводить не за чем.
   const nameMissing = dishes.some((d) => d.name.trim() === "");
-  const blocked = emptied || manualPending || nameMissing;
+  // 0 г — временное состояние поля, а не порция: сохранять «съел ноль граммов» нельзя.
+  const weightMissing = dishes.some(zeroGrams);
+  const blocked = emptied || manualPending || nameMissing || weightMissing;
 
   // Ручные блюда уходят на 100 г — сервер пересчитает на порцию сам и прогонит через ту
   // же санитизацию, что и распознанные. Распознанные отправляем как есть.
@@ -391,22 +420,38 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
       notify("success");
       onDone();
     } catch {
+      // Отказ виден словами, а не только вибрацией; всё введённое остаётся на экране.
       notify("error");
+      setSaveError(true);
       setBusy(false);
+    } finally {
+      saving.current = false;
     }
   };
 
+  // Ключ ОДНОГО сохранения: заводится при первой попытке и живёт при повторах, чтобы
+  // повтор после потерянного ответа вернул уже созданный приём, а не создал второй (0028).
+  const saveKey = useRef("");
+  // Двойное нажатие: состояние busy обновляется не мгновенно, и второй клик в том же
+  // кадре видел бы его ещё false. Ссылка закрывает окно сразу.
+  const saving = useRef(false);
+  const [saveError, setSaveError] = useState(false);
+
   const onSave = async () => {
-    if (busy || blocked) return;
+    if (busy || blocked || saving.current) return;
     if (!manual && !draft && id == null) return;
     if (!manual && !draft && legacyAddons.length > 0) {
       setAskAssumed(true);
       return;
     }
+    if (!saveKey.current) saveKey.current = newSaveKey();
+    saving.current = true;
+    setSaveError(false);
     setBusy(true);
     try {
       if (manual || draft) {
         await createManualMeal({
+          client_key: saveKey.current,
           dishes: toPatch(dishes),
           ...(mealType ? { meal_type: mealType } : {}),
           // source различает в аналитике «вписал цифрами», «описал словами» и «сохранил
@@ -424,8 +469,12 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
       notify("success");
       onDone();
     } catch {
+      // Отказ виден словами, а не только вибрацией; всё введённое остаётся на экране.
       notify("error");
+      setSaveError(true);
       setBusy(false);
+    } finally {
+      saving.current = false;
     }
   };
 
@@ -759,7 +808,19 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             еду словами, а в дневник у него лёг один приём: он жал «Отправить»/«В историю»
             и уходил, потеряв восемь расчётов. Потом написал, что в приложении его часов
             «нужно писать — и всё хорошо и понятно». Он прав: у нас был невидимый шаг. */}
-        {!isSaved && (
+        {saveError && (
+          <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 8, padding: "9px 11px", borderRadius: 10, background: "var(--bg-soft)", border: "1px solid var(--border)", fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
+            <i className="ti ti-wifi-off" aria-hidden="true" style={{ fontSize: 15, flex: "none", marginTop: 1 }} />
+            <span>Не получилось сохранить — приём пока не в дневнике. Проверьте связь и нажмите кнопку ещё раз: всё введённое на месте, второй записи не будет.</span>
+          </div>
+        )}
+        {weightMissing && (
+          <div role="status" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, fontSize: 12.5, color: "var(--text2)", lineHeight: 1.4 }}>
+            <i className="ti ti-scale" aria-hidden="true" style={{ fontSize: 15, flex: "none" }} />
+            <span>Укажите вес — блюдо с 0 г сохранить нельзя. Калорийность вернётся, как только вес станет больше нуля.</span>
+          </div>
+        )}
+        {!isSaved && !weightMissing && (
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, fontSize: 12.5, color: "var(--text3)", lineHeight: 1.4 }}>
             <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: 15, flex: "none" }} />
             <span>Пока не в дневнике — нажмите «В дневник», чтобы сохранить</span>
