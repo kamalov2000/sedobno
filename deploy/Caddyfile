@@ -56,3 +56,10 @@
 		redir /app 302
 	}
 }
+
+# Астра, dev-стенд (@AstraDialogDevBot): отдельный compose-проект /opt/astra-dev (project astra-dev),
+# web подключён к сети sostav_default; адрес - имя контейнера (уникально для стенда). Блоки «Съедобно» выше не менялись.
+astra-dev.sedobno-pay.ru {
+	encode gzip
+	reverse_proxy astra-dev-astra-web-1:80
+}
