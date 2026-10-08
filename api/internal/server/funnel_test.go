@@ -76,7 +76,7 @@ func TestOpIDFrom_ТолькоИзСвоегоЗаголовка(t *testing.T) {
 // Клиент шлёт события сам, поэтому имя проверяется по списку: свободное имя однажды
 // расщепило бы воронку на «upload_started» и «uploadStarted» без единого предупреждения.
 func TestAppFunnelEvents_СервернымИменамТутНеМесто(t *testing.T) {
-	for _, want := range []string{"app_opened", "mode_chosen", "photo_picked", "upload_started"} {
+	for _, want := range []string{"app_opened", "mode_chosen", "photo_picked", "upload_started", "text_input_started"} {
 		if _, ok := appFunnelEvents[want]; !ok {
 			t.Errorf("шаг %q выпал из белого списка — воронка порвётся молча", want)
 		}
@@ -100,6 +100,15 @@ func TestAppEventProps(t *testing.T) {
 	}
 	if got := appEventProps(appEventRequest{Name: "app_opened"}); got != nil {
 		t.Errorf("пустое событие получило свойства: %+v", got)
+	}
+	// Воронка первого запуска (08.10.2026): открыто по умолчанию, ввод напечатан или взят пример.
+	for _, c := range []struct{ name, entry string }{
+		{"app_opened", "default"}, {"text_input_started", "typed"}, {"text_input_started", "example"},
+	} {
+		got := appEventProps(appEventRequest{Name: c.name, Mode: "meal", Entry: c.entry})
+		if got["entry"] != c.entry || got["mode"] != "meal" {
+			t.Errorf("%s/%s: свойства %+v", c.name, c.entry, got)
+		}
 	}
 }
 

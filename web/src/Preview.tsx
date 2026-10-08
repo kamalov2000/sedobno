@@ -195,7 +195,7 @@ const mockTextMeal: MealResult = {
 
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · калории · новый пользователь", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} today={{ kcal: 0, count: 0 }} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · первый запуск (фото или словами)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} today={{ kcal: 0, count: 0 }} firstRun /> },
   { title: "01 · ГЛАВНЫЙ · калории · возвращается (итог дня, повтор)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} todayHasMeals today={{ kcal: 780, count: 2 }} recent={PREVIEW_RECENT} onRepeat={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },

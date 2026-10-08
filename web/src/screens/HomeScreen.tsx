@@ -5,6 +5,7 @@ import AddMealActions from "../components/AddMealActions";
 import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
 import { haptic } from "../telegram";
+import { FIRST_RUN_EXAMPLES } from "../meal";
 
 // Экран 01 · ГЛАВНЫЙ. Стиль master (заголовок + рамка-иллюстрация + прямоугольный
 // PhotoStager + счётчик) с добавлением сегмента «Состав / Калории», иконки дневника и
@@ -24,7 +25,7 @@ interface Props {
   onManageSub: () => void;
   /** Добавить приём словами (модель оценит). Только в «Калориях»: у сканера состава аналога
    *  нет — состав придумать нельзя, его читают с упаковки. */
-  onAddText?: () => void;
+  onAddText?: (example?: string) => void;
   /** Вписать приём цифрами — без модели и без списания. */
   onAddManual?: () => void;
   todayHasMeals?: boolean;
@@ -34,6 +35,9 @@ interface Props {
    *  нет: у нового человека повторять нечего, и экран остаётся прежним. */
   recent?: MealDiaryItem[];
   onRepeat?: (item: MealDiaryItem) => void;
+  /** Записей ещё нет ни одной. Главная показывает два основных пути — фото и описание
+   *  словами — с примерами; ручной ввод цифрами уходит во второстепенную ссылку. */
+  firstRun?: boolean;
 }
 
 const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
@@ -44,7 +48,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 const MEAL_HINT = <>Сфотографируйте всю тарелку целиком, сверху. Одного кадра достаточно; добавьте ещё ракурс, только если хотите точнее — все кадры уйдут одним разбором.</>;
 const SCAN_HINT = <>Сфотографируйте список ингредиентов — мелкий текст после слова «Состав» на обороте упаковки. Таблица с белками, жирами и углеводами — другой блок, он не подойдёт.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, onRepeat }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, onRepeat, firstRun }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -289,9 +293,11 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             фото не обязательно (задание владельца 08.10.2026). Показываем и при исчерпанной
             квоте: «Вручную» и «Повторить» её не тратят, а «Написать» в этом случае
             приведёт к понятному пейволлу. */}
-        {meal && onAddText && onAddManual && (
-          <AddMealActions onText={onAddText} onManual={onAddManual} recent={recent} onRepeat={onRepeat} />
-        )}
+        {meal && onAddText && onAddManual && (firstRun && !outOfActive ? (
+          <FirstRunText onText={onAddText} onManual={onAddManual} />
+        ) : (
+          <AddMealActions onText={() => onAddText()} onManual={onAddManual} recent={recent} onRepeat={onRepeat} />
+        ))}
         {meal && outOfActive && (
           <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45, marginTop: -4 }}>
             «Вручную» и «Повторить» — без подписки и без списания разборов
@@ -305,6 +311,55 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           <LegalLinks items={["about", "oferta", "privacy"]} />
         </div>
       )}
+    </div>
+  );
+}
+
+// Первый запуск (решение владельца 08.10.2026): до первой записи у человека два основных
+// пути — сфотографировать еду (кнопка выше) или описать словами. Замер до правки: из
+// открывших приложение до первого действия доходила меньшая часть, а начавшие записывали
+// приём в среднем за минуту — терялись ДО начала, а не в процессе.
+//
+// Примеры только подставляют текст в поле экрана описания: ничего не отправляется и квота
+// не тратится, пока человек сам не нажмёт «Оценить». «Вручную» — тихой ссылкой: это путь
+// для тех, кто знает цифры, а не первый шаг новичка.
+function FirstRunText({ onText, onManual }: { onText: (example?: string) => void; onManual: () => void }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <button
+        type="button"
+        onClick={() => {
+          haptic("light");
+          onText();
+        }}
+        style={{ width: "100%", minHeight: 52, borderRadius: 14, border: "1.5px solid var(--cal-border)", background: "var(--bg)", color: "var(--text)", fontFamily: "'Golos Text',sans-serif", fontSize: 15.5, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer" }}
+      >
+        <i className="ti ti-message-2" aria-hidden="true" style={{ fontSize: 20, color: "var(--cal-num)" }} />
+        Описать словами
+      </button>
+      <div role="group" aria-label="Примеры описания" style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+        {FIRST_RUN_EXAMPLES.map((ex) => (
+          <button
+            key={ex}
+            type="button"
+            aria-label={`Подставить пример: ${ex}`}
+            onClick={() => {
+              haptic("light");
+              onText(ex);
+            }}
+            style={{ minHeight: 32, padding: "5px 12px", borderRadius: 16, border: "1px solid var(--border)", background: "none", color: "var(--text2)", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, cursor: "pointer", maxWidth: "100%" }}
+          >
+            {ex}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={onManual}
+        style={{ alignSelf: "center", background: "none", border: "none", padding: "6px 8px", fontFamily: "'Golos Text',sans-serif", fontSize: 13, color: "var(--text3)", cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}
+      >
+        Знаю калории — ввести цифрами
+      </button>
     </div>
   );
 }

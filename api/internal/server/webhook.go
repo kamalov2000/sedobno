@@ -41,6 +41,29 @@ type tgMessage struct {
 	Photo    []json.RawMessage `json:"photo"`
 	Document *tgDocument       `json:"document"`
 	Caption  string            `json:"caption"`
+	// Голос, аудиофайл, видеокружок. Читаем только длительность — сам файл не скачиваем и
+	// не храним: это замер спроса на голосовой ввод, а не распознавание (08.10.2026).
+	Voice     *tgMedia `json:"voice"`
+	Audio     *tgMedia `json:"audio"`
+	VideoNote *tgMedia `json:"video_note"`
+}
+
+// tgMedia — общее у голосового, аудио и видеокружка: длительность в секундах.
+type tgMedia struct {
+	Duration int `json:"duration"`
+}
+
+// voiceKind — вид голосового сообщения или "" для всего остального.
+func voiceKind(msg *tgMessage) string {
+	switch {
+	case msg.Voice != nil:
+		return "voice"
+	case msg.VideoNote != nil:
+		return "video_note"
+	case msg.Audio != nil:
+		return "audio"
+	}
+	return ""
 }
 
 // tgDocument — файл в сообщении. Картинку, отправленную «без сжатия», Telegram присылает
@@ -126,6 +149,10 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// мини-приложение — молчание бота на фото было для них тупиком.
 	case upd.Message != nil && isPrivateChat(upd.Message) && isImageMessage(upd.Message):
 		s.handleChatPhoto(w, r.Context(), upd.Message)
+	// Голосовое — замер спроса на голосовой ввод (решение владельца 08.10.2026): понятный
+	// ответ и событие, без распознавания и без хранения аудио.
+	case upd.Message != nil && isPrivateChat(upd.Message) && voiceKind(upd.Message) != "":
+		s.handleChatVoice(w, r.Context(), upd.Message)
 	case upd.Message != nil && isPrivateChat(upd.Message) && strings.TrimSpace(upd.Message.Text) != "":
 		s.handleText(w, r.Context(), upd.Message)
 	default:
@@ -214,6 +241,15 @@ const supportHint = "Записать еду словами можно в при
 // он, и даём кнопку туда же. Без давления и без «вы сделали не так».
 const chatPhotoReply = "Фото разбираю в приложении — там можно поправить вес и сохранить приём в дневник.\n\n" +
 	"Нажмите «Открыть» → «Сфотографировать еду» и выберите это фото из галереи."
+
+// chatVoiceReply — ответ на голосовое вне режима поддержки. Честно: голос не разбираем, и
+// сразу путь, которым можно записать еду сейчас.
+const chatVoiceReply = "Голосовые сообщения я пока не разбираю.\n\n" +
+	"Нажмите «Открыть» — там можно сфотографировать тарелку или описать еду словами."
+
+// supportVoiceAsk — голосовое в режиме поддержки. Бот голос не пересылает, поэтому окно
+// поддержки НЕ гасится: следующее текстовое сообщение уйдёт как обращение.
+const supportVoiceAsk = "Голосовые сообщения я не пересылаю — напишите, пожалуйста, текстом, и я передам разработчику."
 
 // chatPhotoNoCaption — тело обращения, когда в режиме поддержки прислали фото без подписи:
 // само фото бот не пересылает, и владелец должен знать, что оно было.
@@ -318,6 +354,42 @@ func (s *Server) handleChatPhoto(w http.ResponseWriter, ctx context.Context, msg
 			uid = &id
 		}
 		_ = s.store.InsertEvent(ctx, uid, "chat_photo", map[string]any{"document": msg.Document != nil})
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleChatVoice — голосовое, аудио или видеокружок в личку боту. Файл не скачивается и
+// не хранится; в events пишется только вид и длительность — по ним видно, сколько людей
+// пробуют говорить с ботом голосом и стоит ли подключать распознавание речи.
+func (s *Server) handleChatVoice(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
+	if msg.From == nil || msg.Chat == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	kind := voiceKind(msg)
+	support := s.support.armed(msg.From.ID)
+	if support {
+		if err := s.tg.SendMessage(ctx, msg.Chat.ID, supportVoiceAsk, nil); err != nil {
+			s.log.Warn("webhook: ответ на голосовое в поддержке", "err", err)
+		}
+	} else if err := s.tg.SendMessage(ctx, msg.Chat.ID, chatVoiceReply, tg.StartMarkup("Открыть", s.cfg.WebAppURL, supportButtonText, callbackSupport)); err != nil {
+		s.log.Warn("webhook: ответ на голосовое", "err", err)
+	}
+	if s.pool != nil {
+		var uid *int64
+		if id, err := s.store.UserIDByTelegramID(ctx, msg.From.ID); err == nil {
+			uid = &id
+		}
+		dur := 0
+		switch kind {
+		case "voice":
+			dur = msg.Voice.Duration
+		case "video_note":
+			dur = msg.VideoNote.Duration
+		case "audio":
+			dur = msg.Audio.Duration
+		}
+		_ = s.store.InsertEvent(ctx, uid, "chat_voice", map[string]any{"kind": kind, "duration_s": dur, "support": support})
 	}
 	w.WriteHeader(http.StatusOK)
 }

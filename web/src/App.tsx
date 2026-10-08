@@ -23,7 +23,6 @@ import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, LABEL_NOT_A_LABEL_HINTS, LABEL_WRONG_BLOCK_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
-import ChooseModeScreen from "./screens/ChooseModeScreen";
 import type { PaywallReason } from "./api";
 import { setLastMode } from "./api";
 import { flushPending } from "./pendingSave";
@@ -31,7 +30,7 @@ import { flushPending } from "./pendingSave";
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
 // Подписки v2: экран управления подпиской (тариф, следующее списание, отмена).
-type View = "choose_mode" | "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -289,6 +288,13 @@ export default function App() {
   // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
   // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
   const [mealTextPrefill, setMealTextPrefill] = useState("");
+  // Заготовка — пример с главной первого запуска, а не название со скана: для воронки
+  // это «начал ввод» (entry=example), хотя человек ещё ничего не напечатал.
+  const [mealTextFromExample, setMealTextFromExample] = useState(false);
+  // Есть ли у человека хоть одна запись за всё время. undefined — история ещё не пришла:
+  // тогда «первый запуск» угадываем по тому, что режим ни разу не выбирался.
+  const [hasHistory, setHasHistory] = useState<boolean | undefined>(undefined);
+  const [bootNoMode, setBootNoMode] = useState(false);
   // Кадр последнего разбора — ТОЛЬКО для шер-карточки: из него рисуется картинка на
   // клиенте. На сервер он не уходит (лендинг обещает, что фото не сохраняем), и живёт
   // ровно до следующего разбора или ухода в историю.
@@ -315,7 +321,12 @@ export default function App() {
   // загрузилось — блока просто нет, экран съёмки от этого не зависит.
   useEffect(() => {
     if (phase !== "ready" || view !== "home" || mode !== "meal") return;
-    void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
+    void mealsHistory()
+      .then((p) => {
+        setRecentMeals(repeatCandidates(p.items));
+        setHasHistory(p.items.length > 0);
+      })
+      .catch(() => {});
     // Итог дня — тем же возвратом на главную: человек мог только что сохранить приём или
     // вернуться утром следующего дня. Один запрос на показ экрана, не на каждую клавишу.
     void getMeals(localDay())
@@ -379,7 +390,9 @@ export default function App() {
       }
       // Первый шаг воронки: приложение открыто и авторизовано. До него виден только
       // «запустил бота», и весь провал «нажал кнопку, но не дошёл» был неразличим.
-      appEvent("app_opened", profile.start_mode ? { mode: profile.start_mode } : {});
+      // entry=default — режим не выбирался ни разу, и приложение открыто в «Калориях» по
+      // умолчанию (решение владельца 08.10.2026). Так в воронке видно, кто пришёл без выбора.
+      appEvent("app_opened", profile.start_mode ? { mode: profile.start_mode } : { mode: "meal", entry: "default" });
 
       if (profile.start_mode === "meal" || profile.start_mode === "scan") {
         setModeState(profile.start_mode);
@@ -387,9 +400,17 @@ export default function App() {
       } else if (profile.pending_plan) {
         setView("paywall");
       } else {
-        // Режима нет — человек здесь впервые. Спрашиваем прямо, вместо того чтобы
-        // угадать вкладкой и потерять его на первом экране.
-        setView("choose_mode");
+        // Режима нет — человек здесь впервые (или ни разу не выбирал). Раньше здесь стоял
+        // экран выбора «еда или состав», и на нём терялись: с 09.09 по 08.10.2026 из 8
+        // открывших режим выбрали 6, а начали что-то делать двое. Теперь сразу «Калории»
+        // (решение владельца 08.10.2026), «Состав» — соседняя вкладка.
+        //
+        // На сервер НЕ записываем: это не выбор человека. Сохранённый режим остаётся только
+        // у тех, кто выбирал сам или пришёл по ссылке; переключение вкладки запомнится как
+        // обычно, с entry=tab.
+        setModeState("meal");
+        setBootNoMode(true);
+        setView("home");
       }
       setPhase("ready");
     } catch (err) {
@@ -757,14 +778,6 @@ export default function App() {
   // phase === "ready"
   return (
     <Shell>
-      {view === "choose_mode" && me && (
-        <ChooseModeScreen
-          onPick={(m) => {
-            setMode(m, "picker");
-            setView("home");
-          }}
-        />
-      )}
       {view === "home" && me && (
         <HomeScreen
           me={me}
@@ -780,11 +793,15 @@ export default function App() {
           // того, чем ты сейчас занят», и вторая рядом заставляла бы выбирать
           // между двумя одинаковыми часами.
           onHistory={() => setView(mode === "meal" ? "meal_history" : "history")}
-          onAddText={() => {
+          onAddText={(example) => {
             setReturnTo("home");
             setTextMeal(null);
             setRepeatMeal(null);
-            setMealTextPrefill(""); // обычный вход с главной — поле пустое
+            // Обычный вход — поле пустое. Пример первого запуска только ПОДСТАВЛЯЕТСЯ в поле:
+            // ничего не отправляется и квота не тратится, пока человек сам не нажмёт
+            // «Оценить» (решение владельца 08.10.2026).
+            setMealTextPrefill(example ?? "");
+            setMealTextFromExample(!!example);
             setView("meal_text");
           }}
           onAddManual={() => {
@@ -797,6 +814,7 @@ export default function App() {
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
           today={todayTotal}
+          firstRun={hasHistory === undefined ? bootNoMode : !hasHistory && (todayTotal?.count ?? 0) === 0}
           recent={recentMeals}
           onRepeat={(item) => {
             // Повтор — новый приём на том же экране, что и ручной: правка граммов, тип
@@ -1069,10 +1087,12 @@ export default function App() {
           // открылся бы с названием первого.
           key={mealTextPrefill}
           initialText={mealTextPrefill}
+          fromExample={mealTextFromExample}
           onBack={() => {
             const back = returnTo ?? "meal_diary";
             setReturnTo(null);
             setMealTextPrefill("");
+            setMealTextFromExample(false);
             setView(back);
           }}
           onAnalyzed={(data) => {

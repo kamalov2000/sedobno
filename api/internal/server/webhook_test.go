@@ -358,6 +358,73 @@ func TestWebhook_PhotoInChatGetsOpenButton(t *testing.T) {
 	}
 }
 
+// Голосовое в чат (08.10.2026) — замер спроса без распознавания: честный ответ и кнопка
+// «Открыть». Голос, видеокружок и аудиофайл для человека одно и то же — «сказал боту».
+func TestWebhook_VoiceInChatGetsHonestReply(t *testing.T) {
+	for name, msg := range map[string]string{
+		"голосовое":    `"voice":{"file_id":"v","duration":7,"mime_type":"audio/ogg"}`,
+		"видеокружок":  `"video_note":{"file_id":"n","duration":12,"length":240}`,
+		"аудио файлом": `"audio":{"file_id":"a","duration":30}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			spy := newTGSpy()
+			cfg := &config.Config{TelegramAPIBase: spy.srv.URL, TelegramBotToken: "T", TelegramWebhookSecret: "sekret", WebAppURL: "https://example.test/app/"}
+			srv := httptest.NewServer(New(cfg, nil, nil, slog.Default()).Router())
+			t.Cleanup(func() { srv.Close(); spy.srv.Close() })
+
+			upd := `{"update_id":9,"message":{"message_id":4,"chat":{"id":42,"type":"private"},"from":{"id":42},` + msg + `}}`
+			resp := postWebhook(t, srv, "sekret", upd)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("статус=%d", resp.StatusCode)
+			}
+			spy.mu.Lock()
+			defer spy.mu.Unlock()
+			if spy.method != "sendMessage" || spy.body["text"] != chatVoiceReply {
+				t.Fatalf("ответ %q / %v, ждали честный ответ про голос", spy.method, spy.body["text"])
+			}
+			raw, _ := json.Marshal(spy.body["reply_markup"])
+			if !strings.Contains(string(raw), `"web_app"`) {
+				t.Errorf("под ответом нет кнопки открытия приложения: %s", raw)
+			}
+		})
+	}
+}
+
+// В режиме поддержки голосовое не гасит окно: бот просит текст, и следующее текстовое
+// сообщение всё ещё уходит как обращение.
+func TestSupportState_ArmedDoesNotConsume(t *testing.T) {
+	st := newSupportState()
+	if st.armed(7) {
+		t.Fatal("режим включён без arm")
+	}
+	st.arm(7)
+	if !st.armed(7) || !st.armed(7) {
+		t.Fatal("armed погасил режим или не увидел его")
+	}
+	if !st.consume(7) {
+		t.Fatal("после armed обращение не принято")
+	}
+}
+
+func TestVoiceKind(t *testing.T) {
+	cases := map[string]struct {
+		msg  tgMessage
+		want string
+	}{
+		"голос":  {tgMessage{Voice: &tgMedia{Duration: 3}}, "voice"},
+		"кружок": {tgMessage{VideoNote: &tgMedia{}}, "video_note"},
+		"аудио":  {tgMessage{Audio: &tgMedia{}}, "audio"},
+		"текст":  {tgMessage{Text: "привет"}, ""},
+		"фото":   {tgMessage{Photo: []json.RawMessage{json.RawMessage(`{}`)}}, ""},
+	}
+	for name, c := range cases {
+		if got := voiceKind(&c.msg); got != c.want {
+			t.Errorf("%s: %q, ждали %q", name, got, c.want)
+		}
+	}
+}
+
 // Документ, который не картинка (PDF, архив), — не фото еды: старое поведение, молчим.
 func TestIsImageMessage(t *testing.T) {
 	cases := map[string]struct {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MealResult } from "../types";
 import { analyzeMealText as analyzeMealTextApi, appEvent, startOp } from "../api";
 import type { PaywallReason } from "../api";
@@ -30,14 +30,33 @@ interface Props {
    *  продукта уже известно с упаковки, и заставлять перепечатывать его руками незачем.
    *  Поле остаётся обычным вводом — заготовка правится и стирается. */
   initialText?: string;
+  /** Заготовка — пример с главной первого запуска (а не название со скана). */
+  fromExample?: boolean;
   /** Инъекция для витрины и тестов (офлайн). */
   analyze?: typeof analyzeMealTextApi;
 }
 
-export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onManual, initialText = "", analyze = analyzeMealTextApi }: Props) {
+export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onManual, initialText = "", fromExample = false, analyze = analyzeMealTextApi }: Props) {
   const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // Шаг воронки «начал ввод» — один раз за заход на экран. Открыть экран — ещё не начать:
+  // событие уходит с первым напечатанным символом или с выбранным примером.
+  const started = useRef(false);
+  const markStarted = (entry: "typed" | "example") => {
+    if (started.current) return;
+    started.current = true;
+    appEvent("text_input_started", { mode: "meal", entry });
+  };
+  useEffect(() => {
+    if (fromExample) markStarted("example");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onType = (v: string) => {
+    if (v.trim() !== "" && v !== initialText) markStarted("typed");
+    setText(v);
+  };
 
   const submit = async () => {
     if (busy) return;
@@ -90,7 +109,7 @@ export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onMan
 
         <DishTextInput
           value={text}
-          onChange={setText}
+          onChange={onType}
           onSubmit={() => void submit()}
           busy={busy}
           error={error}
@@ -111,6 +130,7 @@ export default function AddMealTextScreen({ onBack, onAnalyzed, onPaywall, onMan
                 disabled={busy}
                 onClick={() => {
                   haptic("light");
+                  markStarted("example");
                   setText(ex);
                 }}
                 style={{ height: 32, padding: "0 12px", borderRadius: 16, border: "1px solid var(--border)", background: "none", color: "var(--text2)", fontFamily: "'Golos Text',sans-serif", fontSize: 12.5, cursor: busy ? "default" : "pointer" }}

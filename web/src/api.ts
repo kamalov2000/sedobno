@@ -215,7 +215,10 @@ export function opHeaders(): Record<string, string> {
   return currentOp ? { "X-Op-Id": currentOp } : {};
 }
 
-export type AppEventName = "app_opened" | "mode_chosen" | "photo_picked" | "upload_started";
+// text_input_started — человек начал описывать еду словами: напечатал первый символ
+// (entry=typed) или взял пример (entry=example). Парный шаг к photo_picked: «начал ввод»
+// в воронке первого запуска — любое из двух (решение владельца 08.10.2026).
+export type AppEventName = "app_opened" | "mode_chosen" | "photo_picked" | "upload_started" | "text_input_started";
 
 /** Шаг воронки, который знает только клиент. Best-effort, как shareEvent: телеметрия
  *  никогда не мешает человеку пользоваться приложением. */

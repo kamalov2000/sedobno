@@ -32,6 +32,16 @@ func (s *supportState) arm(userID int64) {
 	s.pending[userID] = time.Now().Add(supportWindow)
 }
 
+// armed — режим поддержки включён и не просрочен; в отличие от consume, НЕ гасит его.
+// Нужен там, где сообщение обращением не считается, но окно надо сохранить: голосовое
+// бот не пересылает и просит повторить текстом.
+func (s *supportState) armed(userID int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deadline, ok := s.pending[userID]
+	return ok && time.Now().Before(deadline)
+}
+
 // consume одноразово гасит режим и сообщает, был ли он активен (и не просрочен).
 // true → это сообщение считаем обращением в поддержку.
 func (s *supportState) consume(userID int64) bool {
