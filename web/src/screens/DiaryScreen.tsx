@@ -607,8 +607,9 @@ function IncompleteMacros({ total, states }: { total: MealDaily; states: DayMacr
   const note = macroGapNote(states, "записях");
   const nb = (s: string) => s.replace(/ /g, NBSP);
   return (
-    <div style={{ marginTop: 8, textAlign: "center", lineHeight: 1.45 }}>
-      <div className="sj-rem-grams" style={{ fontSize: 12, color: "var(--text2)" }}>
+    // Весь блок — sj-rem-grams: на низком экране он прячется целиком, вместе с пояснением.
+    <div className="sj-rem-grams" style={{ marginTop: 8, textAlign: "center", lineHeight: 1.45 }}>
+      <div style={{ fontSize: 12, color: "var(--text2)" }}>
         {[
           macroWords("protein", total.protein_g, states.protein ?? "known"),
           macroWords("fat", total.fat_g, states.fat ?? "known"),
