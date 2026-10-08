@@ -2,6 +2,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import MealResultScreen from "./MealResultScreen";
+import { readPending } from "../pendingSave";
 import { makeMealResult } from "../fixtures";
 import { scaleDish } from "../meal";
 import type { MealItem } from "../types";
@@ -200,7 +201,7 @@ describe("Г+. правка после потерянного ответа и п
     render(<MealResultScreen result={{ status: "ok", dishes: [{ ...borscht }], meals_left: 7 }} manual origin="repeat" isSubscribed onDone={noop} onRetake={noop} />);
     fireEvent.click(screen.getByText("В дневник"));
     await screen.findByRole("alert");
-    const stored = JSON.parse(localStorage.getItem("sedobno.pendingSave.v1")!);
+    const stored = readPending()!;
     expect(stored.body.dishes[0]).toMatchObject({ grams: 300 });
 
     fireEvent.change(screen.getByLabelText("Граммовка"), { target: { value: "350" } });
@@ -210,6 +211,6 @@ describe("Г+. правка после потерянного ответа и п
     expect(b2.client_key).toBe(b1.client_key);
     expect(b2.dishes[0].grams).toBe(350);
     // Подтверждено — из хранилища убрано.
-    expect(localStorage.getItem("sedobno.pendingSave.v1")).toBeNull();
+    expect(readPending()).toBeNull();
   });
 });
