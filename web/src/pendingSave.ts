@@ -9,7 +9,7 @@
 // localStorage может быть недоступен (приватный режим, запрет сайтовых данных) — тогда
 // очередь просто не переживёт перезагрузку, а повтор на открытом экране работает и так.
 
-import { createManualMeal } from "./api";
+import { createManualMeal, addMealTemplate } from "./api";
 
 type ManualBody = Parameters<typeof createManualMeal>[0];
 
@@ -17,24 +17,37 @@ export interface PendingSave {
   key: string;
   body: ManualBody;
   at: number; // мс, когда началась попытка
+  /** Добавление «моего блюда» (п.16): досылается в /api/meal-templates/{id}/add с тем же
+   *  ключом. body тогда несёт только meal_type, блюда берёт сервер из шаблона. */
+  template?: number;
+}
+
+/** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
+export function newSaveKey(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 10)).join("-");
 }
 
 const STORAGE_KEY = "sedobno.pendingSave.v1";
+/** Добавление «моего блюда» — своя ячейка: иначе оно затёрло бы неподтверждённое ручное
+ *  сохранение, и тот приём потерялся бы молча. */
+const TEMPLATE_KEY = "sedobno.pendingTemplate.v1";
 /** Старше недели не досылаем: человек давно ушёл от этого приёма, и тихо записать его
  *  задним числом было бы сюрпризом. */
 const MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 
-export function readPending(now = Date.now()): PendingSave | null {
+const slotOf = (p: { template?: number }) => (typeof p.template === "number" ? TEMPLATE_KEY : STORAGE_KEY);
+
+function readSlot(slot: string, now: number): PendingSave | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(slot);
     if (!raw) return null;
     const p = JSON.parse(raw) as PendingSave;
-    if (!p || typeof p.key !== "string" || !p.body || !Array.isArray(p.body.dishes) || typeof p.at !== "number") {
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    if (now - p.at > MAX_AGE_MS) {
-      localStorage.removeItem(STORAGE_KEY);
+    const isTemplate = slot === TEMPLATE_KEY;
+    const bodyOk = isTemplate ? typeof p?.template === "number" && !!p.body : !!p?.body && Array.isArray(p.body.dishes);
+    if (!p || typeof p.key !== "string" || !bodyOk || typeof p.at !== "number" || now - p.at > MAX_AGE_MS) {
+      localStorage.removeItem(slot);
       return null;
     }
     return p;
@@ -43,10 +56,20 @@ export function readPending(now = Date.now()): PendingSave | null {
   }
 }
 
+/** Неподтверждённое РУЧНОЕ сохранение (экран приёма). */
+export function readPending(now = Date.now()): PendingSave | null {
+  return readSlot(STORAGE_KEY, now);
+}
+
+/** Неподтверждённое добавление «моего блюда». */
+export function readPendingTemplate(now = Date.now()): PendingSave | null {
+  return readSlot(TEMPLATE_KEY, now);
+}
+
 /** Запомнить попытку. Тот же ключ с новым телом (правка после сбоя) заменяет прежнее. */
 export function writePending(p: PendingSave): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+    localStorage.setItem(slotOf(p), JSON.stringify(p));
   } catch {
     /* хранилище недоступно — повтор на открытом экране всё равно работает */
   }
@@ -54,26 +77,44 @@ export function writePending(p: PendingSave): void {
 
 /** Убрать подтверждённую попытку — только свою: чужой ключ (более новая попытка) не трогаем. */
 export function clearPending(key: string): void {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const p = JSON.parse(raw) as PendingSave;
-    if (p?.key === key) localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* нечего чистить */
+  for (const slot of [STORAGE_KEY, TEMPLATE_KEY]) {
+    try {
+      const raw = localStorage.getItem(slot);
+      if (!raw) continue;
+      const p = JSON.parse(raw) as PendingSave;
+      if (p?.key === key) localStorage.removeItem(slot);
+    } catch {
+      /* нечего чистить */
+    }
   }
 }
 
-/** Дослать неподтверждённое сохранение при запуске. "sent" — сервер подтвердил (создал или
- *  обновил запись), "failed" — снова не вышло, попытка остаётся до следующего раза. */
-export async function flushPending(send: (b: ManualBody) => Promise<unknown> = createManualMeal): Promise<"none" | "sent" | "failed"> {
-  const p = readPending();
-  if (!p) return "none";
-  try {
-    await send({ ...p.body, client_key: p.key });
-    clearPending(p.key);
-    return "sent";
-  } catch {
-    return "failed";
+/** Дослать неподтверждённые попытки при запуске — ручное сохранение и добавление блюда.
+ *  "sent" — сервер подтвердил хотя бы одну и ни одна не упала, "failed" — какая-то снова не
+ *  вышла (она остаётся до следующего раза), "none" — досылать нечего. */
+export async function flushPending(
+  send: (b: ManualBody) => Promise<unknown> = createManualMeal,
+  sendTemplate: (id: number, b: { client_key: string; meal_type?: ManualBody["meal_type"] }) => Promise<unknown> = addMealTemplate,
+): Promise<"none" | "sent" | "failed"> {
+  const jobs: Array<() => Promise<unknown>> = [];
+  const manual = readPending();
+  if (manual) jobs.push(async () => {
+    await send({ ...manual.body, client_key: manual.key });
+    clearPending(manual.key);
+  });
+  const tpl = readPendingTemplate();
+  if (tpl) jobs.push(async () => {
+    await sendTemplate(tpl.template!, { client_key: tpl.key, ...(tpl.body.meal_type ? { meal_type: tpl.body.meal_type } : {}) });
+    clearPending(tpl.key);
+  });
+  if (jobs.length === 0) return "none";
+  let failed = false;
+  for (const job of jobs) {
+    try {
+      await job();
+    } catch {
+      failed = true;
+    }
   }
+  return failed ? "failed" : "sent";
 }

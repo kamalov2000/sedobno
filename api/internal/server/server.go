@@ -133,6 +133,11 @@ func (s *Server) Router() http.Handler {
 			r.Post("/me/mode", s.handleSetMode) // запоминание режима приложения (APP-01) // справочник для автоподсказки ручного ввода
 			r.Patch("/meals/{id}", s.handleMealUpdate)
 			r.Delete("/meals/{id}", s.handleMealDelete)
+			// «Мои блюда» (п.16): шаблоны приёмов под своим названием.
+			r.Get("/meal-templates", s.handleMealTemplatesList)
+			r.Post("/meal-templates", s.handleMealTemplateCreate)
+			r.Delete("/meal-templates/{id}", s.handleMealTemplateDelete)
+			r.Post("/meal-templates/{id}/add", s.handleMealTemplateAdd)
 
 			// Профиль питания и дневная норма (feature/calories).
 			r.Patch("/profile/nutrition", s.handleProfileNutrition)

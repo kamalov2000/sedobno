@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, localDay, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, localDay, listMealTemplates, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -23,7 +23,7 @@ import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
 import ErrorScreen, { type Hint, NOT_FOOD_HINTS, MIXED_FRAMES_HINTS, LABEL_NOT_A_LABEL_HINTS, LABEL_WRONG_BLOCK_HINTS } from "./screens/ErrorScreen";
 import PaywallScreen from "./screens/PaywallScreen";
-import type { PaywallReason } from "./api";
+import type { PaywallReason, MealTemplate } from "./api";
 import { setLastMode } from "./api";
 import { flushPending } from "./pendingSave";
 
@@ -295,6 +295,21 @@ export default function App() {
   // тогда «первый запуск» угадываем по тому, что режим ни разу не выбирался.
   const [hasHistory, setHasHistory] = useState<boolean | undefined>(undefined);
   const [bootNoMode, setBootNoMode] = useState(false);
+  // «Мои блюда» (п.16). undefined — ещё не загружены: раздела и подсказки нет.
+  const [templates, setTemplates] = useState<MealTemplate[] | undefined>(undefined);
+  const loadTemplates = useCallback(() => {
+    void listMealTemplates().then(setTemplates).catch(() => {});
+  }, []);
+  // Итог дня на главной — после добавления блюда из «Моих блюд» или его отмены.
+  const refreshToday = useCallback(() => {
+    void getMeals(localDay())
+      .then((d) => {
+        setTodayHasMeals(d.items.length > 0);
+        setTodayTotal({ kcal: d.total?.kcal ?? 0, count: d.items.length });
+        if (d.items.length > 0) setHasHistory(true);
+      })
+      .catch(() => {});
+  }, []);
   // Кадр последнего разбора — ТОЛЬКО для шер-карточки: из него рисуется картинка на
   // клиенте. На сервер он не уходит (лендинг обещает, что фото не сохраняем), и живёт
   // ровно до следующего разбора или ухода в историю.
@@ -321,6 +336,7 @@ export default function App() {
   // загрузилось — блока просто нет, экран съёмки от этого не зависит.
   useEffect(() => {
     if (phase !== "ready" || view !== "home" || mode !== "meal") return;
+    loadTemplates();
     void mealsHistory()
       .then((p) => {
         setRecentMeals(repeatCandidates(p.items));
@@ -340,6 +356,7 @@ export default function App() {
   // Прошлые приёмы для «Повторить» в дневнике — там тоже есть этот вход.
   useEffect(() => {
     if (phase !== "ready" || view !== "meal_diary") return;
+    loadTemplates();
     void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
   }, [phase, view]);
 
@@ -814,6 +831,8 @@ export default function App() {
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
           today={todayTotal}
+          templates={templates}
+          onDiaryChanged={refreshToday}
           firstRun={hasHistory === undefined ? bootNoMode : !hasHistory && (todayTotal?.count ?? 0) === 0}
           recent={recentMeals}
           onRepeat={(item) => {
@@ -909,6 +928,7 @@ export default function App() {
             setView("meal_manual");
           }}
           notice={diaryNotice}
+          templates={templates}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
@@ -1047,6 +1067,7 @@ export default function App() {
           mealLimit={me?.free_meal_limit}
           onQuotaSpent={applyMealsLeft}
           saved={savedMeal ?? undefined}
+          onTemplateSaved={loadTemplates}
           photo={mealPhoto}
           // «Поделиться» — про МОМЕНТ: свежий разбор показывают, приём, открытый из
           // истории для правки, — нет. В дневнике кнопки нет вовсе.

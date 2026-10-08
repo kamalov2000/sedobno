@@ -59,7 +59,7 @@ func Reset(t testing.TB, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
 		`TRUNCATE users, subscriptions, sbp_payments, scans, meals, events, feedback,
-		          weigh_ins, water_intake, analysis_cache, llm_calls RESTART IDENTITY CASCADE`)
+		          weigh_ins, water_intake, analysis_cache, llm_calls, meal_templates RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { MealTemplate } from "./api";
 import type { Me, ScanHistoryItem, ScanHistoryPage, ScanResult, MealResult, MealsByDay, MealDays, MealDiaryItem, MealHistoryPage } from "./types";
 import HomeScreen from "./screens/HomeScreen";
 import SubscriptionScreen from "./screens/SubscriptionScreen";
@@ -156,6 +157,15 @@ const mealHistoryLoad = async (): Promise<MealHistoryPage> => ({
 });
 const mealHistoryEmpty = async (): Promise<MealHistoryPage> => ({ items: [] });
 // Прошлые приёмы для «Повторить» — из той же мок-истории, что и экран истории.
+// «Мои блюда» (п.16) для витрины: добавление здесь уходит в настоящий API и без сервера
+// покажет ошибку — это и проверяется (текст ошибки и повтор).
+const PREVIEW_TEMPLATES: MealTemplate[] = [
+  { id: 1, name: "Мой завтрак", grams: 370, total: { kcal: 510, protein_g: 20, fat_g: 28, carb_g: 44 },
+    dishes: [{ name: "круассан с лососем и творожным сыром", grams: 120, kcal: 390, protein_g: 14, fat_g: 22, carb_g: 34, confidence: 1 }, { name: "капучино", grams: 250, kcal: 120, protein_g: 6, fat_g: 6, carb_g: 10, confidence: 1 }] },
+  { id: 2, name: "Борщ со сметаной и хлебом — обеденная тарелка", grams: 400, total: { kcal: 420, protein_g: 14, fat_g: 18, carb_g: 48 },
+    dishes: [{ name: "борщ", grams: 300, kcal: 240, protein_g: 8, fat_g: 10, carb_g: 26, confidence: 1 }, { name: "хлеб", grams: 50, kcal: 130, protein_g: 4, fat_g: 1, carb_g: 25, confidence: 1 }] },
+];
+
 const PREVIEW_RECENT: MealDiaryItem[] = [
   { ...savedMeal, id: 43, source: "manual", meal_type: "dinner",
     dishes: [{ name: "Творог 5%", grams: 200, kcal: 242, protein_g: 34, fat_g: 10, carb_g: 3, confidence: 1 }],
@@ -197,6 +207,7 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории · первый запуск (фото или словами)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} today={{ kcal: 0, count: 0 }} firstRun /> },
   { title: "01 · ГЛАВНЫЙ · калории · возвращается (итог дня, повтор)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} todayHasMeals today={{ kcal: 780, count: 2 }} recent={PREVIEW_RECENT} onRepeat={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · мои блюда (Повторить)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} todayHasMeals today={{ kcal: 780, count: 2 }} recent={PREVIEW_RECENT} onRepeat={noop} templates={PREVIEW_TEMPLATES} onDiaryChanged={noop} /> },
   { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },

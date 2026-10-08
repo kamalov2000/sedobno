@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddMealActions from "../components/AddMealActions";
+import type { MealTemplate } from "../api";
 import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
 import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal, round1 } from "../meal";
@@ -42,6 +43,8 @@ interface Props {
   /** Явный факт сохранения: показываем сверху, когда человек пришёл сюда сразу после
    *  «В дневник» (задание владельца 08.10.2026). */
   notice?: string;
+  /** «Мои блюда» (п.16) — в разделе «Повторить» футера. */
+  templates?: MealTemplate[];
 }
 
 function addDays(day: string, n: number): string {
@@ -69,7 +72,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen, templates,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -329,7 +332,7 @@ export default function DiaryScreen({
       {/* Футер с «Добавить приём» — только в режиме дня: в недельном обзоре добавлять
           нечего, там смотрят на столбики. */}
       {mode === "day" && onAddManual && (
-        <AddMealFooter onText={onAddManual} onManual={onAddDigits ?? onAddManual} onPhoto={onAddPhoto} recent={recent} onRepeat={onRepeat} />
+        <AddMealFooter onText={onAddManual} onManual={onAddDigits ?? onAddManual} onPhoto={onAddPhoto} recent={recent} onRepeat={onRepeat} templates={templates} onDiaryChanged={() => void fetchDay(day)} />
       )}
 
       {/* Undo-снекбар — над футером, иначе кнопка «Вернуть» ушла бы под кнопку добавления. */}
@@ -495,7 +498,7 @@ function DayView({
 //
 // Кнопка постоянная, а не элемент списка: добавить приём нужно и в пустой день, и после
 // десятого — искать её в конце прокрутки незачем.
-function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhoto?: () => void; recent?: MealDiaryItem[]; onRepeat?: (item: MealDiaryItem) => void }) {
+function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhoto?: () => void; recent?: MealDiaryItem[]; onRepeat?: (item: MealDiaryItem) => void; templates?: MealTemplate[]; onDiaryChanged?: () => void }) {
   // Те же четыре способа, что на главной: фото, словами, цифрами, повтор (задание
   // 08.10.2026). Раньше здесь была одна кнопка «Добавить приём» — только словами.
   return (

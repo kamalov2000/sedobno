@@ -11,6 +11,8 @@ import type {
   ScanHistoryPage,
   MealResult,
   MealDiaryItem,
+  MealItem,
+  MealMacros,
   MealHistoryPage,
   FoodRefItem,
   MealType,
@@ -482,6 +484,56 @@ export function shareEvent(name: "share_clicked" | "share_sent" | "share_done" |
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   }).catch(() => {});
+}
+
+/** «Моё блюдо» — приём, сохранённый под своим названием (backlog п.16). grams — порция
+ *  целиком: её и калории человек видит до того, как добавит блюдо в дневник. */
+export interface MealTemplate {
+  id: number;
+  name: string;
+  dishes: MealItem[];
+  total: MealMacros;
+  grams: number;
+  last_used_at?: string;
+}
+
+/** GET /api/meal-templates — свои блюда, недавно добавленные сверху. */
+export async function listMealTemplates(): Promise<MealTemplate[]> {
+  const res = await apiFetch("/api/meal-templates");
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  const body = (await res.json()) as { items?: MealTemplate[] };
+  return body.items ?? [];
+}
+
+/** POST /api/meal-templates — сохранить СВОЙ сохранённый приём под своим названием. Блюда
+ *  и числа сервер берёт из приёма сам, клиент шлёт только id и название. */
+export async function createMealTemplate(mealId: number, name: string): Promise<MealTemplate> {
+  const res = await apiFetch("/api/meal-templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ meal_id: mealId, name }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** DELETE /api/meal-templates/{id} — убрать блюдо из списка (записи в дневнике остаются). */
+export async function deleteMealTemplate(id: number): Promise<void> {
+  const res = await apiFetch(`/api/meal-templates/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+}
+
+/** POST /api/meal-templates/{id}/add — записать «моё блюдо» в дневник. Без модели и без
+ *  списания разборов; client_key обязателен — повтор после потерянного ответа вернёт ту же
+ *  запись, а не создаст вторую. */
+export async function addMealTemplate(id: number, body: { client_key: string; meal_type?: MealType }): Promise<MealResult> {
+  const res = await apiFetch(`/api/meal-templates/${id}/add`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...opHeaders() },
+    body: JSON.stringify({ ...body, date: localDay() }),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
 }
 
 /** DELETE /api/meals/{id} — удаление приёма. */

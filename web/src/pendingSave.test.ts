@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { readPending, writePending, clearPending, flushPending } from "./pendingSave";
+import { readPending, readPendingTemplate, writePending, clearPending, flushPending } from "./pendingSave";
 
 // Неподтверждённое сохранение переживает перезагрузку: «сервер записал → ответ потерян →
 // человек закрыл мини-апп → открыл снова» досылает тот же запрос с тем же ключом.
@@ -49,5 +49,31 @@ describe("pendingSave", () => {
     expect(readPending()).toBeNull();
     localStorage.setItem("sedobno.pendingSave.v1", "{не json");
     expect(readPending()).toBeNull();
+  });
+});
+
+describe("pendingSave — добавление «моего блюда»", () => {
+  it("своя ячейка: не затирает неподтверждённое ручное сохранение; при запуске досылаются оба", async () => {
+    writePending({ key: "manual-key-0001", body, at: Date.now() });
+    writePending({ key: "tpl-key-0001", body: { dishes: [], meal_type: "breakfast" }, at: Date.now(), template: 7 });
+    expect(readPending()?.key).toBe("manual-key-0001");
+    expect(readPendingTemplate()?.key).toBe("tpl-key-0001");
+
+    const send = vi.fn(async () => ({}));
+    const sendTemplate = vi.fn(async () => ({}));
+    expect(await flushPending(send, sendTemplate)).toBe("sent");
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ client_key: "manual-key-0001" }));
+    expect(sendTemplate).toHaveBeenCalledWith(7, { client_key: "tpl-key-0001", meal_type: "breakfast" });
+    expect(readPending()).toBeNull();
+    expect(readPendingTemplate()).toBeNull();
+  });
+
+  it("упало добавление блюда — оно остаётся до следующего запуска, ручное убрано", async () => {
+    writePending({ key: "manual-key-0002", body, at: Date.now() });
+    writePending({ key: "tpl-key-0002", body: { dishes: [] }, at: Date.now(), template: 7 });
+    const res = await flushPending(vi.fn(async () => ({})), vi.fn(async () => { throw new Error("сеть"); }));
+    expect(res).toBe("failed");
+    expect(readPending()).toBeNull();
+    expect(readPendingTemplate()?.key).toBe("tpl-key-0002");
   });
 });

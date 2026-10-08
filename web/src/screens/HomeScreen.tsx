@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import { pluralDaysRu } from "../plural";
 import type { Me, MealDiaryItem } from "../types";
+import type { MealTemplate } from "../api";
 import AddMealActions from "../components/AddMealActions";
 import PhotoStager from "../components/PhotoStager";
 import LegalLinks from "../components/LegalLinks";
@@ -38,6 +39,10 @@ interface Props {
   /** Записей ещё нет ни одной. Главная показывает два основных пути — фото и описание
    *  словами — с примерами; ручной ввод цифрами уходит во второстепенную ссылку. */
   firstRun?: boolean;
+  /** «Мои блюда» (п.16) — в разделе «Повторить». */
+  templates?: MealTemplate[];
+  /** Блюдо добавлено или отменено — App перечитывает итог дня. */
+  onDiaryChanged?: () => void;
 }
 
 const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(iso));
@@ -48,7 +53,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 const MEAL_HINT = <>Сфотографируйте всю тарелку целиком, сверху. Одного кадра достаточно; добавьте ещё ракурс, только если хотите точнее — все кадры уйдут одним разбором.</>;
 const SCAN_HINT = <>Сфотографируйте список ингредиентов — мелкий текст после слова «Состав» на обороте упаковки. Таблица с белками, жирами и углеводами — другой блок, он не подойдёт.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, onRepeat, firstRun }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, onRepeat, firstRun, templates, onDiaryChanged }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -296,7 +301,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
         {meal && onAddText && onAddManual && (firstRun && !outOfActive ? (
           <FirstRunText onText={onAddText} onManual={onAddManual} />
         ) : (
-          <AddMealActions onText={() => onAddText()} onManual={onAddManual} recent={recent} onRepeat={onRepeat} />
+          <AddMealActions onText={() => onAddText()} onManual={onAddManual} recent={recent} onRepeat={onRepeat} templates={templates} onDiaryChanged={onDiaryChanged} />
         ))}
         {meal && outOfActive && (
           <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45, marginTop: -4 }}>

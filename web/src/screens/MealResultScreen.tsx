@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
+import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle } from "../meal";
 import EggCounter from "../components/EggCounter";
-import { writePending, clearPending } from "../pendingSave";
+import { writePending, clearPending, newSaveKey } from "../pendingSave";
+import SaveAsMyDish from "../components/SaveAsMyDish";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent, ApiError } from "../api";
@@ -71,6 +72,8 @@ interface Props {
    *  пайплайн и списывает квоту). Экран обязан донести новое число до App: остаток живёт
    *  в его me, и без этого счётчик на главном оставался бы прежним до перезахода. */
   onQuotaSpent?: (mealsLeft: number) => void;
+  /** Приём сохранён как «моё блюдо» — App перечитывает список блюд. */
+  onTemplateSaved?: () => void;
 }
 
 const GRAM_STEP = 10;
@@ -141,13 +144,6 @@ function manualReady(d: Draft): boolean {
   return d.name.trim().length > 0 && per != null && per >= MIN_PER100 && per <= MAX_PER100 && macrosOk;
 }
 
-/** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
-function newSaveKey(): string {
-  const c = globalThis.crypto as Crypto | undefined;
-  if (c?.randomUUID) return c.randomUUID();
-  return Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 10)).join("-");
-}
-
 /** Ручное блюдо при заданном весе: ккал — из поля «на 100 г», Б/Ж/У — из справочника,
  *  если продукт оттуда (иначе неизвестны — нули, как и раньше; на сервер уходят только ккал). */
 function manualAt(d: Draft, grams: number): Draft {
@@ -174,7 +170,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false, onTemplateSaved }: Props) {
   const isSaved = saved != null;
   // APP-09. У сохранённого приёма тип уже выбран; у свежего — предлагаем по времени.
   // Предположение, а не решение: чип остаётся обычным, его можно снять или сменить.
@@ -205,6 +201,10 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
     return given.length ? given : [blankManual()];
   });
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
+  // «Моё блюдо» сервер собирает из СОХРАНЁННОЙ записи. Пока на экране есть несохранённые
+  // правки, шаблон получил бы старые числа — поэтому сначала «Сохранить изменения».
+  const initialDishes = useRef(dishes);
+  const pristine = dishes === initialDishes.current && mealType === initialMealType;
   const [busy, setBusy] = useState(false);
   // Вопрос про наследные добавки: показывается по нажатию «Сохранить изменения» у приёма,
   // сохранённого до 11.09.2026. Закрыть вопрос = не сохранять: решение за человеком.
@@ -891,6 +891,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           <i className={`ti ${isSaved ? "ti-check" : "ti-plus"}`} aria-hidden="true" style={{ fontSize: 19 }} />
           {isSaved ? "Сохранить изменения" : "В дневник"}
         </button>
+        {isSaved && id != null && saved && (
+          <SaveAsMyDish mealId={id} defaultName={mealTitle(saved)} pristine={pristine} onSaved={onTemplateSaved} />
+        )}
         {/* Три действия рядом. Порядок — по частоте: чаще хочется показать конкретному
             человеку, а не всем сразу. «Сохранить» иконкой: путь запасной, для тех, кто
             выкладывает не в Telegram. Показываем только на СВЕЖЕМ разборе (решает App):
