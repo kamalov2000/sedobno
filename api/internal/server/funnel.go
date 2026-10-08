@@ -36,7 +36,18 @@ var appFunnelEvents = map[string]struct{}{
 	// Итог маршрутизации одной попытки: откуда начали, где закончили, почему был
 	// переброс, сколько вызовов и сколько они шли (backlog п.8).
 	"photo_routing_result": {},
+	// Единый поиск (решение владельца 09.10.2026) — минимальный замер: открыл, нашлось ли
+	// (found), что выбрал (source), добавилось ли (source). Текст запроса НЕ присылается и
+	// не хранится — только эти два поля из белых списков.
+	"search_opened": {},
+	"search_result": {},
+	"search_pick":   {},
+	"search_added":  {},
 }
+
+// searchSources — откуда выбран результат поиска: своё блюдо, недавний приём, справочник
+// или «ничего не нашлось → ввести вручную».
+var searchSources = map[string]struct{}{"mine": {}, "recent": {}, "reference": {}, "manual": {}}
 
 const opIDHeader = "X-Op-Id"
 
@@ -84,6 +95,9 @@ type appEventRequest struct {
 	Entry string `json:"entry"`
 	// Routing — только у photo_routing_result; каждое поле проверяется отдельно.
 	Routing *routingInfo `json:"routing"`
+	// Source — у search_pick / search_added; Found — у search_result.
+	Source string `json:"source"`
+	Found  *bool  `json:"found"`
 }
 
 // routingInfo — итог маршрутизации одной попытки, как его видит приложение.
@@ -235,6 +249,16 @@ func appEventProps(body appEventRequest) map[string]any {
 	}
 	if e := sanitizeFunnelEntry(body.Entry); e != "" {
 		props["entry"] = e
+	}
+	switch body.Name {
+	case "search_pick", "search_added":
+		if _, ok := searchSources[body.Source]; ok {
+			props["source"] = body.Source
+		}
+	case "search_result":
+		if body.Found != nil {
+			props["found"] = *body.Found
+		}
 	}
 	if body.Name == "photo_routing_result" && body.Routing != nil {
 		for k, v := range routingProps(*body.Routing) {

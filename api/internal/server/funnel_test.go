@@ -7,6 +7,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,5 +138,36 @@ func TestHandleAppEvent_ОтказыДоЗаписи(t *testing.T) {
 		if rec.Code != c.want {
 			t.Errorf("%s: код %d, ждали %d", c.name, rec.Code, c.want)
 		}
+	}
+}
+
+// Замер поиска (09.10.2026): только source из белого списка и found; текст запроса в
+// событие не попадает, даже если клиент его пришлёт.
+func TestAppEventProps_Поиск(t *testing.T) {
+	for _, src := range []string{"mine", "recent", "reference", "manual"} {
+		for _, name := range []string{"search_pick", "search_added"} {
+			if got := appEventProps(appEventRequest{Name: name, Source: src}); got["source"] != src {
+				t.Errorf("%s/%s: %+v", name, src, got)
+			}
+		}
+	}
+	if got := appEventProps(appEventRequest{Name: "search_pick", Source: "творог"}); got != nil {
+		t.Errorf("чужой source дошёл до события: %+v", got)
+	}
+	no := false
+	if got := appEventProps(appEventRequest{Name: "search_result", Found: &no}); got["found"] != false {
+		t.Errorf("found: %+v", got)
+	}
+	// source у других событий не пишется.
+	if got := appEventProps(appEventRequest{Name: "app_opened", Source: "mine"}); got != nil {
+		t.Errorf("source у app_opened: %+v", got)
+	}
+	var req appEventRequest
+	if err := json.Unmarshal([]byte(`{"name":"search_result","found":true,"query":"творог 5%"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	got := appEventProps(req)
+	if len(got) != 1 || got["found"] != true {
+		t.Errorf("в событии лишнее (текст запроса?): %+v", got)
 	}
 }

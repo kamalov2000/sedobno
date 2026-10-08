@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within, waitFor } from "@testing-library/react";
 import AddMealActions from "./AddMealActions";
 import MealResultScreen from "../screens/MealResultScreen";
 import type { MealTemplate } from "../api";
@@ -47,7 +47,7 @@ function renderSearch(extra: Partial<Parameters<typeof AddMealActions>[0]> = {})
   const props = {
     onText: noop, onManual: vi.fn(), onRepeat: vi.fn(),
     templates: [mine, kefir], recent: [recentBuckwheat], recentPool: [recentBuckwheat],
-    loadReference, addTemplate: vi.fn(), createManual: vi.fn(),
+    loadReference, addTemplate: vi.fn(), createManual: vi.fn(), track: vi.fn(),
     ...extra,
   };
   render(<AddMealActions {...props} />);
@@ -69,7 +69,7 @@ describe("Единый поиск", () => {
       "Гречка с масломНедавнее · 200 г · Б 8 · Ж 7 · У 40260 ккал",
       "Гречка варёнаяСправочник · 100 г · Б 4 · Ж 1 · У 21110 ккал",
     ]);
-    // Поиск — по уже загруженному: ни модели, ни сети.
+    // Поиск — по уже загруженному: ни модели, ни сети (событие замера — заглушка track).
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -138,6 +138,46 @@ describe("Единый поиск", () => {
   it("экран ручного ввода открывается с набранным названием", () => {
     render(<MealResultScreen result={{ status: "ok", dishes: [], meals_left: 7 }} manual manualName="щи по-флотски" foodReference={[]} isSubscribed={false} onDone={noop} onRetake={noop} />);
     expect((screen.getAllByLabelText("Название блюда").at(-1) as HTMLInputElement).value).toBe("щи по-флотски");
+  });
+});
+
+describe("Замер поиска", () => {
+  it("открытие, «нашлось ли» по устоявшемуся запросу, выбор и добавление — без текста запроса", async () => {
+    const track = vi.fn();
+    const createManual = vi.fn(async () => ({ status: "ok" as const, id: 5, dishes: [], total: { kcal: 121, protein_g: 17, fat_g: 5, carb_g: 2 }, meals_left: 30 }));
+    renderSearch({ track, createManual: createManual as never });
+    expect(track).toHaveBeenCalledWith("search_opened");
+
+    type("творог");
+    await waitFor(() => expect(track).toHaveBeenCalledWith("search_result", { found: true }), { timeout: 2500 });
+    fireEvent.click(screen.getByLabelText("Творог 5%: 100 г, 121 ккал"));
+    expect(track).toHaveBeenCalledWith("search_pick", { source: "reference" });
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await waitFor(() => expect(track).toHaveBeenCalledWith("search_added", { source: "reference" }));
+
+    // Ни в одном событии нет набранного текста.
+    expect(JSON.stringify(track.mock.calls)).not.toMatch(/твор/i);
+  });
+
+  it("пусто: found=false один раз на запрос; «ввести вручную» — выбор manual", async () => {
+    const track = vi.fn();
+    const p = renderSearch({ track });
+    type("щи по-флотски");
+    await waitFor(() => expect(track).toHaveBeenCalledWith("search_result", { found: false }), { timeout: 2500 });
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(track.mock.calls.filter((c) => c[0] === "search_result")).toHaveLength(1);
+    fireEvent.click(screen.getByText("Ввести «щи по-флотски» вручную"));
+    expect(track).toHaveBeenCalledWith("search_pick", { source: "manual" });
+    expect(p.onManual).toHaveBeenCalledWith("щи по-флотски");
+    expect(JSON.stringify(track.mock.calls)).not.toMatch(/щи/);
+  });
+
+  it("набор по буквам не шлёт событие на каждую букву", async () => {
+    const track = vi.fn();
+    renderSearch({ track });
+    for (const v of ["т", "тв", "тво", "твор"]) type(v);
+    await waitFor(() => expect(track).toHaveBeenCalledWith("search_result", { found: true }), { timeout: 2500 });
+    expect(track.mock.calls.filter((c) => c[0] === "search_result")).toHaveLength(1);
   });
 });
 

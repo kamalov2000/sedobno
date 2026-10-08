@@ -293,6 +293,9 @@ export default function App() {
   const [repeatMeal, setRepeatMeal] = useState<MealResult | null>(null);
   // Ручной ввод из поиска «ничего не нашлось»: название уже набрано — подставляем его.
   const [manualName, setManualName] = useState("");
+  // Экран приёма открыт из поиска (недавний или «ввести вручную»): после сохранения —
+  // search_added с этим источником (замер поиска, 09.10.2026).
+  const [searchSource, setSearchSource] = useState<"recent" | "manual" | null>(null);
   // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
   // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
   const [mealTextPrefill, setMealTextPrefill] = useState("");
@@ -855,6 +858,7 @@ export default function App() {
             setTextMeal(null);
             setRepeatMeal(null);
             setManualName(name ?? "");
+            setSearchSource(name ? "manual" : null);
             setView("meal_manual");
           }}
           onDiary={() => setView("meal_diary")}
@@ -868,6 +872,7 @@ export default function App() {
           onRepeat={(item) => {
             // Повтор — новый приём на том же экране, что и ручной: правка граммов, тип
             // приёма, «В дневник». Модель не вызывается, квота не тратится.
+            setSearchSource("recent");
             setTextMeal(null);
             setRepeatMeal(repeatToResult(item, me?.meals_left ?? -1));
             setReturnTo("home");
@@ -944,6 +949,7 @@ export default function App() {
             setTextMeal(null);
             setRepeatMeal(null);
             setManualName(name ?? "");
+            setSearchSource(name ? "manual" : null);
             setView("meal_manual");
           }}
           // Фото снимается с главной «Калорий» — там камера и подсказки кадра.
@@ -954,6 +960,7 @@ export default function App() {
           recent={recentMeals}
           recentPool={recentPool}
           onRepeat={(item) => {
+            setSearchSource("recent");
             setTextMeal(null);
             setRepeatMeal(repeatToResult(item, me?.meals_left ?? -1));
             setReturnTo("meal_diary");
@@ -1201,6 +1208,8 @@ export default function App() {
           // результата, а не «возврат». Отменил — возвращаем ровно туда, откуда
           // пришёл, иначе отмена работала бы как переход.
           onDone={() => {
+            if (searchSource) appEvent("search_added", { source: searchSource });
+            setSearchSource(null);
             setReturnTo(null);
             setTextMeal(null);
             setRepeatMeal(null);
@@ -1216,6 +1225,7 @@ export default function App() {
             setTextMeal(null);
             setRepeatMeal(null);
             setManualName("");
+            setSearchSource(null);
             if (!textMeal) setReturnTo(null);
             setView(back);
           }}

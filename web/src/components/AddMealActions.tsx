@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { FoodRefItem, MealDiaryItem, MealItem } from "../types";
 import type { MealTemplate } from "../api";
-import { addMealTemplate as addMealTemplateApi, deleteMeal as deleteMealApi, createManualMeal as createManualMealApi, getFoodReference } from "../api";
+import { addMealTemplate as addMealTemplateApi, deleteMeal as deleteMealApi, createManualMeal as createManualMealApi, getFoodReference, appEvent } from "../api";
 import { guessMealType, macroSummary, macroWords, macroGapNote } from "../meal";
 import { searchFoods, templateHit, recentHit, knownMacros, referenceDish, sameDishes, SOURCE_LABEL, type SearchHit } from "../foodSearch";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
@@ -28,6 +28,12 @@ import { haptic, notify } from "../telegram";
 // Ключ добавления запоминается до отправки и переживает перезагрузку (pendingSave), повтор
 // после сбоя не создаёт второй записи. «Отменить» удаляет запись на сервере — это не
 // скрытие на экране.
+//
+// Замер (решение владельца 09.10.2026), минимальный: search_opened — панель открыта;
+// search_result {found} — запрос устоялся (секунда без набора), нашлось ли что-то;
+// search_pick {source} — что выбрано; search_added {source} — запись подтверждена сервером
+// (своё блюдо и справочник — здесь; недавний и ручной ввод — App, после сохранения на своём
+// экране). Текст запроса не отправляется и не хранится.
 
 interface Props {
   onPhoto?: () => void;
@@ -48,6 +54,7 @@ interface Props {
   deleteMeal?: typeof deleteMealApi;
   createManual?: typeof createManualMealApi;
   loadReference?: () => Promise<FoodRefItem[]>;
+  track?: typeof appEvent;
 }
 
 interface Added {
@@ -59,6 +66,7 @@ interface Added {
 export default function AddMealActions({
   onPhoto, onText, onManual, recent, recentPool, onRepeat, templates, onDiaryChanged,
   addTemplate = addMealTemplateApi, deleteMeal = deleteMealApi, createManual = createManualMealApi, loadReference = getFoodReference,
+  track = appEvent,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -95,6 +103,19 @@ export default function AddMealActions({
   const q = query.trim();
   const hits = q ? searchFoods(q, { templates, recent: onRepeat ? (recentPool ?? recent) : [], reference: reference ?? [] }) : [];
 
+  // «Нашлось ли» — по устоявшемуся запросу, а не на каждую букву; один раз на запрос.
+  // Сам запрос остаётся здесь, в памяти экрана, — наружу уходит только found.
+  const reported = useRef("");
+  const found = hits.length > 0;
+  useEffect(() => {
+    if (!open || !q || reference === null || reported.current === q) return;
+    const t = setTimeout(() => {
+      reported.current = q;
+      track("search_result", { found });
+    }, SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [open, q, found, reference, track]);
+
   const add = async (hit: SearchHit, grams: number) => {
     if (busy) return;
     if (attemptKey.current?.id !== hit.key) attemptKey.current = { id: hit.key, key: newSaveKey() };
@@ -128,6 +149,7 @@ export default function AddMealActions({
       clearPending(key);
       attemptKey.current = null;
       notify("success");
+      track("search_added", { source: hit.source });
       setAdded({ mealId: res.id!, name: hit.name, kcal: Math.round(res.total?.kcal ?? hit.kcal) });
       setUndo("idle");
       setPicked(null);
@@ -157,6 +179,8 @@ export default function AddMealActions({
   const onHit = (hit: SearchHit) => {
     haptic("light");
     setError("");
+    // Выбор — раскрытие (или экран повтора), не только первое: ещё ничего не записано.
+    if (picked !== hit.key) track("search_pick", { source: hit.source });
     if (hit.recent) {
       onRepeat?.(hit.recent);
       return;
@@ -205,6 +229,7 @@ export default function AddMealActions({
           label="Найти"
           pressed={open}
           onClick={() => {
+            if (!open) track("search_opened");
             setOpen((v) => !v);
             setPicked(null);
             setError("");
@@ -292,7 +317,7 @@ export default function AddMealActions({
               <div role="list" aria-label="Найдено" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {hits.map((h) => row(h, true))}
               </div>
-              <ManualLink name={q} onManual={onManual} quiet />
+              <ManualLink name={q} onManual={(n) => { track("search_pick", { source: "manual" }); onManual(n); }} quiet />
             </>
           )}
 
@@ -307,7 +332,7 @@ export default function AddMealActions({
                 <div style={{ fontSize: 12.5, color: "var(--text3)", lineHeight: 1.45, marginTop: 2 }}>
                   Можно ввести калории сами — название уже подставим.
                 </div>
-                <ManualLink name={q} onManual={onManual} />
+                <ManualLink name={q} onManual={(n) => { track("search_pick", { source: "manual" }); onManual(n); }} />
               </div>
             )
           )}
@@ -375,6 +400,8 @@ function ManualLink({ name, onManual, quiet = false }: { name: string; onManual:
 }
 
 const GRAM_STEP = 10;
+/** Запрос «устоялся» — столько без набора; тогда и считаем, нашлось ли. */
+const SETTLE_MS = 1000;
 const MAX_PORTION = 5000;
 
 /** Вес порции из поля: число больше нуля и не больше 5 кг; иначе null — добавить нельзя. */

@@ -222,11 +222,18 @@ export function opHeaders(): Record<string, string> {
 // text_input_started — человек начал описывать еду словами: напечатал первый символ
 // (entry=typed) или взял пример (entry=example). Парный шаг к photo_picked: «начал ввод»
 // в воронке первого запуска — любое из двух (решение владельца 08.10.2026).
-export type AppEventName = "app_opened" | "mode_chosen" | "photo_picked" | "upload_started" | "text_input_started";
+export type AppEventName =
+  | "app_opened" | "mode_chosen" | "photo_picked" | "upload_started" | "text_input_started"
+  // Единый поиск (09.10.2026): открыл, нашлось ли, что выбрал, добавилось ли. Текст
+  // запроса не отправляется.
+  | "search_opened" | "search_result" | "search_pick" | "search_added";
+
+/** Откуда выбран результат поиска. */
+export type SearchEventSource = "mine" | "recent" | "reference" | "manual";
 
 /** Шаг воронки, который знает только клиент. Best-effort, как shareEvent: телеметрия
  *  никогда не мешает человеку пользоваться приложением. */
-export function appEvent(name: AppEventName, extra: { mode?: string; entry?: string } = {}): void {
+export function appEvent(name: AppEventName, extra: { mode?: string; entry?: string; source?: SearchEventSource; found?: boolean } = {}): void {
   void apiFetch("/api/app/event", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
