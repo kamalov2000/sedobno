@@ -160,8 +160,11 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
 
       {/* Иллюстрация-подсказка — только у «Состава»: там важно показать, КАКОЙ блок снимать.
           В «Калориях» она отжимала фото и текст за край короткого экрана (задание
-          08.10.2026), а что снимать тарелку — понятно и так. */}
-      {meal ? <div style={{ flex: 1, minHeight: 12 }} /> : (
+          08.10.2026), а что снимать тарелку — понятно и так. Действия в «Калориях» стоят
+          сразу под заголовком, а не прижаты к низу: на высоком экране между «Что вы съели?»
+          и камерой оставалась пустая полоса (проверка владельца в Telegram Web, 08.10.2026).
+          Свободное место уходит под ссылки внизу. */}
+      {meal ? <div style={{ height: 18, flexShrink: 0 }} /> : (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
         <div style={{ position: "relative", padding: 12 }}>
           <Corner style={{ top: 0, left: 0, borderTop: "2px solid var(--text3)", borderLeft: "2px solid var(--text3)", borderTopLeftRadius: 5 }} />
@@ -295,8 +298,13 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           </span>
         )}
 
-        <LegalLinks items={["about", "oferta", "privacy"]} />
+        {!meal && <LegalLinks items={["about", "oferta", "privacy"]} />}
       </div>
+      {meal && (
+        <div style={{ marginTop: "auto", paddingTop: 12 }}>
+          <LegalLinks items={["about", "oferta", "privacy"]} />
+        </div>
+      )}
     </div>
   );
 }
