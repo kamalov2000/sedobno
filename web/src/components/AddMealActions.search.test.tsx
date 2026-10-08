@@ -64,7 +64,7 @@ describe("Единый поиск", () => {
     type("греч");
     const list = await screen.findByRole("list", { name: "Найдено" });
     const rows = within(list).getAllByRole("listitem");
-    expect(rows.map((r) => r.textContent)).toEqual([
+    expect(rows.map((r) => r.textContent?.replace(/ /g, " "))).toEqual([
       "Гречка с курицейМоё блюдо · 300 г · Б 30 · Ж 9 · У 52420 ккал",
       "Гречка с масломНедавнее · 200 г · Б 8 · Ж 7 · У 40260 ккал",
       "Гречка варёнаяСправочник · 100 г · Б 4 · Ж 1 · У 21110 ккал",

@@ -324,7 +324,11 @@ function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit;
   const amount = Math.round(hit.amount);
   const portion = hit.unit ? `${amount} ${hit.unit}` : "";
   const macros = knownMacros(hit.macros);
-  const meta = [showSource ? SOURCE_LABEL[hit.source] : "", portion, macros].filter(Boolean).join(" · ");
+  // Перенос — только между частями: «Ж 9» и «300 г» не разрываются (крупный шрифт, 320 px).
+  const meta = [showSource ? SOURCE_LABEL[hit.source] : "", portion, ...(macros ? macros.split(" · ") : [])]
+    .filter(Boolean)
+    .map((part) => part.replace(/ /g, "\u00a0"))
+    .join(" · ");
   const icon = hit.source === "mine" ? "ti-bookmark" : hit.source === "recent" ? "ti-repeat" : "ti-book-2";
   // Имена для чтения с экрана — как раньше у «Повторить»: недавний открывает экран повтора.
   const label = hit.recent ? `Повторить: ${hit.name}, ${kcal} ккал` : `${hit.name}: ${portion || "порция"}, ${kcal} ккал`;
@@ -340,9 +344,9 @@ function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit;
       >
         <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 15, color: "var(--cal-num)", flex: "none", marginTop: 2 }} />
         <span style={{ flex: 1, minWidth: 0 }}>
-          {/* В списке — одна строка; у раскрытого названия целиком: перед добавлением
-              человек должен видеть, ЧТО именно добавляет. */}
-          <span style={{ display: "block", ...(open ? { overflowWrap: "anywhere" as const } : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }) }}>{hit.name}</span>
+          {/* Название целиком, с переносом: в выдаче похожие названия («Гречка с курицей» /
+              «Гречка с маслом») различаются как раз концом, обрезать его нельзя. */}
+          <span style={{ display: "block", overflowWrap: "anywhere" }}>{hit.name}</span>
           {/* Переносится, а не обрезается: БЖУ должны быть видны до добавления и на 320 px. */}
           {meta && !open && <span style={{ display: "block", fontSize: 11.5, color: "var(--text3)", marginTop: 1, lineHeight: 1.4 }}>{meta}</span>}
         </span>
