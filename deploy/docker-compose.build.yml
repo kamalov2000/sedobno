@@ -1,0 +1,20 @@
+# ТОЛЬКО для локальной разработки: сборка образов из исходников поверх
+# docker-compose.yml (make build / make up). На сервере не используется — там образы
+# привозит scripts/ship_images.sh (docs/incidents/2026-10-09-dockerd-crash.md).
+services:
+  migrate:
+    build:
+      context: ../api
+    pull_policy: build
+  seed:
+    build:
+      context: ../api
+    pull_policy: build
+  api:
+    build:
+      context: ../api
+    pull_policy: build
+  web:
+    build:
+      context: ../web
+    pull_policy: build

@@ -1,5 +1,10 @@
 # Стек «Съедобно»: postgres + api (Go) + web (nginx-статика) + caddy (реверс-прокси/TLS).
 # Отдельный compose-проект от ClipsGold (§4 SPEC).
+#
+# ОБРАЗЫ НЕ СОБИРАЮТСЯ НА СЕРВЕРЕ (09.10.2026): сборка на общем VPS уронила dockerd —
+# docs/incidents/2026-10-09-dockerd-crash.md. Образы собирает и привозит
+# scripts/ship_images.sh prod; make deploy помечает образ своего HEAD как :current.
+# Для локальной разработки сборка — deploy/docker-compose.build.yml (make build / up).
 name: sostav
 
 services:
@@ -21,8 +26,8 @@ services:
 
   # Одноразовый прогон миграций перед стартом api.
   migrate:
-    build:
-      context: ../api
+    image: sostav-api:current
+    pull_policy: never
     env_file: ../.env
     entrypoint: ["/usr/local/bin/migrate"]
     command: ["up"]
@@ -34,8 +39,8 @@ services:
   # Одноразовая загрузка словаря добавок (§6). Не запускается на `up` (профиль tools),
   # вызывается через `make seed`. Entrypoint задан здесь, чтобы избежать путей в CLI.
   seed:
-    build:
-      context: ../api
+    image: sostav-api:current
+    pull_policy: never
     profiles: ["tools"]
     env_file: ../.env
     entrypoint: ["/usr/local/bin/seed"]
@@ -47,8 +52,8 @@ services:
     restart: "no"
 
   api:
-    build:
-      context: ../api
+    image: sostav-api:current
+    pull_policy: never
     restart: unless-stopped
     env_file: ../.env
     expose:
@@ -71,8 +76,8 @@ services:
       start_period: 10s
 
   web:
-    build:
-      context: ../web
+    image: sostav-web:current
+    pull_policy: never
     restart: unless-stopped
     expose:
       - "80"

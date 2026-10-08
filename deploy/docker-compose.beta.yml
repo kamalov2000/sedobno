@@ -5,6 +5,12 @@
 # (проект sostav: postgres/api/web/caddy) этим файлом НЕ затрагивается.
 #
 # Запускать из отдельного git-worktree ветки feature/calories (см. Makefile beta-*).
+#
+# ОБРАЗЫ НЕ СОБИРАЮТСЯ НА СЕРВЕРЕ (09.10.2026): сборка здесь уронила dockerd вместе с
+# продом — docs/incidents/2026-10-09-dockerd-crash.md. Образы собирает и привозит
+# scripts/ship_images.sh beta; make beta-up помечает образ своего HEAD как :current.
+# Секции build: нет, pull_policy: never — compose на сервере не может ни собрать, ни
+# подтянуть образ сам. migrate/seed/api — один и тот же образ (в нём три бинарника).
 name: sostav-beta
 
 services:
@@ -23,8 +29,8 @@ services:
 
   # Одноразовый прогон миграций перед стартом api-beta (те же embedded-миграции).
   migrate-beta:
-    build:
-      context: ../api
+    image: sostav-beta-api:current
+    pull_policy: never
     env_file: .env.beta
     entrypoint: ["/usr/local/bin/migrate"]
     command: ["up"]
@@ -36,8 +42,8 @@ services:
 
   # Словарь добавок для режима «Состав» (профиль tools — вызывается make beta-up).
   seed-beta:
-    build:
-      context: ../api
+    image: sostav-beta-api:current
+    pull_policy: never
     profiles: ["tools"]
     env_file: .env.beta
     entrypoint: ["/usr/local/bin/seed"]
@@ -50,8 +56,8 @@ services:
     restart: "no"
 
   api-beta:
-    build:
-      context: ../api
+    image: sostav-beta-api:current
+    pull_policy: never
     restart: unless-stopped
     env_file: .env.beta
     expose:
@@ -70,8 +76,8 @@ services:
       start_period: 10s
 
   web-beta:
-    build:
-      context: ../web
+    image: sostav-beta-web:current
+    pull_policy: never
     restart: unless-stopped
     expose:
       - "80"
