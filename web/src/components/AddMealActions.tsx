@@ -3,7 +3,7 @@ import type { FoodRefItem, MealDiaryItem, MealItem } from "../types";
 import type { MealTemplate } from "../api";
 import { addMealTemplate as addMealTemplateApi, deleteMeal as deleteMealApi, createManualMeal as createManualMealApi, getFoodReference } from "../api";
 import { guessMealType, macroSummary, macroWords, macroGapNote } from "../meal";
-import { searchFoods, templateHit, recentHit, knownMacros, referenceDish, SOURCE_LABEL, type SearchHit } from "../foodSearch";
+import { searchFoods, templateHit, recentHit, knownMacros, referenceDish, sameDishes, SOURCE_LABEL, type SearchHit } from "../foodSearch";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import { haptic, notify } from "../telegram";
 
@@ -87,7 +87,10 @@ export default function AddMealActions({
     };
   }, [open, reference, loadReference]);
 
-  const hasRecent = !!onRepeat && !!recent && recent.length > 0;
+  // Недавний приём того же состава, что и своё блюдо, — одна и та же еда: второй строкой
+  // не показываем (в выдаче поиска — то же правило, searchFoods).
+  const recentShown = (recent ?? []).filter((it) => !(templates ?? []).some((t) => sameDishes(t.dishes, it.dishes)));
+  const hasRecent = !!onRepeat && recentShown.length > 0;
   const hasTemplates = !!templates && templates.length > 0;
   const q = query.trim();
   const hits = q ? searchFoods(q, { templates, recent: onRepeat ? (recentPool ?? recent) : [], reference: reference ?? [] }) : [];
@@ -236,8 +239,9 @@ export default function AddMealActions({
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, height: 42, padding: "0 12px", borderRadius: 11, border: "1px solid var(--border)", background: "var(--bg)" }}>
             <i className="ti ti-search" aria-hidden="true" style={{ fontSize: 16, color: "var(--text3)", flex: "none" }} />
+            {/* type="text", а не "search": у search браузер рисует свой крестик рядом с нашим. */}
             <input
-              type="search"
+              type="text"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value.slice(0, 60));
@@ -271,7 +275,7 @@ export default function AddMealActions({
                 <>
                   <SectionLabel>НЕДАВНИЕ</SectionLabel>
                   <div role="list" aria-label="Повторить прошлый приём" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {recent!.map((it) => row(recentHit(it), false))}
+                    {recentShown.map((it) => row(recentHit(it), false))}
                   </div>
                 </>
               )}
@@ -339,7 +343,8 @@ function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit;
           {/* В списке — одна строка; у раскрытого названия целиком: перед добавлением
               человек должен видеть, ЧТО именно добавляет. */}
           <span style={{ display: "block", ...(open ? { overflowWrap: "anywhere" as const } : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }) }}>{hit.name}</span>
-          {meta && !open && <span style={{ display: "block", fontSize: 11.5, color: "var(--text3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{meta}</span>}
+          {/* Переносится, а не обрезается: БЖУ должны быть видны до добавления и на 320 px. */}
+          {meta && !open && <span style={{ display: "block", fontSize: 11.5, color: "var(--text3)", marginTop: 1, lineHeight: 1.4 }}>{meta}</span>}
         </span>
         {/* Раскрыто — калории в строке порции ниже, а название получает всю ширину. */}
         {!open && <span style={{ flex: "none", color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>{kcal} ккал</span>}

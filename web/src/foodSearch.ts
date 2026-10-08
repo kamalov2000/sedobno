@@ -140,3 +140,8 @@ export function knownMacros(m: Record<MacroKey, MacroState>): string {
 function shape(dishes: MealItem[]): string {
   return dishes.map((d) => normalize(d.name)).sort().join("|");
 }
+
+/** Один и тот же состав блюд (по названиям) — своё блюдо и недавний приём из него. */
+export function sameDishes(a: MealItem[], b: MealItem[]): boolean {
+  return shape(a) === shape(b);
+}
