@@ -11,9 +11,12 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/sostav/api/internal/tg"
 )
 
 const (
@@ -86,11 +89,19 @@ func (s *Server) tickReminder(ctx context.Context, now time.Time) {
 		uid := c.UserID
 		if err := s.tg.SendMessage(ctx, c.TelegramID, reminderText, s.reminderMarkup()); err != nil {
 			blocked := s.handleSendError(ctx, c.UserID, err)
-			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "reminder", "blocked": blocked})
+			permanent := errors.Is(err, tg.ErrRejected)
+			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "reminder", "blocked": blocked, "permanent": permanent})
 			if blocked {
 				continue
 			}
 			s.log.Warn("напоминания: отправка", "err", err, "user", c.UserID)
+			// Окончательный отказ — день закрыт, повторять бессмысленно. Временный сбой
+			// (сеть, 5xx, 429) — следующий тик в пределах окна попробует снова.
+			if permanent {
+				if merr := s.store.MarkReminderSent(ctx, c.UserID, today); merr != nil {
+					s.log.Warn("напоминания: отметка после отказа", "err", merr, "user", c.UserID)
+				}
+			}
 			continue
 		}
 		if err := s.store.MarkReminderSent(ctx, c.UserID, today); err != nil {

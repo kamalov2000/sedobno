@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/sostav/api/internal/tg"
 )
 
 // Вечерний итог дня (ретеншн, п.3) — единственная механика, которая сама зовёт человека
@@ -89,9 +92,16 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 			// Бот заблокирован — исключаем из рассылок насовсем (выборка теперь его не
 			// возьмёт). Раньше такой человек попадал сюда КАЖДЫЙ вечер.
 			blocked := s.handleSendError(ctx, c.UserID, err)
-			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "digest", "blocked": blocked})
+			permanent := errors.Is(err, tg.ErrRejected)
+			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "digest", "blocked": blocked, "permanent": permanent})
 			if blocked {
 				continue
+			}
+			// Окончательный отказ — итог за этот день закрыт, без повторов каждые 15 минут.
+			if permanent {
+				if merr := s.store.MarkDigestSent(ctx, c.UserID, localDay); merr != nil {
+					s.log.Warn("итог дня: отметка после отказа", "err", merr, "user", c.UserID)
+				}
 			}
 			// Прочие сбои временные: отметку не ставим, следующий заход попробует снова.
 			s.log.Warn("итог дня: отправка", "err", err, "user", c.UserID)

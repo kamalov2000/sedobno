@@ -45,6 +45,12 @@ type apiResponse struct {
 // пользователя заблокированным, а не оставляют его в выборке до следующего тика.
 var ErrBotBlocked = errors.New("бот заблокирован пользователем")
 
+// ErrRejected — Telegram окончательно отклонил запрос (4xx, кроме 429 «слишком часто»):
+// «chat not found», неверный параметр. Повтор через минуту ответит тем же. Рассыльщики по
+// этой ошибке закрывают свой день и не повторяют — проверка на бете 08.10.2026 показала
+// пять попыток подряд за час на «chat not found».
+var ErrRejected = errors.New("Telegram отклонил запрос")
+
 // isBlockedResponse распознаёт «писать больше некому» по ответу Bot API. Telegram отдаёт
 // это несколькими формулировками с кодом 403 (заблокировал, удалил чат, деактивирован) —
 // смысл для нас один: адресата больше нет, повторять бессмысленно.
@@ -95,6 +101,9 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 		// которому напоминание пытались отправить ежечасно шесть раз подряд.
 		if isBlockedResponse(ar.ErrorCode, ar.Description) {
 			return nil, fmt.Errorf("%w: %s", ErrBotBlocked, err)
+		}
+		if ar.ErrorCode >= 400 && ar.ErrorCode < 500 && ar.ErrorCode != 429 {
+			return nil, fmt.Errorf("%w: %s", ErrRejected, err)
 		}
 		return nil, err
 	}

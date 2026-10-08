@@ -234,3 +234,31 @@ func TestTrialReminder_ДнёмИВытесняетИтог(t *testing.T) {
 		t.Error("отправка не посчитана")
 	}
 }
+
+// Окончательный отказ Telegram («chat not found») — одна попытка за день, а не каждые
+// 10 минут до конца окна (бета, 08.10.2026: было пять попыток за час).
+func TestReminder_ОкончательныйОтказНеПовторяется(t *testing.T) {
+	r := newNotifyRig(t, 999000834)
+	calls := 0
+	r.spy.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(400)
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`))
+	})
+	r.patch(t, map[string]any{"device_tz": "Europe/Moscow", "reminder_enabled": true, "reminder_time": "13:00"})
+	msk := userLocation("Europe/Moscow")
+	for _, m := range []int{5, 15, 25} {
+		r.s.tickReminder(context.Background(), time.Date(2026, 10, 8, 13, m, 0, 0, msk))
+	}
+	if calls != 1 {
+		t.Errorf("попыток отправки %d, ждали 1", calls)
+	}
+	if n := r.eventCount(t, "notify_error"); n != 1 {
+		t.Errorf("ошибок записано %d, ждали 1", n)
+	}
+	// Назавтра — снова попытка (человек мог открыть чат с ботом).
+	r.s.tickReminder(context.Background(), time.Date(2026, 10, 9, 13, 5, 0, 0, msk))
+	if calls != 2 {
+		t.Errorf("назавтра попыток всего %d, ждали 2", calls)
+	}
+}
