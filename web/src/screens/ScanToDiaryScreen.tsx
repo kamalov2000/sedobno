@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ScanResult, MealType } from "../types";
-import { createManualMeal } from "../api";
+import { createManualMeal, createMealTemplate, ApiError } from "../api";
 import { haptic, notify } from "../telegram";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, productDisplayName, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
@@ -20,7 +20,8 @@ import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, productDisplayName, labe
 interface Props {
   result: ScanResult;
   onBack: () => void;
-  onSaved: () => void;
+  /** note — что стало с «Мои блюда», если человек отметил сохранение (для плашки в дневнике). */
+  onSaved: (note?: string) => void;
 }
 
 export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
@@ -34,6 +35,10 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  // «Сохранить в „Мои блюда“» (п.16, 08.10.2026): продукт с этикетки — один раз
+  // подтвердил название и КБЖУ, в следующий раз «Повторить» → порция, без сканирования и
+  // без модели. По умолчанию выключено: сохраняем по явному выбору.
+  const [keepAsMine, setKeepAsMine] = useState(false);
   // Надёжное сохранение — тот же механизм, что у редактора приёма (pendingSave): ключ
   // выдаётся на ПЕРВУЮ попытку и живёт до подтверждения. Повтор после сбоя — с тем же
   // ключом, даже если порцию поправили: сервер обновит уже записанное, а не создаст второе.
@@ -73,10 +78,13 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         ...(mealType ? { meal_type: mealType } : {}),
       };
       writePending({ key: saveKey.current, body, at: Date.now() });
-      await createManualMeal(body);
+      const saved = await createManualMeal(body);
       clearPending(saveKey.current);
       notify("success");
-      onSaved();
+      // Приём уже в дневнике. Сбой «Моих блюд» его не отменяет и не выдаётся за сбой
+      // сохранения — говорим отдельно, что получилось.
+      const note = keepAsMine && saved.id ? await keepTemplate(saved.id, name.trim()) : undefined;
+      onSaved(note);
     } catch {
       // Ответа нет — запись могла уже лечь. Не утверждаем, что её нет; введённое на месте.
       notify("error");
@@ -86,6 +94,8 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
       saving.current = false;
     }
   };
+
+  const per100 = (v?: number | null) => (v == null ? "—" : String(Math.round(v * 10) / 10).replace(".", ","));
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -102,6 +112,11 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         </h1>
         <div style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.45, marginBottom: 18 }}>
           КБЖУ уже посчитаны по этикетке — осталось назвать продукт и выбрать порцию.
+        </div>
+        {/* Что именно прочитано — человек подтверждает это глазами, прежде чем записать
+            приём и тем более сохранить продукт на будущее. Не прочиталось — «—», не ноль. */}
+        <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.5, marginTop: -8, marginBottom: 18, padding: "9px 12px", background: "var(--bg-soft)", borderRadius: 10 }}>
+          По этикетке на 100 {unit}: {per100(nutrition?.kcal)} ккал · Б {per100(nutrition?.protein_g)} · Ж {per100(nutrition?.fat_g)} · У {per100(nutrition?.carb_g)}
         </div>
 
         <label style={{ display: "block", fontSize: 12.5, color: "var(--text2)", marginBottom: 6 }}>Название продукта</label>
@@ -185,6 +200,24 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
           })}
         </div>
 
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, marginTop: 20, padding: "12px 14px", border: "1px solid", borderColor: keepAsMine ? "var(--cal-border)" : "var(--border)", borderRadius: 12, cursor: "pointer", background: keepAsMine ? "var(--cal-soft)" : "transparent" }}>
+          <input
+            type="checkbox"
+            checked={keepAsMine}
+            onChange={(e) => {
+              haptic("light");
+              setKeepAsMine(e.target.checked);
+            }}
+            style={{ width: 20, height: 20, margin: "1px 0 0", flex: "none", accentColor: "var(--cal)" }}
+          />
+          <span style={{ fontSize: 13.5, color: "var(--text)", lineHeight: 1.4 }}>
+            Сохранить в «Мои блюда»
+            <span style={{ display: "block", fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+              В следующий раз: «Повторить» → порция, без сканирования и без разборов
+            </span>
+          </span>
+        </label>
+
         {kcalPreview != null && (
           <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 20, padding: "12px 14px", background: "var(--cal-soft)", border: "1px solid var(--cal-border)", borderRadius: 12 }}>
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 20, fontWeight: 600, color: "var(--cal-num)" }}>{kcalPreview}</span>
@@ -218,6 +251,20 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
       </div>
     </div>
   );
+}
+
+/** Сохранить только что записанный приём как «моё блюдо». Возвращает текст для плашки в
+ *  дневнике: что получилось. Название занято — не ошибка: продукт уже в списке. */
+async function keepTemplate(mealId: number, name: string): Promise<string> {
+  try {
+    const t = await createMealTemplate(mealId, name);
+    return `Приём сохранён. «${t.name}» — в ваших блюдах: «Повторить» на главной`;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      return `Приём сохранён. ${err.message}`;
+    }
+    return "Приём сохранён, а в «Мои блюда» добавить не удалось — откройте приём в дневнике → «Сохранить как моё блюдо»";
+  }
 }
 
 function fmtAmount(v: number): string {

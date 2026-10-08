@@ -1051,9 +1051,13 @@ export default function App() {
             setView(returnTo ?? "result");
             setReturnTo(null);
           }}
-          onSaved={() => {
+          onSaved={(note) => {
             setTodayHasMeals(true);
             setReturnTo(null);
+            if (note) {
+              setDiaryNotice(note);
+              loadTemplates();
+            }
             setView("meal_diary");
           }}
         />
