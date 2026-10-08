@@ -20,6 +20,7 @@ type TrialReminderCandidate struct {
 	ExpiresAt  time.Time
 	MealsUsed  int
 	ScansUsed  int
+	TZ         string
 }
 
 // TrialReminderCandidates — неподписчики, у кого неделя истекает в ближайшие within и
@@ -27,7 +28,7 @@ type TrialReminderCandidate struct {
 // закончившемуся сроку — это письмо не о том, и человеку оно только путает картину.
 func (s *Store) TrialReminderCandidates(ctx context.Context, within time.Duration) ([]TrialReminderCandidate, error) {
 	const q = `
-SELECT id, telegram_id, trial_expires_at, free_meals_used, free_scans_used
+SELECT id, telegram_id, trial_expires_at, free_meals_used, free_scans_used, COALESCE(tz, '')
 FROM users
 WHERE is_subscribed = false
   AND blocked_at IS NULL
@@ -43,7 +44,7 @@ ORDER BY trial_expires_at`
 	var out []TrialReminderCandidate
 	for rows.Next() {
 		var c TrialReminderCandidate
-		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.ExpiresAt, &c.MealsUsed, &c.ScansUsed); err != nil {
+		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.ExpiresAt, &c.MealsUsed, &c.ScansUsed, &c.TZ); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

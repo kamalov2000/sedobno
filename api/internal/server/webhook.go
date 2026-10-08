@@ -269,6 +269,9 @@ func (s *Server) handleCallback(w http.ResponseWriter, ctx context.Context, cq *
 	if cq.Data == callbackSupport && cq.From != nil {
 		s.promptSupport(ctx, cq.From.ID)
 	}
+	if (cq.Data == callbackReminderPause || cq.Data == callbackReminderOff) && cq.From != nil && s.pool != nil {
+		s.handleReminderCallback(ctx, cq.From.ID, cq.Data)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -286,6 +289,11 @@ func (s *Server) handleStopDigest(w http.ResponseWriter, ctx context.Context, ms
 		return
 	}
 	found, err := s.store.SetDigestEnabledByTelegram(ctx, msg.From.ID, false)
+	if err == nil && found {
+		if uid, uerr := s.store.UserIDByTelegramID(ctx, msg.From.ID); uerr == nil {
+			_ = s.store.InsertEvent(ctx, &uid, "digest_disabled", map[string]any{"source": "bot"})
+		}
+	}
 	text := "Больше не буду присылать итоги дня. Включить обратно — тумблером в профиле."
 	if err != nil {
 		s.log.Warn("итог дня: отписка", "err", err, "tg", msg.From.ID)

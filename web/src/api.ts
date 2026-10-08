@@ -26,6 +26,7 @@ import type {
   WeightResponse,
   WaterResponse,
   SubPlan,
+  NotifySettings,
 } from "./types";
 
 let token: string | null = null;
@@ -562,6 +563,33 @@ export interface NutritionProfilePatch {
 /** PATCH /api/profile/nutrition — сохранить профиль, сервер пересчитывает норму. */
 export async function patchProfileNutrition(body: NutritionProfilePatch): Promise<NutritionProfile> {
   const res = await apiFetch("/api/profile/nutrition", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await readMessage(res));
+  return res.json();
+}
+
+/** Правка настроек уведомлений (08.10.2026). Любое подмножество полей. */
+export interface NotifyPatch {
+  /** Пояс устройства — приложение шлёт при запуске; ручной выбор человека не перезаписывает. */
+  device_tz?: string;
+  /** Пояс, выбранный человеком; "" — вернуться к поясу устройства. */
+  tz?: string;
+  reminder_enabled?: boolean;
+  /** «ЧЧ:ММ» местного времени. */
+  reminder_time?: string;
+  /** Снять паузу напоминаний. */
+  resume?: boolean;
+  digest_enabled?: boolean;
+  /** Карточка-предложение показана (после первой записи). */
+  offered?: boolean;
+}
+
+/** PATCH /api/profile/notifications — ответ: актуальные настройки с сервера. */
+export async function patchNotifications(body: NotifyPatch): Promise<NotifySettings> {
+  const res = await apiFetch("/api/profile/notifications", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

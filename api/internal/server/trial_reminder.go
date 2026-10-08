@@ -47,7 +47,10 @@ func (s *Server) StartTrialReminder(ctx context.Context) {
 }
 
 // tickTrialReminder — один проход.
-func (s *Server) tickTrialReminder(ctx context.Context) {
+func (s *Server) tickTrialReminder(ctx context.Context) { s.tickTrialReminderAt(ctx, time.Now()) }
+
+// tickTrialReminderAt — проход с заданным «сейчас» (местный час проверяется по нему).
+func (s *Server) tickTrialReminderAt(ctx context.Context, now time.Time) {
 	cands, err := s.store.TrialReminderCandidates(ctx, trialReminderWindow)
 	if err != nil {
 		s.log.Warn("напоминание о триале: выборка кандидатов", "err", err)
@@ -55,6 +58,13 @@ func (s *Server) tickTrialReminder(ctx context.Context) {
 	}
 	sent := 0
 	for _, c := range cands {
+		// Днём по местному времени (решение владельца 08.10.2026): до 08.10 оно уходило в
+		// любой час, и 6 из 75 пришли в 01:00–04:00 МСК. Суточного окна хватает: в любые
+		// 24 часа есть дневные часы.
+		local := now.In(userLocation(c.TZ))
+		if !trialDaytime(local) {
+			continue
+		}
 		text := trialReminderText(c.MealsUsed, c.ScansUsed, s.cfg.SBPPriceRub)
 		var markup any
 		if s.cfg.WebAppURL != "" {
@@ -77,7 +87,12 @@ func (s *Server) tickTrialReminder(ctx context.Context) {
 		if err := s.store.MarkTrialReminderSent(ctx, c.UserID); err != nil {
 			s.log.Warn("напоминание о триале: отметка", "err", err, "user", c.UserID)
 		}
+		// Обязательное сообщение дня: необязательный итог в этот день не уходит.
+		if err := s.store.MarkServiceMsg(ctx, c.UserID, local.Format(dayLayout)); err != nil {
+			s.log.Warn("напоминание о триале: отметка дня", "err", err, "user", c.UserID)
+		}
 		_ = s.store.InsertEvent(ctx, &c.UserID, "trial_reminder_sent", nil)
+		_ = s.store.InsertEvent(ctx, &c.UserID, "notify_sent", map[string]any{"kind": "trial"})
 		sent++
 	}
 	if sent > 0 {

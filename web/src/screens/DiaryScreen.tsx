@@ -43,6 +43,10 @@ interface Props {
   /** Явный факт сохранения: показываем сверху, когда человек пришёл сюда сразу после
    *  «В дневник» (задание владельца 08.10.2026). */
   notice?: string;
+  /** Колокольчик в шапке — экран «Уведомления» (доступен и без рассчитанной нормы). */
+  onOpenNotifications?: () => void;
+  /** Предложение уведомлений после первой записи (App решает, показывать ли). */
+  offer?: React.ReactNode;
   /** «Мои блюда» (п.16) — в разделе «Повторить» футера. */
   templates?: MealTemplate[];
 }
@@ -72,7 +76,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen, templates,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen, templates, onOpenNotifications, offer,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -280,6 +284,16 @@ export default function DiaryScreen({
           <i className="ti ti-arrow-left" aria-hidden="true" style={{ fontSize: 21 }} />
         </button>
         <span style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", flex: 1 }}>Дневник</span>
+        {onOpenNotifications && (
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            aria-label="Уведомления"
+            style={{ width: 38, height: 38, borderRadius: 10, border: "1px solid var(--border)", background: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <i className="ti ti-bell" aria-hidden="true" style={{ fontSize: 18 }} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => data && canShare && onShare!(data, hasNorm ? profile : undefined)}
@@ -317,6 +331,7 @@ export default function DiaryScreen({
             onTrash={onTrash}
             onOpen={onOpen}
             notice={notice}
+            offer={offer}
             onOpenWizard={onOpenWizard}
             water={data ? { ml: data.water_ml, goalMl: data.water_goal_ml } : undefined}
             streak={streak}
@@ -376,6 +391,7 @@ function DayView({
   weightSummary,
   onOpenWeight,
   budgets,
+  offer,
 }: {
   day: string | null;
   today: string;
@@ -395,6 +411,7 @@ function DayView({
   onTrash: (item: MealDiaryItem) => void;
   onOpen?: (item: MealDiaryItem) => void;
   notice?: string;
+  offer?: React.ReactNode;
   onOpenWizard: () => void;
 }) {
   const atToday = day != null && today !== "" && day >= today;
@@ -428,6 +445,7 @@ function DayView({
           <span>{notice}</span>
         </div>
       )}
+      {offer}
       {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} empty={empty} onOpenWizard={onOpenWizard} />)}
 
       {loading && empty && <Muted>Загружаем…</Muted>}

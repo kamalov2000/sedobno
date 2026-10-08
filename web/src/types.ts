@@ -60,6 +60,8 @@ export interface Me {
   /** Тумблер вечернего итога дня. Всегда приходит с сервера — переключатель в профиле
    *  рисуется по нему. Нет поля (старый бэк) — тумблер не показываем вовсе. */
   daily_digest_enabled?: boolean;
+  /** Напоминание, итог, пояс (08.10.2026). Нет — старый бэк или сбой чтения. */
+  notifications?: NotifySettings;
   is_subscribed: boolean;
   /** Неделя полного доступа (модель с 27.08.2026). trial_active — идёт ли она сейчас;
    *  trial_days_left — сколько полных суток осталось (округление вверх, в последний день
@@ -409,4 +411,19 @@ export interface WaterResponse {
 /** GET /api/meals/days?from&to — дневные агрегаты за период (недельный экран). */
 export interface MealDays {
   days: MealDaily[];
+}
+
+/** Настройки уведомлений (GET /api/me → notifications, PATCH /api/profile/notifications). */
+export interface NotifySettings {
+  /** Действующий пояс; "" — устройство ещё не прислало (сервер считает Москву). */
+  tz: string;
+  /** Пояс выбран человеком вручную — устройство его не перезаписывает. */
+  tz_manual: boolean;
+  reminder_enabled: boolean;
+  reminder_time?: string;
+  /** Напоминание на паузе до этой местной даты (не включая). */
+  reminder_paused_until?: string;
+  digest_enabled: boolean;
+  /** Предложение включить уже показано (или человек был до 08.10.2026). */
+  offered: boolean;
 }

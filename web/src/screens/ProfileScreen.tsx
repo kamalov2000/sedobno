@@ -20,6 +20,8 @@ interface Props {
    *  (App держит снимок /me, из которого рисуется весь остальной интерфейс). */
   digestEnabled?: boolean;
   onDigestChange?: (enabled: boolean) => void;
+  /** Экран «Уведомления» (напоминание, итог, пояс). Задан — вместо тумблера итога. */
+  onOpenNotifications?: () => void;
 }
 
 const NBSP = " ";
@@ -35,7 +37,7 @@ function yearsWord(n: number): string {
 
 const SEX_LABEL: Record<string, string> = { male: "Мужской", female: "Женский" };
 
-export default function ProfileScreen({ profile, onBack, onEditField, digestEnabled, onDigestChange }: Props) {
+export default function ProfileScreen({ profile, onBack, onEditField, digestEnabled, onDigestChange, onOpenNotifications }: Props) {
   const nowYear = new Date().getFullYear();
   const age = profile.birth_year ? nowYear - profile.birth_year : null;
   const activity = ACTIVITY.find((a) => a.key === profile.activity_level);
@@ -101,8 +103,21 @@ export default function ProfileScreen({ profile, onBack, onEditField, digestEnab
         {/* Вечерний итог — единственное, что бот шлёт сам, поэтому выключатель живёт на
             видном месте, а не за командой, которую надо помнить. Команда /stop_daily
             (и просто «стоп» в ответ боту) остаётся вторым путём. */}
-        {digestEnabled != null && onDigestChange && (
-          <DigestToggle enabled={digestEnabled} onChange={onDigestChange} />
+        {onOpenNotifications ? (
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            style={{ width: "100%", marginTop: 18, border: "1px solid var(--border)", borderRadius: 14, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12, background: "none", cursor: "pointer", textAlign: "left", fontFamily: "'Golos Text',sans-serif" }}
+          >
+            <i className="ti ti-bell" aria-hidden="true" style={{ fontSize: 19, color: "var(--cal-num)", flex: "none" }} />
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontSize: 14, color: "var(--text)" }}>Уведомления</span>
+              <span style={{ display: "block", fontSize: 11.5, color: "var(--text2)", marginTop: 2 }}>Напоминание, итог дня, часовой пояс</span>
+            </span>
+            <i className="ti ti-chevron-right" aria-hidden="true" style={{ fontSize: 16, color: "var(--text3)" }} />
+          </button>
+        ) : (
+          digestEnabled != null && onDigestChange && <DigestToggle enabled={digestEnabled} onChange={onDigestChange} />
         )}
 
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14 }}>

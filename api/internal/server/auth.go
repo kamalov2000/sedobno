@@ -64,6 +64,9 @@ type meView struct {
 	// DailyDigestEnabled — состояние тумблера вечернего итога (экран профиля).
 	// Всегда присутствует: фронт рисует переключатель по нему, а не по догадке.
 	DailyDigestEnabled bool `json:"daily_digest_enabled"`
+	// Notifications — напоминание, итог, пояс (08.10.2026). Нет — сбой чтения, экран
+	// показывает прежний тумблер итога.
+	Notifications *notifyView `json:"notifications,omitempty"`
 	// SubscriptionExpiresAt — когда истекает активная подписка (для бейджа на главном
 	// экране). Опущено, если активной подписки нет.
 	SubscriptionExpiresAt *time.Time `json:"subscription_expires_at,omitempty"`
@@ -245,6 +248,7 @@ func (s *Server) meViewFor(ctx context.Context, u store.User) meView {
 		SBPAvailable:       s.cfg.SBPEnabled,
 		SBPRecurrent:       s.cfg.SBPRecurrentEnabled,
 	}
+	v.Notifications = s.notifyViewFor(ctx, u.ID)
 	if !u.IsSubscribed {
 		exp := u.TrialExpiresAt
 		v.TrialExpiresAt = &exp

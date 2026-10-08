@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, localDay, listMealTemplates, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, localDay, listMealTemplates, patchNotifications, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -13,6 +13,9 @@ import MealResultScreen from "./screens/MealResultScreen";
 import MealStateScreen from "./screens/MealStateScreen";
 import DiaryScreen from "./screens/DiaryScreen";
 import AddMealTextScreen from "./screens/AddMealTextScreen";
+import NotificationsScreen from "./screens/NotificationsScreen";
+import NotifyOffer from "./components/NotifyOffer";
+import { deviceTZ } from "./notify";
 import WeightScreen from "./screens/WeightScreen";
 import WeightEntryScreen from "./screens/WeightEntryScreen";
 import ProfileWizard from "./screens/ProfileWizard";
@@ -30,7 +33,7 @@ import { flushPending } from "./pendingSave";
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
 // Подписки v2: экран управления подпиской (тариф, следующее списание, отмена).
-type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription";
+type View = "home" | "loading" | "result" | "not_scored" | "error" | "paywall" | "history" | "meal_result" | "meal_diary" | "profile" | "profile_wizard" | "meal_state" | "weight" | "weight_entry" | "meal_manual" | "meal_text" | "meal_history" | "scan_to_diary" | "subscription" | "notifications";
 type Phase = "booting" | "ready" | "error";
 
 interface ErrorCopy {
@@ -409,7 +412,20 @@ export default function App() {
       // «запустил бота», и весь провал «нажал кнопку, но не дошёл» был неразличим.
       // entry=default — режим не выбирался ни разу, и приложение открыто в «Калориях» по
       // умолчанию (решение владельца 08.10.2026). Так в воронке видно, кто пришёл без выбора.
-      appEvent("app_opened", profile.start_mode ? { mode: profile.start_mode } : { mode: "meal", entry: "default" });
+      // entry=reminder — открыто кнопкой «Записать» из напоминания: переход считается, но
+      // доказательством удержания не называется (решение владельца 08.10.2026).
+      const fromReminder = new URLSearchParams(window.location.search).get("from") === "reminder";
+      appEvent("app_opened", fromReminder
+        ? { mode: profile.start_mode ?? "meal", entry: "reminder" }
+        : profile.start_mode ? { mode: profile.start_mode } : { mode: "meal", entry: "default" });
+      // Пояс — с устройства (решение владельца 08.10.2026), если человек не выбрал свой.
+      // Best-effort: не вышло — сервер считает по прежнему поясу или по Москве.
+      const tz = deviceTZ();
+      if (tz && profile.notifications && !profile.notifications.tz_manual && profile.notifications.tz !== tz) {
+        void patchNotifications({ device_tz: tz })
+          .then((n) => setMe((m) => (m ? { ...m, notifications: n } : m)))
+          .catch(() => {});
+      }
 
       if (profile.start_mode === "meal" || profile.start_mode === "scan") {
         setModeState(profile.start_mode);
@@ -929,6 +945,11 @@ export default function App() {
           }}
           notice={diaryNotice}
           templates={templates}
+          onOpenNotifications={me?.notifications ? () => setView("notifications") : undefined}
+          // Предложение уведомлений — после ПЕРВОЙ сохранённой записи и один раз.
+          offer={me?.notifications && !me.notifications.offered && (todayHasMeals || hasHistory) ? (
+            <NotifyOffer onDone={(n) => setMe((m) => (m ? { ...m, notifications: n } : m))} />
+          ) : undefined}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
@@ -958,11 +979,19 @@ export default function App() {
           onSaved={() => setView("weight")}
         />
       )}
+      {view === "notifications" && me?.notifications && (
+        <NotificationsScreen
+          settings={me.notifications}
+          onChange={(n) => setMe((m) => (m ? { ...m, notifications: n, daily_digest_enabled: n.digest_enabled } : m))}
+          onBack={() => setView("meal_diary")}
+        />
+      )}
       {view === "profile" && me && (
         <ProfileScreen
           profile={me.nutrition_profile}
           digestEnabled={me.daily_digest_enabled}
           onDigestChange={(enabled) => setMe((m) => (m ? { ...m, daily_digest_enabled: enabled } : m))}
+          onOpenNotifications={me.notifications ? () => setView("notifications") : undefined}
           onBack={() => setView("meal_diary")}
           onEditField={(step) => {
             setProfileEditStep(step);

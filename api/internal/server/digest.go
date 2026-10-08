@@ -19,16 +19,14 @@ import (
 // подводить не из чего, а сообщение неактивному читается как понукание. Кто сканировал
 // составы, но в дневник ничего не клал, — молчим.
 //
-// КОГДА. В окне 20:00–22:00 по МЕСТНОМУ времени, оценённому по меткам его же приёмов
-// (guessUTCOffset). Единое московское время не годится: 21:00 МСК — это 04:00 во
-// Владивостоке, а ночной пуш означает блокировку бота.
+// КОГДА. С 20:00 до 21:00 по МЕСТНОМУ времени: дальше тихие часы (21:00–10:00). Пояс — с
+// устройства, а не угаданный по времени еды (решение владельца 08.10.2026); не прислан —
+// Москва. В день напоминания или обязательного сообщения (конец пробной недели,
+// предупреждение о списании) итог не отправляется; пропущенный — не досылается.
 const (
-	// digestTickInterval — шаг воркера. Окно отправки двухчасовое, получасовой шаг
-	// гарантированно попадает в него и не создаёт лишней нагрузки.
-	digestTickInterval = 30 * time.Minute
-	// Границы окна отправки по местному времени.
-	digestHourFrom = 20
-	digestHourTo   = 22
+	// digestTickInterval — шаг воркера. Окно отправки — час, шаг в 15 минут гарантированно
+	// в него попадает.
+	digestTickInterval = 15 * time.Minute
 )
 
 // StartDailyDigest запускает рассылку вечерних итогов. Блокирующий — вызывать в
@@ -41,7 +39,7 @@ func (s *Server) StartDailyDigest(ctx context.Context) {
 	// и без этой отметки «воркер не запустился» и «слать было некому» выглядят в логе
 	// одинаково — пустотой. Проверка выката 05.08.2026 упёрлась ровно в это.
 	s.log.Info("итог дня: планировщик запущен", "интервал", digestTickInterval.String(),
-		"окно_местного_времени", fmt.Sprintf("%02d:00–%02d:00", digestHourFrom, digestHourTo))
+		"окно_местного_времени", fmt.Sprintf("%02d:00–%02d:00", digestHour, digestHour+1))
 	t := time.NewTicker(digestTickInterval)
 	defer t.Stop()
 	for {
@@ -64,13 +62,10 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 	now := time.Now().UTC()
 	sent := 0
 	for _, c := range cands {
-		local := now.Add(time.Duration(guessUTCOffset(c.MealHours)) * time.Hour)
-		if local.Hour() < digestHourFrom || local.Hour() >= digestHourTo {
-			continue
-		}
+		local := now.In(userLocation(c.TZ))
 		localDay := local.Format(dayLayout)
-		if c.LastDigest == localDay {
-			continue // за этот местный день уже отправляли
+		if !digestDue(local, notifyDay{Today: localDay, LastDigest: c.LastDigest, LastReminder: c.LastReminder, ServiceDay: c.ServiceDay}) {
+			continue // не время, уже отправляли, сегодня было напоминание или обязательное сообщение
 		}
 		// Итог считаем по ЕГО календарной дате: до неё же относится и защита от повтора.
 		day, err := s.store.MealDay(ctx, c.UserID, localDay)
@@ -89,10 +84,13 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 			streakDays = st.Days
 		}
 		text := digestText(day.Kcal, day.MealsCount, c.KcalTarget, streakDays, c.LastDigest == "")
+		uid := c.UserID
 		if err := s.tg.SendMessage(ctx, c.TelegramID, text, nil); err != nil {
 			// Бот заблокирован — исключаем из рассылок насовсем (выборка теперь его не
 			// возьмёт). Раньше такой человек попадал сюда КАЖДЫЙ вечер.
-			if s.handleSendError(ctx, c.UserID, err) {
+			blocked := s.handleSendError(ctx, c.UserID, err)
+			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "digest", "blocked": blocked})
+			if blocked {
 				continue
 			}
 			// Прочие сбои временные: отметку не ставим, следующий заход попробует снова.
@@ -102,6 +100,7 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 		if err := s.store.MarkDigestSent(ctx, c.UserID, localDay); err != nil {
 			s.log.Warn("итог дня: отметка отправки", "err", err, "user", c.UserID)
 		}
+		_ = s.store.InsertEvent(ctx, &uid, "notify_sent", map[string]any{"kind": "digest"})
 		sent++
 	}
 	if sent > 0 {

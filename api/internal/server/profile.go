@@ -202,6 +202,13 @@ func (s *Server) handleProfileDigest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", "ожидается {\"enabled\": true|false}")
 		return
 	}
+	if prev, perr := s.store.DigestEnabled(r.Context(), claims.UserID); perr == nil && prev != *req.Enabled {
+		name := "digest_disabled"
+		if *req.Enabled {
+			name = "digest_enabled"
+		}
+		_ = s.store.InsertEvent(r.Context(), &claims.UserID, name, map[string]any{"source": "app"})
+	}
 	if err := s.store.SetDigestEnabled(r.Context(), claims.UserID, *req.Enabled); err != nil {
 		s.log.Error("итог дня: сохранение тумблера", "err", err, "user", claims.UserID)
 		writeError(w, http.StatusInternalServerError, "internal", "внутренняя ошибка")

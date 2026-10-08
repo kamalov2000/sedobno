@@ -145,6 +145,7 @@ func (s *Server) Router() http.Handler {
 			// это настройка уведомлений, а не часть расчёта нормы, и слать её вместе
 			// с ростом-весом значило бы пересчитывать КБЖУ на каждое переключение.
 			r.Patch("/profile/digest", s.handleProfileDigest)
+			r.Patch("/profile/notifications", s.handleProfileNotifications)
 
 			r.Get("/me", s.handleMe)
 

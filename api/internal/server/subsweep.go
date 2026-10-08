@@ -100,7 +100,13 @@ func (s *Server) notifyUpcomingRenewals(ctx context.Context) {
 			continue
 		}
 		uid := r.UserID
+		// Оплата не ждёт тихих часов и лимитов: уходит вовремя, а необязательные итог и
+		// напоминание в этот местный день уступают ей.
+		if tz, terr := s.store.UserTZ(ctx, uid); terr == nil {
+			_ = s.store.MarkServiceMsg(ctx, uid, time.Now().In(userLocation(tz)).Format(dayLayout))
+		}
 		_ = s.store.InsertEvent(ctx, &uid, "renewal_notice_sent", map[string]any{"plan": r.Plan, "rub": amountRub})
+		_ = s.store.InsertEvent(ctx, &uid, "notify_sent", map[string]any{"kind": "renewal"})
 	}
 	if len(due) > 0 {
 		s.log.Info("уведомления о продлении отправлены", "count", len(due))

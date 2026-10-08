@@ -8,6 +8,8 @@ import ScanLoader from "./components/ScanLoader";
 import ResultScreen from "./screens/ResultScreen";
 import NotScoredScreen from "./screens/NotScoredScreen";
 import ScanToDiaryScreen from "./screens/ScanToDiaryScreen";
+import NotificationsScreen from "./screens/NotificationsScreen";
+import NotifyOffer from "./components/NotifyOffer";
 import ErrorScreen, { NOT_FOOD_HINTS, MIXED_FRAMES_HINTS } from "./screens/ErrorScreen";
 import MealStateScreen from "./screens/MealStateScreen";
 import MealLoader from "./components/MealLoader";
@@ -248,6 +250,9 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "07 · КАЛОРИИ · история приёмов", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} onAddManual={noop} load={mealHistoryLoad} /> },
   { title: "07 · КАЛОРИИ · история пустая", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} onAddManual={noop} load={mealHistoryEmpty} /> },
   { title: "07 · КАЛОРИИ · приём из истории", node: <MealResultScreen result={{ status: "ok", id: savedMeal.id, dishes: savedMeal.dishes, total: savedMeal.total, confidence: savedMeal.confidence, meals_left: -1 }} saved={savedMeal} isSubscribed onDone={noop} onRetake={noop} /> },
+  { title: "08 · ДНЕВНИК · предложение уведомлений после первой записи", node: <DiaryScreen onBack={noop} onOpenWizard={noop} onAddManual={noop} onAddDigits={noop} onAddPhoto={noop} recent={PREVIEW_RECENT} onRepeat={noop} loadDay={diaryDay} loadWeek={diaryWeek} notice="Приём сохранён — он в списке ниже" onOpenNotifications={noop} offer={<NotifyOffer onDone={noop} />} /> },
+  { title: "09 · УВЕДОМЛЕНИЯ · напоминание на паузе", node: <NotificationsScreen settings={{ tz: "Asia/Vladivostok", tz_manual: false, reminder_enabled: true, reminder_time: "13:00", reminder_paused_until: "2026-10-15", digest_enabled: true, offered: true }} onChange={noop} onBack={noop} /> },
+  { title: "09 · УВЕДОМЛЕНИЯ · всё выключено, пояс не известен", node: <NotificationsScreen settings={{ tz: "", tz_manual: false, reminder_enabled: false, digest_enabled: false, offered: true }} onChange={noop} onBack={noop} /> },
   { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} onAddManual={noop} onAddDigits={noop} onAddPhoto={noop} recent={PREVIEW_RECENT} onRepeat={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} onAddManual={noop} onAddDigits={noop} onAddPhoto={noop} recent={PREVIEW_RECENT} onRepeat={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "09 · ВИЗАРД · профиль питания", node: <ProfileWizard onDone={noop} onCancel={noop} /> },

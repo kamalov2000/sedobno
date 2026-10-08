@@ -4,15 +4,18 @@ import "context"
 
 // Данные для вечернего итога дня (ретеншн, п.3).
 
-// DigestCandidate — пользователь, которому потенциально пора слать итог. Решение
-// «пора или нет» принимает сервер: только он знает оценённый часовой пояс, а тот
-// считается по MealHours (см. guessUTCOffset) — SQL про циклическую статистику часов
-// знать не обязан.
+// DigestCandidate — пользователь, которому потенциально пора слать итог. Решение «пора
+// или нет» принимает сервер (notify_policy.go): по поясу человека и отметкам его дня.
 type DigestCandidate struct {
 	UserID     int64
 	TelegramID int64
-	// MealHours — часы (UTC) последних записей в дневник. По ним оценивается пояс.
-	MealHours []int
+	// TZ — пояс с устройства ("" — не присылал, считаем Москву). До 08.10.2026 пояс
+	// угадывался по часам записей; решение владельца — брать с устройства.
+	TZ string
+	// LastReminder / ServiceDay — местные дни напоминания и обязательного сообщения: в
+	// такой день итог не отправляется.
+	LastReminder string
+	ServiceDay   string
 	// LastDigest — локальная дата последнего отправленного итога ("" — ни разу).
 	// По ней же определяется, первое ли это сообщение: в первом идёт приписка,
 	// как отключить.
@@ -20,11 +23,6 @@ type DigestCandidate struct {
 	// KcalTarget — дневная норма из профиля (0 — не рассчитана).
 	KcalTarget int
 }
-
-// digestHoursLookback — за сколько дней берём часы записей для оценки пояса. Месяц —
-// компромисс: достаточно точек даже у редкого пользователя, но переезд между поясами
-// перестаёт влиять на оценку в разумный срок.
-const digestHoursLookback = 30
 
 // DigestCandidates возвращает тех, кто включил итог и записывал еду в последние сутки
 // с небольшим запасом. Запас (36 часов) нужен потому, что «сегодня» у каждого своё:
@@ -37,19 +35,18 @@ func (s *Store) DigestCandidates(ctx context.Context) ([]DigestCandidate, error)
 	const q = `
 SELECT u.id,
        u.telegram_id,
-       COALESCE(array_agg(EXTRACT(hour FROM m.created_at AT TIME ZONE 'UTC')::int)
-                FILTER (WHERE m.created_at > now() - make_interval(days => $1)), '{}') AS hours,
-       COALESCE(u.last_digest_date::text, '')                                          AS last_digest,
-       COALESCE(u.daily_kcal_target, 0)                                                AS kcal_target
+       COALESCE(u.tz, '')                         AS tz,
+       COALESCE(u.last_digest_date::text, '')     AS last_digest,
+       COALESCE(u.reminder_last_date::text, '')   AS last_reminder,
+       COALESCE(u.service_msg_date::text, '')     AS service_day,
+       COALESCE(u.daily_kcal_target, 0)           AS kcal_target
   FROM users u
-  JOIN meals m ON m.user_id = u.id AND m.status = 'ok'
  WHERE u.daily_digest_enabled
    AND u.blocked_at IS NULL
    AND EXISTS (SELECT 1 FROM meals m2
                 WHERE m2.user_id = u.id AND m2.status = 'ok'
-                  AND m2.created_at > now() - interval '36 hours')
- GROUP BY u.id, u.telegram_id, u.last_digest_date, u.daily_kcal_target`
-	rows, err := s.pool.Query(ctx, q, digestHoursLookback)
+                  AND m2.created_at > now() - interval '36 hours')`
+	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +55,7 @@ SELECT u.id,
 	var out []DigestCandidate
 	for rows.Next() {
 		var c DigestCandidate
-		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.MealHours, &c.LastDigest, &c.KcalTarget); err != nil {
+		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.TZ, &c.LastDigest, &c.LastReminder, &c.ServiceDay, &c.KcalTarget); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
