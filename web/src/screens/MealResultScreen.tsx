@@ -32,6 +32,8 @@ interface Props {
    *  (она за ручной приём не списывается). Сохранение уходит POST'ом, а не PATCH'ем:
    *  сохранять нечего — приёма ещё нет. */
   manual?: boolean;
+  /** Ручной ввод из поиска «ничего не нашлось»: название пустого блюда уже набрано. */
+  manualName?: string;
   /** Приём, уже лежащий в дневнике (открыт из истории). Экран тот же — редактор блюд
    *  здесь ровно тот, что и у свежего разбора, — но меняется смысл кнопок: приём уже
    *  сохранён, «В дневник» второй раз его не добавляет, а «Переснять» не должно
@@ -170,7 +172,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false, onTemplateSaved }: Props) {
+export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, manualName, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false, onTemplateSaved }: Props) {
   const isSaved = saved != null;
   // APP-09. У сохранённого приёма тип уже выбран; у свежего — предлагаем по времени.
   // Предположение, а не решение: чип остаётся обычным, его можно снять или сменить.
@@ -198,7 +200,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   const [dishes, setDishes] = useState<Draft[]>(() => {
     const given = result.dishes ?? [];
     if (!manual) return given;
-    return given.length ? given : [blankManual()];
+    return given.length ? given : [{ ...blankManual(), name: manualName?.trim() ?? "" }];
   });
   const [mealType, setMealType] = useState<MealType | null>(initialMealType);
   // «Моё блюдо» сервер собирает из СОХРАНЁННОЙ записи. Пока на экране есть несохранённые

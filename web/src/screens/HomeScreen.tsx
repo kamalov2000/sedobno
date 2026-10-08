@@ -28,13 +28,16 @@ interface Props {
    *  нет — состав придумать нельзя, его читают с упаковки. */
   onAddText?: (example?: string) => void;
   /** Вписать приём цифрами — без модели и без списания. */
-  onAddManual?: () => void;
+  /** Ручной ввод; name — набранное в поиске, когда ничего не нашлось. */
+  onAddManual?: (name?: string) => void;
   todayHasMeals?: boolean;
   /** Итог сегодняшнего дня из дневника (локальная дата клиента). Нет — карточки нет. */
   today?: { kcal: number; count: number };
   /** Прошлые приёмы для повтора одним тапом (backlog п.16). Пусто или не задано — блока
    *  нет: у нового человека повторять нечего, и экран остаётся прежним. */
   recent?: MealDiaryItem[];
+  /** Недавние, по которым ищет единый поиск (шире раздела «Недавние»). */
+  recentPool?: MealDiaryItem[];
   onRepeat?: (item: MealDiaryItem) => void;
   /** Записей ещё нет ни одной. Главная показывает два основных пути — фото и описание
    *  словами — с примерами; ручной ввод цифрами уходит во второстепенную ссылку. */
@@ -53,7 +56,7 @@ const fmtExpiry = (iso: string) => new Intl.DateTimeFormat("ru-RU", { day: "nume
 const MEAL_HINT = <>Сфотографируйте всю тарелку целиком, сверху. Одного кадра достаточно; добавьте ещё ракурс, только если хотите точнее — все кадры уйдут одним разбором.</>;
 const SCAN_HINT = <>Сфотографируйте список ингредиентов — мелкий текст после слова «Состав» на обороте упаковки. Таблица с белками, жирами и углеводами — другой блок, он не подойдёт.</>;
 
-export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, onRepeat, firstRun, templates, onDiaryChanged }: Props) {
+export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe, onHistory, onDiary, onAddText, onAddManual, todayHasMeals, today, onManageSub, recent, recentPool, onRepeat, firstRun, templates, onDiaryChanged }: Props) {
   const meal = mode === "meal";
   const activeLeft = meal ? me.meals_left : me.scans_left;
   const outOfActive = !me.is_subscribed && activeLeft <= 0;
@@ -301,9 +304,9 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
             квоте: «Вручную» и «Повторить» её не тратят, а «Написать» в этом случае
             приведёт к понятному пейволлу. */}
         {meal && onAddText && onAddManual && (firstRun && !outOfActive ? (
-          <FirstRunText onText={onAddText} onManual={onAddManual} />
+          <FirstRunText onText={onAddText} onManual={() => onAddManual()} />
         ) : (
-          <AddMealActions onText={() => onAddText()} onManual={onAddManual} recent={recent} onRepeat={onRepeat} templates={templates} onDiaryChanged={onDiaryChanged} />
+          <AddMealActions onText={() => onAddText()} onManual={onAddManual} recent={recent} recentPool={recentPool} onRepeat={onRepeat} templates={templates} onDiaryChanged={onDiaryChanged} />
         ))}
         {meal && outOfActive && (
           <span style={{ fontSize: 12, color: "var(--text3)", textAlign: "center", lineHeight: 1.45, marginTop: -4 }}>

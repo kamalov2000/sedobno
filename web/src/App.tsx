@@ -287,7 +287,12 @@ export default function App() {
   const [textMeal, setTextMeal] = useState<MealResult | null>(null);
   // Повтор прошлого приёма (п.16): прошлые приёмы для главной и выбранный для повтора.
   const [recentMeals, setRecentMeals] = useState<MealDiaryItem[]>([]);
+  // Недавние для единого поиска (09.10.2026): вся первая страница истории без повторов,
+  // а не три верхних — найти «ту самую гречку» с прошлой недели.
+  const [recentPool, setRecentPool] = useState<MealDiaryItem[]>([]);
   const [repeatMeal, setRepeatMeal] = useState<MealResult | null>(null);
+  // Ручной ввод из поиска «ничего не нашлось»: название уже набрано — подставляем его.
+  const [manualName, setManualName] = useState("");
   // Заготовка для экрана текстового добавления. Непуста только на пути «скан без
   // КБЖУ → дневник»: туда подставляется название продукта с упаковки.
   const [mealTextPrefill, setMealTextPrefill] = useState("");
@@ -343,6 +348,7 @@ export default function App() {
     void mealsHistory()
       .then((p) => {
         setRecentMeals(repeatCandidates(p.items));
+        setRecentPool(repeatCandidates(p.items, p.items.length));
         setHasHistory(p.items.length > 0);
       })
       .catch(() => {});
@@ -360,7 +366,12 @@ export default function App() {
   useEffect(() => {
     if (phase !== "ready" || view !== "meal_diary") return;
     loadTemplates();
-    void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
+    void mealsHistory()
+      .then((p) => {
+        setRecentMeals(repeatCandidates(p.items));
+        setRecentPool(repeatCandidates(p.items, p.items.length));
+      })
+      .catch(() => {});
   }, [phase, view]);
 
   // Факт сохранения живёт, пока человек в дневнике.
@@ -837,11 +848,13 @@ export default function App() {
             setMealTextFromExample(!!example);
             setView("meal_text");
           }}
-          onAddManual={() => {
+          onAddManual={(name) => {
             // Цифрами вручную — сразу пустая карточка с полями, без модели и без квоты.
+            // Из поиска «ничего не нашлось» — с набранным названием.
             setReturnTo("home");
             setTextMeal(null);
             setRepeatMeal(null);
+            setManualName(name ?? "");
             setView("meal_manual");
           }}
           onDiary={() => setView("meal_diary")}
@@ -851,6 +864,7 @@ export default function App() {
           onDiaryChanged={refreshToday}
           firstRun={hasHistory === undefined ? bootNoMode : !hasHistory && (todayTotal?.count ?? 0) === 0}
           recent={recentMeals}
+          recentPool={recentPool}
           onRepeat={(item) => {
             // Повтор — новый приём на том же экране, что и ручной: правка граммов, тип
             // приёма, «В дневник». Модель не вызывается, квота не тратится.
@@ -925,10 +939,11 @@ export default function App() {
             setMealTextPrefill(""); // обычный вход из дневника — поле пустое
             setView("meal_text");
           }}
-          onAddDigits={() => {
+          onAddDigits={(name) => {
             setReturnTo("meal_diary");
             setTextMeal(null);
             setRepeatMeal(null);
+            setManualName(name ?? "");
             setView("meal_manual");
           }}
           // Фото снимается с главной «Калорий» — там камера и подсказки кадра.
@@ -937,6 +952,7 @@ export default function App() {
             setView("home");
           }}
           recent={recentMeals}
+          recentPool={recentPool}
           onRepeat={(item) => {
             setTextMeal(null);
             setRepeatMeal(repeatToResult(item, me?.meals_left ?? -1));
@@ -1176,6 +1192,7 @@ export default function App() {
           onQuotaSpent={applyMealsLeft}
           canShare
           manual
+          manualName={textMeal || repeatMeal ? undefined : manualName}
           origin={textMeal ? "text" : repeatMeal ? "repeat" : undefined}
           // Тот же призыв к расчёту нормы, что и после фото: приём, вписанный словами или
           // руками, ставит перед человеком ровно тот же вопрос «а сколько мне можно».
@@ -1187,6 +1204,7 @@ export default function App() {
             setReturnTo(null);
             setTextMeal(null);
             setRepeatMeal(null);
+            setManualName("");
             setTodayHasMeals(true);
             setDiaryNotice("Приём сохранён — он в списке ниже");
             setView("meal_diary");
@@ -1197,6 +1215,7 @@ export default function App() {
             const back = textMeal ? "meal_text" : (returnTo ?? "meal_diary");
             setTextMeal(null);
             setRepeatMeal(null);
+            setManualName("");
             if (!textMeal) setReturnTo(null);
             setView(back);
           }}

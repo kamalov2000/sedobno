@@ -366,19 +366,29 @@ describe("DiaryScreen — неизвестные БЖУ в сводке дня",
     water_ml: 0, water_goal_ml: 2000, streak: { days: 1, today_logged: true },
   });
 
-  it("только приём без БЖУ — «—», не «0 г»; остаток БЖУ тоже неизвестен", async () => {
+  it("только приём без БЖУ — «не указаны», не «0 г»; остаток БЖУ не показываем", async () => {
     render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={day([[soup]])} loadWeek={weekData} />);
     expect(await screen.findByText("Осталось до нормы")).toBeTruthy();
     // Неразрывные пробелы матчер testing-library сводит к обычным.
-    expect(screen.getByText(/^Б — · Ж — · У —$/)).toBeTruthy();
-    expect(screen.getByText(/^осталось Б — · Ж — · У — г$/)).toBeTruthy();
+    expect(screen.getByText(/^Белок: не указан · Жиры: не указаны · Углеводы: не указаны$/)).toBeTruthy();
+    expect(screen.queryByText(/^осталось Б/)).toBeNull();
     expect(screen.queryByText(/Б 0 г/)).toBeNull();
+    // Калории известны — остаток по ним остаётся: 2100 − 180.
+    expect(screen.getByText("1920")).toBeTruthy();
   });
 
-  it("часть приёмов без БЖУ — сумма известного с «+?», остаток — верхняя граница «≤»", async () => {
+  it("часть приёмов без БЖУ — «не менее» с пояснением, остаток БЖУ не показываем", async () => {
     render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={day([[soup], [porridge]])} loadWeek={weekData} />);
-    expect(await screen.findByText(/^Б 8\+\? г · Ж 6\+\? г · У 55\+\? г$/)).toBeTruthy();
-    expect(screen.getByText(/^осталось Б ≤132 · Ж ≤64 · У ≤205 г$/)).toBeTruthy();
+    expect(await screen.findByText(/^Белок: не менее 8 г · Жиры: не менее 6 г · Углеводы: не менее 55 г$/)).toBeTruthy();
+    expect(screen.getByText("Не во всех записях указаны белок, жиры и углеводы")).toBeTruthy();
+    expect(screen.queryByText(/≤|\+\?/)).toBeNull();
+    expect(screen.queryByText(/^осталось Б/)).toBeNull();
+  });
+
+  it("без нормы (карточка сумм) — те же слова вместо подписей полоски", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={day([[soup], [porridge]])} loadWeek={weekData} />);
+    expect(await screen.findByText(/^Белок: не менее 8 г/)).toBeTruthy();
+    expect(screen.queryByText(/^Б 8 г$/)).toBeNull();
   });
 
   it("все БЖУ известны — как раньше", async () => {

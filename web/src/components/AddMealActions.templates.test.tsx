@@ -28,7 +28,7 @@ type AddBody = { client_key: string; meal_type?: string };
 const okResult = { status: "ok" as const, id: 501, dishes: tpl.dishes, total: tpl.total, meals_left: 30 };
 
 const open = () => {
-  fireEvent.click(screen.getByLabelText("Повторить"));
+  fireEvent.click(screen.getByLabelText("Найти"));
   fireEvent.click(screen.getByLabelText("Мой завтрак: 370 г, 510 ккал"));
 };
 
@@ -103,13 +103,13 @@ describe("AddMealActions — мои блюда", () => {
       dishes: [{ name: "пирог", grams: 200, kcal: 500, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1, kcal_by_user: true }],
     };
     render(<AddMealActions onText={noop} onManual={noop} templates={[noMacros]} />);
-    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Найти"));
     fireEvent.click(screen.getByLabelText("Ручное: 200 г, 500 ккал"));
     expect(screen.getByText("БЖУ не указаны")).toBeTruthy();
     expect(screen.queryByText(/Б 0/)).toBeNull();
   });
 
-  it("часть БЖУ неизвестна — «—» и «+?», и при изменении порции они не становятся нулями", () => {
+  it("часть БЖУ неизвестна — словами «не менее» с пояснением, и при изменении порции они не становятся нулями", () => {
     const partial: MealTemplate = {
       id: 9, name: "Пирог с чаем", grams: 400, total: { kcal: 640, protein_g: 10, fat_g: 0, carb_g: 8 },
       dishes: [
@@ -118,12 +118,15 @@ describe("AddMealActions — мои блюда", () => {
       ],
     };
     render(<AddMealActions onText={noop} onManual={noop} templates={[partial]} />);
-    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Найти"));
     fireEvent.click(screen.getByLabelText("Пирог с чаем: 400 г, 640 ккал"));
-    expect(screen.getByText(/Б 10 · Ж 0\+\? · У 8\+\?/)).toBeTruthy();
+    // Решение владельца 09.10.2026: «+?» непонятно — пишем словами и поясняем строкой ниже.
+    expect(screen.getByText(/Белок: 10 г · Жиры: не указаны · Углеводы: не менее 8 г/)).toBeTruthy();
+    expect(screen.getByText("Не во всех компонентах указаны жиры и углеводы")).toBeTruthy();
+    expect(screen.queryByText(/\+\?/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Порция, грамм"), { target: { value: "200" } });
     expect(screen.getByText("320 ккал")).toBeTruthy();
-    expect(screen.getByText(/Б 5 · Ж 0\+\? · У 4\+\?/)).toBeTruthy();
+    expect(screen.getByText(/Белок: 5 г · Жиры: не указаны · Углеводы: не менее 4 г/)).toBeTruthy();
   });
 
   it("своя порция: граммы вводятся напрямую и ±10, уходит в добавление, шаблон прежний", async () => {
@@ -194,7 +197,7 @@ describe("AddMealActions — мои блюда", () => {
       dishes: [{ name: "кефир 2,5%", grams: 250, kcal: 105, protein_g: 7.5, fat_g: 6.3, carb_g: 10, confidence: 1, unit: "ml" }],
     };
     render(<AddMealActions onText={noop} onManual={noop} templates={[kefir]} />);
-    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Найти"));
     fireEvent.click(screen.getByLabelText("Кефир: 250 мл, 105 ккал"));
     expect(screen.getByLabelText("Порция, миллилитров")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Порция, миллилитров"), { target: { value: "500" } });
@@ -209,7 +212,7 @@ describe("AddMealActions — мои блюда", () => {
       total: { kcal: 180, protein_g: 6, fat_g: 8, carb_g: 20 },
     }];
     render(<AddMealActions onText={noop} onManual={noop} templates={[]} recent={recent} onRepeat={noop} />);
-    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Найти"));
     expect(screen.getByText(/откройте его в дневнике → «Сохранить как моё блюдо»/)).toBeTruthy();
   });
 });

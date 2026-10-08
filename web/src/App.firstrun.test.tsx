@@ -88,12 +88,12 @@ describe("App — первый запуск", () => {
     expect(await screen.findByText("Сфотографировать еду")).toBeTruthy();
   });
 
-  it("у человека с записями главная прежняя: ряд «Написать / Вручную / Повторить»", async () => {
+  it("у человека с записями главная прежняя: ряд «Написать / Вручную / Найти»", async () => {
     profile = { ...base, start_mode: "meal" };
     history = { items: makeMealHistory().items };
     stubTelegram();
     render(<App />);
-    expect(await screen.findByLabelText("Повторить")).toBeTruthy();
+    expect(await screen.findByLabelText("Найти")).toBeTruthy();
     await waitFor(() => expect(screen.queryByText("Описать словами")).toBeNull());
   });
 });

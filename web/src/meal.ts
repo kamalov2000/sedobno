@@ -225,6 +225,39 @@ export function macroSummary(dishes: MealItem[], factor = 1): Record<MacroKey, M
   return out;
 }
 
+// Неполные БЖУ словами (решение владельца 09.10.2026): «Б 8+? г» и «≤132» точны, но
+// непонятны большинству. Пишем «Белок: не менее 8 г» и поясняем строкой ниже, почему.
+const MACRO_WORDS: Record<MacroKey, { title: string; lower: string; plural: boolean }> = {
+  protein: { title: "Белок", lower: "белок", plural: false },
+  fat: { title: "Жиры", lower: "жиры", plural: true },
+  carb: { title: "Углеводы", lower: "углеводы", plural: true },
+};
+const MACRO_KEYS: MacroKey[] = ["protein", "fat", "carb"];
+
+/** Все три известны у всех компонентов — можно показывать обычной короткой строкой. */
+export function macrosComplete(m: Partial<Record<MacroKey, MacroState["state"]>>): boolean {
+  return MACRO_KEYS.every((k) => (m[k] ?? "known") === "known");
+}
+
+/** «Белок: 8 г», «Белок: не менее 8 г» (известно у части), «Жиры: не указаны». */
+export function macroWords(k: MacroKey, value: number, state: MacroState["state"]): string {
+  const w = MACRO_WORDS[k];
+  // «Не менее 0 г» ничего не сообщает: известная часть нулевая — для человека это «не указаны».
+  if (state === "unknown" || (state === "partial" && Math.round(value) === 0)) return `${w.title}: ${w.plural ? "не указаны" : "не указан"}`;
+  return `${w.title}: ${state === "partial" ? "не менее " : ""}${Math.round(value)} г`;
+}
+
+/** Пояснение к «не менее»: «Не во всех записях указан белок», «…указаны белок и жиры».
+ *  where — «записях» (день дневника) или «компонентах» (одно блюдо). null — пояснять нечего. */
+export function macroGapNote(m: Partial<Record<MacroKey, MacroState["state"]>>, where: "записях" | "компонентах"): string | null {
+  const gaps = MACRO_KEYS.filter((k) => m[k] === "partial");
+  if (gaps.length === 0) return null;
+  const names = gaps.map((k) => MACRO_WORDS[k].lower);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} и ${names[names.length - 1]}`;
+  const verb = gaps.length > 1 || MACRO_WORDS[gaps[0]].plural ? "указаны" : "указан";
+  return `Не во всех ${where} ${verb} ${list}`;
+}
+
 /** Прошлые приёмы, которые есть смысл повторить одним тапом (backlog п.16, идея Numify
  *  «сохранить как приём»). Берём свежие сверху; одинаковый набор блюд показываем один раз
  *  (овсянка каждый день — одна кнопка, а не три одинаковые); пустые и нулевые пропускаем.

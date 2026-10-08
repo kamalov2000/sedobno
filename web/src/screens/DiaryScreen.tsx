@@ -3,9 +3,9 @@ import AddMealActions from "../components/AddMealActions";
 import type { MealTemplate } from "../api";
 import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
-import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, macroSummary, mealBudgetKcal, round1, type MacroState } from "../meal";
+import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, macroGapNote, macroSummary, macroWords, macrosComplete, mealBudgetKcal, round1, type MacroState } from "../meal";
 import { haptic } from "../telegram";
-import MacroSegments, { macroGrams } from "../components/MacroSegments";
+import MacroSegments from "../components/MacroSegments";
 import WaterCard from "../components/WaterCard";
 import WeightCard from "../components/WeightCard";
 import StreakCard from "../components/StreakCard";
@@ -36,9 +36,10 @@ interface Props {
   /** Способы добавить приём — те же, что на главной (компонент AddMealActions). Не заданы —
    *  входов нет (превью/тесты). onAddManual — исторически «Добавить приём» = словами. */
   onAddManual?: () => void;
-  onAddDigits?: () => void;
+  onAddDigits?: (name?: string) => void;
   onAddPhoto?: () => void;
   recent?: MealDiaryItem[];
+  recentPool?: MealDiaryItem[];
   onRepeat?: (item: MealDiaryItem) => void;
   /** Явный факт сохранения: показываем сверху, когда человек пришёл сюда сразу после
    *  «В дневник» (задание владельца 08.10.2026). */
@@ -76,7 +77,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen, templates, onOpenNotifications, offer,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, recentPool, onRepeat, notice, onOpen, templates, onOpenNotifications, offer,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -347,7 +348,7 @@ export default function DiaryScreen({
       {/* Футер с «Добавить приём» — только в режиме дня: в недельном обзоре добавлять
           нечего, там смотрят на столбики. */}
       {mode === "day" && onAddManual && (
-        <AddMealFooter onText={onAddManual} onManual={onAddDigits ?? onAddManual} onPhoto={onAddPhoto} recent={recent} onRepeat={onRepeat} templates={templates} onDiaryChanged={() => void fetchDay(day)} />
+        <AddMealFooter onText={onAddManual} onManual={onAddDigits ?? (() => onAddManual())} onPhoto={onAddPhoto} recent={recent} recentPool={recentPool} onRepeat={onRepeat} templates={templates} onDiaryChanged={() => void fetchDay(day)} />
       )}
 
       {/* Undo-снекбар — над футером, иначе кнопка «Вернуть» ушла бы под кнопку добавления. */}
@@ -517,7 +518,7 @@ function DayView({
 //
 // Кнопка постоянная, а не элемент списка: добавить приём нужно и в пустой день, и после
 // десятого — искать её в конце прокрутки незачем.
-function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhoto?: () => void; recent?: MealDiaryItem[]; onRepeat?: (item: MealDiaryItem) => void; templates?: MealTemplate[]; onDiaryChanged?: () => void }) {
+function AddMealFooter(props: { onText: () => void; onManual: (name?: string) => void; onPhoto?: () => void; recent?: MealDiaryItem[]; recentPool?: MealDiaryItem[]; onRepeat?: (item: MealDiaryItem) => void; templates?: MealTemplate[]; onDiaryChanged?: () => void }) {
   // Те же четыре способа, что на главной: фото, словами, цифрами, повтор (задание
   // 08.10.2026). Раньше здесь была одна кнопка «Добавить приём» — только словами.
   return (
@@ -555,16 +556,14 @@ function RemainderCard({ total, states, profile, onOpenWizard }: { total: MealDa
   const left = kcalLeft(eaten, target);
   const over = left < 0;
   const pct = target > 0 ? Math.min(1, eaten / target) : 0;
-  const nb = (s: string) => s.replace(/ /g, NBSP);
-  const macros = [macroGrams("Б", total.protein_g, states.protein), macroGrams("Ж", total.fat_g, states.fat), macroGrams("У", total.carb_g, states.carb)].map(nb).join(" · ");
+  const complete = macrosComplete(states);
+  const macros = `Б${NBSP}${fmtInt(total.protein_g)}${NBSP}г · Ж${NBSP}${fmtInt(total.fat_g)}${NBSP}г · У${NBSP}${fmtInt(total.carb_g)}${NBSP}г`;
   // Остаток Б/Ж/У до нормы — та же логика, что у ккал. Показываем, только если у профиля
-  // есть таргеты макросов; перебор макроса — «осталось 0».
-  const macroTargets = profile.daily_protein_g != null || profile.daily_fat_g != null || profile.daily_carb_g != null;
-  // Неизвестный макрос — остаток неизвестен («—»); известный лишь у части приёмов — это
-  // верхняя граница («≤»): съедено не меньше известной суммы.
-  const leftMacro = (t: number | undefined, e: number, st: MacroState["state"] = "known") =>
-    st === "unknown" ? "—" : `${st === "partial" ? "≤" : ""}${Math.max(0, Math.round((t ?? 0) - e))}`;
-  const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g, states.protein)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g, states.fat)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g, states.carb)}${NBSP}г`;
+  // есть таргеты макросов; перебор макроса — «осталось 0». При неполных БЖУ остаток не
+  // показываем вовсе (решение владельца 09.10.2026): он был бы в лучшем случае границей.
+  const macroTargets = complete && (profile.daily_protein_g != null || profile.daily_fat_g != null || profile.daily_carb_g != null);
+  const leftMacro = (t: number | undefined, e: number) => Math.max(0, Math.round((t ?? 0) - e));
+  const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
 
   return (
     <div className="sj-rem" onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "20px 20px 18px", marginBottom: 16, cursor: "pointer" }}>
@@ -588,12 +587,35 @@ function RemainderCard({ total, states, profile, onOpenWizard }: { total: MealDa
 
       {/* Б/Ж/У — как были: полоска долей плюс строка остатка. */}
       <div className="sj-rem-macro" style={{ marginTop: 14 }}>
-        <MacroSegments total={total} states={states} height={7} showLabels={false} trackBg="var(--bg)" />
+        <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
       </div>
-      <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
+      {complete ? (
+        <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
+      ) : (
+        <IncompleteMacros total={total} states={states} />
+      )}
       {macroTargets && (
         <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3, textAlign: "center" }}>{macrosLeft}</div>
       )}
+    </div>
+  );
+}
+
+// БЖУ дня, когда у части записей их нет: словами, без «+?» (решение владельца 09.10.2026).
+// «Белок: не менее 8 г» и строкой ниже — почему «не менее».
+function IncompleteMacros({ total, states }: { total: MealDaily; states: DayMacroStates }) {
+  const note = macroGapNote(states, "записях");
+  const nb = (s: string) => s.replace(/ /g, NBSP);
+  return (
+    <div style={{ marginTop: 8, textAlign: "center", lineHeight: 1.45 }}>
+      <div className="sj-rem-grams" style={{ fontSize: 12, color: "var(--text2)" }}>
+        {[
+          macroWords("protein", total.protein_g, states.protein ?? "known"),
+          macroWords("fat", total.fat_g, states.fat ?? "known"),
+          macroWords("carb", total.carb_g, states.carb ?? "known"),
+        ].map(nb).join(" · ")}
+      </div>
+      {note && <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 2 }}>{note}</div>}
     </div>
   );
 }
@@ -621,8 +643,9 @@ function SumsCard({ total, states, empty, onOpenWizard }: { total: MealDaily; st
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>съедено за день</div>
           <div className="sj-rem-macro" style={{ marginTop: 16 }}>
-            <MacroSegments total={total} states={states} height={8} trackBg="var(--bg)" />
+            <MacroSegments total={total} height={8} showLabels={macrosComplete(states)} trackBg="var(--bg)" />
           </div>
+          {!macrosComplete(states) && <IncompleteMacros total={total} states={states} />}
         </>
       )}
       <button type="button" className="sj-rem-cta" onClick={onOpenWizard} style={{ width: "100%", height: 40, marginTop: 16, background: "none", border: "1px solid var(--cal-border)", borderRadius: 11, color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
