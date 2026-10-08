@@ -38,6 +38,34 @@ type apiResponse struct {
 	Result      json.RawMessage `json:"result"`
 	ErrorCode   int             `json:"error_code"`
 	Description string          `json:"description"`
+	// Parameters.RetryAfter — при 429 Telegram говорит, сколько секунд ждать.
+	Parameters struct {
+		RetryAfter int `json:"retry_after"`
+	} `json:"parameters"`
+}
+
+// ErrRateLimited — Telegram просит подождать (429). Ограничение — на бота целиком, а не на
+// одного адресата: до конца ожидания рассылки не шлют никому (решение владельца 09.10.2026 —
+// учитывать время, которое назвал Telegram, а не повторять каждые 10 минут).
+var ErrRateLimited = errors.New("Telegram просит подождать")
+
+// RateLimitError — 429 с временем ожидания.
+type RateLimitError struct {
+	RetryAfter time.Duration
+	err        error
+}
+
+func (e *RateLimitError) Error() string        { return e.err.Error() }
+func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
+func (e *RateLimitError) Unwrap() error        { return e.err }
+
+// RetryAfter — сколько ждать по ответу Telegram; ok=false — это не 429.
+func RetryAfter(err error) (time.Duration, bool) {
+	var rl *RateLimitError
+	if errors.As(err, &rl) {
+		return rl.RetryAfter, true
+	}
+	return 0, false
 }
 
 // ErrBotBlocked — пользователь заблокировал бота (или удалил чат). Писать ему больше
@@ -102,7 +130,14 @@ func (c *Client) call(ctx context.Context, method string, params map[string]any)
 		if isBlockedResponse(ar.ErrorCode, ar.Description) {
 			return nil, fmt.Errorf("%w: %s", ErrBotBlocked, err)
 		}
-		if ar.ErrorCode >= 400 && ar.ErrorCode < 500 && ar.ErrorCode != 429 {
+		if ar.ErrorCode == 429 {
+			wait := time.Duration(ar.Parameters.RetryAfter) * time.Second
+			if wait <= 0 {
+				wait = 30 * time.Second // Telegram не сказал — ждём полминуты, а не долбим
+			}
+			return nil, &RateLimitError{RetryAfter: wait, err: err}
+		}
+		if ar.ErrorCode >= 400 && ar.ErrorCode < 500 {
 			return nil, fmt.Errorf("%w: %s", ErrRejected, err)
 		}
 		return nil, err

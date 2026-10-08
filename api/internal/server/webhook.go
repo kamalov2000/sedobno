@@ -21,6 +21,19 @@ type tgUpdate struct {
 	Message          *tgMessage          `json:"message"`
 	CallbackQuery    *tgCallbackQuery    `json:"callback_query"`
 	PreCheckoutQuery *tgPreCheckoutQuery `json:"pre_checkout_query"`
+	// MyChatMember — человек заблокировал бота или разблокировал его. Telegram шлёт это сам
+	// (тип входит в обновления по умолчанию): блокировку видно сразу, без неудачной отправки.
+	MyChatMember *tgChatMemberUpdated `json:"my_chat_member"`
+}
+
+// tgChatMemberUpdated — смена статуса бота в чате с человеком. В личке «kicked» —
+// заблокировал, «member» — разблокировал (нажал «Перезапустить»).
+type tgChatMemberUpdated struct {
+	Chat          *tgChat `json:"chat"`
+	From          *tgUser `json:"from"`
+	NewChatMember struct {
+		Status string `json:"status"`
+	} `json:"new_chat_member"`
 }
 
 // tgCallbackQuery — нажатие inline-кнопки. Нам нужно: id (для answerCallbackQuery),
@@ -132,6 +145,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case upd.MyChatMember != nil:
+		s.handleMyChatMember(r.Context(), upd.MyChatMember)
+		w.WriteHeader(http.StatusOK)
 	case upd.CallbackQuery != nil:
 		s.handleCallback(w, r.Context(), upd.CallbackQuery)
 	case upd.PreCheckoutQuery != nil:
@@ -281,6 +297,34 @@ func (s *Server) handleCallback(w http.ResponseWriter, ctx context.Context, cq *
 //  3. голый «/support» → включаем режим поддержки и просим прислать сообщение;
 //  4. прочий текст → подсказка с кнопкой входа в поддержку (без форварда — фильтр шума).
 //
+// handleMyChatMember — человек заблокировал или разблокировал бота. Блокировка: рассылки
+// прекращаются сразу (все выборки рассылок пропускают blocked_at). Разблокировка: человек
+// снова адресат (решение владельца 09.10.2026 — автоматические попытки только после того,
+// как он сам вернулся).
+func (s *Server) handleMyChatMember(ctx context.Context, m *tgChatMemberUpdated) {
+	if m.Chat == nil || m.Chat.Type != "private" || m.From == nil || s.pool == nil {
+		return
+	}
+	uid, err := s.store.UserIDByTelegramID(ctx, m.From.ID)
+	if err != nil {
+		return // аккаунта нет — рассылать и так некому
+	}
+	switch m.NewChatMember.Status {
+	case "kicked":
+		if err := s.store.MarkUserBlocked(ctx, uid); err != nil {
+			s.log.Warn("блокировка бота: отметка", "err", err, "user", uid)
+			return
+		}
+		_ = s.store.InsertEvent(ctx, &uid, "bot_blocked", map[string]any{"source": "telegram"})
+	case "member":
+		if err := s.store.ClearUserBlocked(ctx, uid); err != nil {
+			s.log.Warn("разблокировка бота: отметка", "err", err, "user", uid)
+			return
+		}
+		_ = s.store.InsertEvent(ctx, &uid, "bot_unblocked", map[string]any{"source": "telegram"})
+	}
+}
+
 // handleStopDigest выключает вечерний итог по команде из бота. Подтверждаем словами и
 // говорим, как вернуть: выключение не должно ощущаться дверью без ручки с той стороны.
 func (s *Server) handleStopDigest(w http.ResponseWriter, ctx context.Context, msg *tgMessage) {
@@ -508,6 +552,15 @@ func (s *Server) handleStart(w http.ResponseWriter, ctx context.Context, msg *tg
 		if u, err := s.store.UpsertUser(ctx, msg.From.ID, msg.From.Username, src, lim.Meals, lim.Scans); err != nil {
 			s.log.Warn("webhook: upsert пользователя на /start", "err", err)
 		} else {
+			// /start — человек сам вернулся в чат: снова адресат рассылок (до этого после
+			// блокировки бот молчал). Как и при открытии мини-приложения (auth.go).
+			if u.BlockedAt != nil {
+				if cerr := s.store.ClearUserBlocked(ctx, u.ID); cerr != nil {
+					s.log.Warn("снятие отметки блокировки на /start", "err", cerr, "user", u.ID)
+				} else {
+					_ = s.store.InsertEvent(ctx, &u.ID, "bot_unblocked", map[string]any{"source": "start"})
+				}
+			}
 			// Намерение из ссылки сохраняем СРАЗУ, ещё до открытия мини-аппа: только так
 			// его можно донести до фронта — обычный t.me/bot?start=… мини-апп не видит.
 			if intent.Mode != "" || intent.Plan != "" {

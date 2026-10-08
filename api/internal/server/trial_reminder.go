@@ -58,6 +58,9 @@ func (s *Server) tickTrialReminderAt(ctx context.Context, now time.Time) {
 	}
 	sent := 0
 	for _, c := range cands {
+		if s.tgHeld(now) {
+			break
+		}
 		// Днём по местному времени (решение владельца 08.10.2026): до 08.10 оно уходило в
 		// любой час, и 6 из 75 пришли в 01:00–04:00 МСК. Суточного окна хватает: в любые
 		// 24 часа есть дневные часы.
@@ -71,6 +74,9 @@ func (s *Server) tickTrialReminderAt(ctx context.Context, now time.Time) {
 			markup = tg.StartMarkup("Продлить доступ", s.cfg.WebAppURL, supportButtonText, callbackSupport)
 		}
 		if err := s.tg.SendMessage(ctx, c.TelegramID, text, markup); err != nil {
+			if _, limited := s.noteRateLimit(err, now); limited {
+				break // отметку не ставим — после паузы следующий проход повторит
+			}
 			// Бот заблокирован — повторять нечего: помечаем человека и закрываем
 			// напоминание, иначе он останется в выборке до конца триала и будет
 			// получать попытку каждый час (живой случай 08.09, user 348).

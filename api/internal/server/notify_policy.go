@@ -115,5 +115,11 @@ func reminderDue(local time.Time, reminderTime string, d notifyDay) bool {
 	return true
 }
 
-// trialDaytime — конец пробной недели сообщаем днём: вне тихих часов.
-func trialDaytime(local time.Time) bool { return !inQuietHours(local) }
+// trialDaytime — конец пробной недели сообщаем днём, с 10:00 до 20:00: вне тихих часов и
+// ДО окна вечернего итога. Так сообщение о пробной неделе никогда не приходит после уже
+// отправленного итога того же дня, и правило «в этот день итог молчит» выполнимо. В любые
+// сутки окна (за 24 часа до конца недели) есть такие часы.
+func trialDaytime(local time.Time) bool {
+	h := local.Hour()
+	return h >= quietTo && h < digestHour
+}

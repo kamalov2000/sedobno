@@ -56,15 +56,21 @@ func (s *Server) StartDailyDigest(ctx context.Context) {
 }
 
 // tickDailyDigest — один проход рассылки.
-func (s *Server) tickDailyDigest(ctx context.Context) {
+func (s *Server) tickDailyDigest(ctx context.Context) { s.tickDailyDigestAt(ctx, time.Now()) }
+
+// tickDailyDigestAt — проход с заданным «сейчас».
+func (s *Server) tickDailyDigestAt(ctx context.Context, at time.Time) {
 	cands, err := s.store.DigestCandidates(ctx)
 	if err != nil {
 		s.log.Warn("итог дня: выборка кандидатов", "err", err)
 		return
 	}
-	now := time.Now().UTC()
+	now := at.UTC()
 	sent := 0
 	for _, c := range cands {
+		if s.tgHeld(now) {
+			break // 429: ждём названное Telegram время
+		}
 		local := now.In(userLocation(c.TZ))
 		localDay := local.Format(dayLayout)
 		if !digestDue(local, notifyDay{Today: localDay, LastDigest: c.LastDigest, LastReminder: c.LastReminder, ServiceDay: c.ServiceDay}) {
@@ -91,6 +97,10 @@ func (s *Server) tickDailyDigest(ctx context.Context) {
 		if err := s.tg.SendMessage(ctx, c.TelegramID, text, nil); err != nil {
 			// Бот заблокирован — исключаем из рассылок насовсем (выборка теперь его не
 			// возьмёт). Раньше такой человек попадал сюда КАЖДЫЙ вечер.
+			if wait, limited := s.noteRateLimit(err, now); limited {
+				_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "digest", "rate_limited": true, "retry_after_s": int(wait.Seconds())})
+				break
+			}
 			blocked := s.handleSendError(ctx, c.UserID, err)
 			permanent := errors.Is(err, tg.ErrRejected)
 			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "digest", "blocked": blocked, "permanent": permanent})

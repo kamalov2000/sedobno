@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // Окончательный отказ Telegram (4xx, кроме 429 и блокировки) — отдельный признак: по нему
@@ -37,5 +38,24 @@ func TestSendMessage_ОкончательныйОтказИВременныйС�
 				t.Errorf("отказ=%v блок=%v, ждали %v/%v: %v", errors.Is(err, ErrRejected), errors.Is(err, ErrBotBlocked), c.rejected, c.blocked, err)
 			}
 		})
+	}
+}
+
+// 429 — пауза ровно на названное Telegram время; без числа — полминуты, а не мгновенный повтор.
+func TestSendMessage_429ВремяОжидания(t *testing.T) {
+	for body, want := range map[string]time.Duration{
+		`{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":17}}`: 17 * time.Second,
+		`{"ok":false,"error_code":429,"description":"Too Many Requests"}`:                                 30 * time.Second,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(body))
+		}))
+		err := New(srv.URL, "123:T").SendMessage(context.Background(), 1, "x", nil)
+		srv.Close()
+		got, ok := RetryAfter(err)
+		if !ok || got != want || !errors.Is(err, ErrRateLimited) || errors.Is(err, ErrRejected) {
+			t.Errorf("%s: ждать %v (ok=%v), ждали %v; err=%v", body, got, ok, want, err)
+		}
 	}
 }

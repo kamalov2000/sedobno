@@ -4,6 +4,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,7 +34,10 @@ type Server struct {
 	landingLimiter *ipLimiter
 	support        *supportState
 	poolPeak       poolPeak // пик занятых коннектов; наполняется только при DEBUG_STATS=1
-	log            *slog.Logger
+	// tgHoldUntil — до какого момента (unix нс) рассылки молчат: Telegram ответил 429 и
+	// назвал время ожидания. Ограничение на бота целиком, поэтому пауза общая.
+	tgHoldUntil atomic.Int64
+	log         *slog.Logger
 }
 
 // New создаёт сервер с зависимостями. pipe может быть nil в тестах, не задевающих

@@ -159,7 +159,7 @@ func TestReminder_РассылкаИКнопки(t *testing.T) {
 	}
 
 	// Назавтра человек уже записал еду — молчим.
-	if _, err := r.s.pool.Exec(context.Background(), `INSERT INTO meals (user_id, status, source, items, kcal, local_date) VALUES ($1, 'ok', 'manual', '[]', 100, '2026-10-09')`, r.uid); err != nil {
+	if _, err := r.s.pool.Exec(context.Background(), `INSERT INTO meals (user_id, status, source, items, kcal, protein_g, fat_g, carb_g, local_date, eaten_at) VALUES ($1, 'ok', 'manual', '[]', 100, 0, 0, 0, '2026-10-09', '2026-10-09 09:00+03')`, r.uid); err != nil {
 		t.Fatal(err)
 	}
 	r.s.tickReminder(context.Background(), day(9, 13, 5))

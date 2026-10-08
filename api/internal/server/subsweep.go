@@ -78,11 +78,17 @@ func (s *Server) notifyUpcomingRenewals(ctx context.Context) {
 		return
 	}
 	for _, r := range due {
+		if s.tgHeld(time.Now()) {
+			break // 429: предупреждение уйдёт следующим тиком после паузы
+		}
 		amountRub, _, _ := s.planParams(r.Plan)
 		text := fmt.Sprintf(
 			"Напоминание: завтра продлим подписку «Съедобно» — %d ₽ спишутся автоматически. Не нужно — отмените в приложении, доступ останется до конца оплаченного периода.",
 			amountRub)
 		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			if _, limited := s.noteRateLimit(err, time.Now()); limited {
+				break
+			}
 			// Заблокировал бота — предупредить о списании мы уже не сможем; помечаем
 			// уведомление отработанным, чтобы не долбиться каждый час. Само СПИСАНИЕ
 			// при этом идёт своим чередом: подписка оплачена, и молча её обрывать нельзя.
@@ -129,7 +135,13 @@ func (s *Server) notifyUpcomingLapses(ctx context.Context) {
 	const text = "Напоминание: завтра заканчивается доступ к «Съедобно». Автопродление не подключено — " +
 		"чтобы не потерять доступ, оформите подписку заново в приложении."
 	for _, r := range due {
+		if s.tgHeld(time.Now()) {
+			break
+		}
 		if err := s.tg.SendMessage(ctx, r.TelegramID, text, nil); err != nil {
+			if _, limited := s.noteRateLimit(err, time.Now()); limited {
+				break
+			}
 			if s.handleSendError(ctx, r.UserID, err) {
 				if merr := s.store.MarkRenewalNotified(ctx, r.ID); merr != nil {
 					s.log.Error("уведомление об окончании: пометка после блокировки", "err", merr, "sub", r.ID)
@@ -143,6 +155,13 @@ func (s *Server) notifyUpcomingLapses(ctx context.Context) {
 			s.log.Error("уведомление об окончании разовой подписки: пометка", "err", err, "sub", r.ID)
 			continue
 		}
+		// Окончание оплаченного доступа — тоже обязательное: в этот местный день
+		// необязательные итог и напоминание уступают ему.
+		if tz, terr := s.store.UserTZ(ctx, r.UserID); terr == nil {
+			_ = s.store.MarkServiceMsg(ctx, r.UserID, time.Now().In(userLocation(tz)).Format(dayLayout))
+		}
+		lapseUID := r.UserID
+		_ = s.store.InsertEvent(ctx, &lapseUID, "notify_sent", map[string]any{"kind": "lapse"})
 		uid := r.UserID
 		_ = s.store.InsertEvent(ctx, &uid, "lapse_notice_sent", map[string]any{"plan": r.Plan})
 	}

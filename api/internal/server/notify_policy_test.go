@@ -85,8 +85,12 @@ func TestQuietHoursAndTrialDaytime(t *testing.T) {
 		if got := inQuietHours(at(t, "Europe/Moscow", hhmm)); got != quiet {
 			t.Errorf("%s: тихие часы %v, ждали %v", hhmm, got, quiet)
 		}
-		if trialDaytime(at(t, "Europe/Moscow", hhmm)) == quiet {
-			t.Errorf("%s: конец пробной недели — только днём", hhmm)
+	}
+	// Конец пробной недели — с 10:00 до 20:00: днём и до окна итога, чтобы никогда не прийти
+	// после уже отправленного итога того же дня.
+	for hhmm, ok := range map[string]bool{"09:59": false, "10:00": true, "19:59": true, "20:00": false, "20:59": false, "03:00": false} {
+		if trialDaytime(at(t, "Europe/Moscow", hhmm)) != ok {
+			t.Errorf("%s: конец пробной недели %v, ждали %v", hhmm, !ok, ok)
 		}
 	}
 }

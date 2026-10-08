@@ -70,6 +70,9 @@ func (s *Server) tickReminder(ctx context.Context, now time.Time) {
 	}
 	sent := 0
 	for _, c := range cands {
+		if s.tgHeld(now) {
+			break // 429: ждём названное Telegram время, потом — следующий проход
+		}
 		local := now.In(userLocation(c.TZ))
 		today := local.Format(dayLayout)
 		d := notifyDay{Today: today, LastDigest: c.LastDigest, LastReminder: c.LastReminder, ServiceDay: c.ServiceDay, PausedUntil: c.PausedUntil}
@@ -88,6 +91,10 @@ func (s *Server) tickReminder(ctx context.Context, now time.Time) {
 		}
 		uid := c.UserID
 		if err := s.tg.SendMessage(ctx, c.TelegramID, reminderText, s.reminderMarkup()); err != nil {
+			if wait, limited := s.noteRateLimit(err, now); limited {
+				_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "reminder", "rate_limited": true, "retry_after_s": int(wait.Seconds())})
+				break
+			}
 			blocked := s.handleSendError(ctx, c.UserID, err)
 			permanent := errors.Is(err, tg.ErrRejected)
 			_ = s.store.InsertEvent(ctx, &uid, "notify_error", map[string]any{"kind": "reminder", "blocked": blocked, "permanent": permanent})
