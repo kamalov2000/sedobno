@@ -6,6 +6,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -75,4 +76,40 @@ func TestManualSave_ПовторСТемЖеКлючомОднаЗапись(t *
 
 func (r *rig) post2(t *testing.T, body map[string]any) (int, map[string]any) {
 	return postManual(t, r, body)
+}
+
+// Сервер сохранил → ответ потерян → человек поправил вес → повторил с тем же ключом.
+// Ключ означает ОДНО сохранение, а не первый вариант его содержимого: повтор обязан
+// записать правки в ту же запись, а не вернуть старую и не создать вторую.
+func TestManualSave_ПравкаПослеПотерянногоОтветаНеТеряется(t *testing.T) {
+	r := newRig(t, &classifier{res: &llm.MealAnalysis{}}, &reader{ext: &llm.Extraction{}}, 999000811)
+	key := "0b6a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
+	first := map[string]any{"client_key": key, "meal_type": "lunch",
+		"dishes": []map[string]any{{"name": "Гречка", "grams": 200, "kcal_per_100": 110, "protein_per_100": 4}}}
+	_, out1 := postManual(t, r, first)
+
+	edited := map[string]any{"client_key": key, "meal_type": "dinner",
+		"dishes": []map[string]any{{"name": "Гречка", "grams": 300, "kcal_per_100": 110, "protein_per_100": 4.2}}}
+	code, out2 := postManual(t, r, edited)
+	if code != 200 || out2["id"] != out1["id"] {
+		t.Fatalf("повтор: %d, id %v → %v — ждали тот же приём", code, out1["id"], out2["id"])
+	}
+	if n := r.count(t, `SELECT count(*) FROM meals`); n != 1 {
+		t.Fatalf("приёмов %d, ждали 1", n)
+	}
+	var grams, kcal float64
+	var mt string
+	if err := r.s.pool.QueryRow(context.Background(),
+		`SELECT (items->0->>'grams')::float8, kcal::float8, meal_type FROM meals`).Scan(&grams, &kcal, &mt); err != nil {
+		t.Fatal(err)
+	}
+	if grams != 300 || kcal != 330 || mt != "dinner" {
+		t.Errorf("в записи %v г / %v ккал / %s — ждали правки 300 г / 330 ккал / dinner", grams, kcal, mt)
+	}
+	if tot, _ := out2["total"].(map[string]any); tot == nil || tot["kcal"] != float64(330) {
+		t.Errorf("ответ повтора несёт старые числа: %v", out2["total"])
+	}
+	if n := len(r.events(t, "meal_manual")); n != 1 {
+		t.Errorf("событий meal_manual %d, ждали 1", n)
+	}
 }

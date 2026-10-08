@@ -1197,17 +1197,11 @@ func (s *Server) handleMealManual(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	if !created {
-		// Повтор того же сохранения (ответ на первое потерялся): приём уже есть — отдаём его
-		// как есть, без второй записи и без вторых событий в воронке.
-		existing, gerr := s.store.GetMeal(ctx, id)
-		if gerr != nil {
-			s.log.Error("meal: чтение уже сохранённого приёма", "err", gerr, "user", userID)
-			writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить приём")
-			return
-		}
-		item := toDiaryItem(existing)
+		// Повтор того же сохранения (ответ на первое потерялся): запись уже была и сейчас
+		// перезаписана присланным — правки после сбоя не теряются. Второго приёма нет, и
+		// второго события сохранения в воронке тоже.
 		u, _ := s.store.GetUserByID(ctx, userID)
-		writeJSON(w, http.StatusOK, mealResponse{Status: meal.StatusOK, ID: id, Dishes: item.Dishes, Total: item.Total, MealsLeft: s.remainingMeals(u)})
+		writeJSON(w, http.StatusOK, mealResponse{Status: meal.StatusOK, ID: id, Dishes: dishes, Total: &total, MealsLeft: s.remainingMeals(u)})
 		return
 	}
 	_ = s.store.InsertEvent(ctx, &userID, "meal_manual", map[string]any{"kcal": total.Kcal, "dishes": len(dishes), "source": source})

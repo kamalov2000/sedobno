@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
 import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES } from "../meal";
 import EggCounter from "../components/EggCounter";
+import { writePending, clearPending } from "../pendingSave";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent, ApiError } from "../api";
@@ -492,14 +493,21 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
     setBusy(true);
     try {
       if (manual || draft) {
-        await createManualMeal({
+        // Запрос с ключом запоминается ДО отправки и убирается только после ответа: если
+        // ответ потеряется или вебвью перезагрузится, приложение дошлёт его при запуске
+        // (pendingSave.ts). Правка после сбоя уходит с тем же ключом — сервер обновит ту
+        // же запись, а не создаст вторую.
+        const body = {
           client_key: saveKey.current,
           dishes: toPatch(dishes),
           ...(mealType ? { meal_type: mealType } : {}),
           // source различает в аналитике «вписал цифрами», «описал словами» и «сохранил
           // черновик фото»: второе и третье — платный вызов модели.
           ...(draft ? { source: "photo" as const } : fromText ? { source: "text" as const } : fromRepeat ? { source: "repeat" as const } : {}),
-        });
+        };
+        writePending({ key: saveKey.current, body, at: Date.now() });
+        await createManualMeal(body);
+        clearPending(saveKey.current);
       } else {
         // Правка сохранённого приёма: PATCH идёт ВСЕГДА при нажатии кнопки, без гейта по
         // dirty. Раньше `else if (dirty)` пропускал сохранение, когда сравнение состояний
@@ -854,7 +862,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
         {saveError && (
           <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 8, padding: "9px 11px", borderRadius: 10, background: "var(--bg-soft)", border: "1px solid var(--border)", fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
             <i className="ti ti-wifi-off" aria-hidden="true" style={{ fontSize: 15, flex: "none", marginTop: 1 }} />
-            <span>Не получилось сохранить — приём пока не в дневнике. Проверьте связь и нажмите кнопку ещё раз: всё введённое на месте, второй записи не будет.</span>
+            <span>Не удалось подтвердить сохранение. Проверьте связь и нажмите кнопку ещё раз — всё введённое на месте, повтор не создаст второй записи.</span>
           </div>
         )}
         {weightMissing && (
@@ -863,7 +871,8 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             <span>Укажите вес — блюдо с 0 г сохранить нельзя. Калорийность вернётся, как только вес станет больше нуля.</span>
           </div>
         )}
-        {!isSaved && !weightMissing && (
+        {/* После сбоя подтверждения про «не в дневнике» молчим: запись могла уже лечь. */}
+        {!isSaved && !weightMissing && !saveError && (
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8, fontSize: 12.5, color: "var(--text3)", lineHeight: 1.4 }}>
             <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: 15, flex: "none" }} />
             <span>Пока не в дневнике — нажмите «В дневник», чтобы сохранить</span>

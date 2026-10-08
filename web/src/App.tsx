@@ -26,6 +26,7 @@ import PaywallScreen from "./screens/PaywallScreen";
 import ChooseModeScreen from "./screens/ChooseModeScreen";
 import type { PaywallReason } from "./api";
 import { setLastMode } from "./api";
+import { flushPending } from "./pendingSave";
 
 // Стейт-машина mini-app. Сканер составов: фото → лоадер → результат/ошибка/пейволл.
 // Модуль калорий (feature/calories): фото → лоадер → разбор/ошибка/пейволл + дневник.
@@ -289,9 +290,16 @@ export default function App() {
   const [mealPhoto, setMealPhoto] = useState<File | null>(null);
 
   // Есть ли сегодня записи в дневнике — для точки на иконке (best-effort, не блокирует).
+  // Сначала досылаем неподтверждённое сохранение прошлого сеанса (pendingSave.ts): ответ
+  // на него мог потеряться вместе с закрытым вебвью. Сервер по ключу создаст запись или
+  // обновит уже созданную — второй не будет. Потом уже считаем сегодняшний дневник.
   useEffect(() => {
     if (phase !== "ready") return;
-    void getMeals().then((d) => setTodayHasMeals(d.items.length > 0)).catch(() => {});
+    void flushPending()
+      .catch(() => "failed" as const)
+      .then(() => getMeals())
+      .then((d) => setTodayHasMeals(d.items.length > 0))
+      .catch(() => {});
   }, [phase]);
 
   // Прошлые приёмы для блока «Повторить» на главном (п.16) — при каждом показе главной в

@@ -106,7 +106,9 @@ describe("Г. видимая ошибка сохранения и безопас
     fireEvent.click(screen.getByText("В дневник"));
 
     expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByText(/приём пока не в дневнике/)).toBeTruthy();
+    expect(screen.getByText(/Не удалось подтвердить сохранение/)).toBeTruthy();
+    // Без утверждения, что записи нет: сервер мог её создать, просто ответ не дошёл.
+    expect(screen.queryByText(/не в дневнике/)).toBeNull();
     expect(onDone).not.toHaveBeenCalled();
     expect((screen.getByLabelText("Граммовка") as HTMLInputElement).value).toBe("250");
   });
@@ -188,5 +190,26 @@ describe("В. известные калории и БЖУ вводятся на�
     await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
     const d = (patchMeal.mock.calls[0][1] as { dishes: Record<string, unknown>[] }).dishes[0];
     expect(d).toMatchObject({ grams: 100, kcal: 200, kcal_by_user: true });
+  });
+});
+
+describe("Г+. правка после потерянного ответа и перезагрузка", () => {
+  it("сбой → правка веса → повтор: тот же ключ, новые граммы; запрос лежит в хранилище до подтверждения", async () => {
+    localStorage.clear();
+    createManualMeal.mockRejectedValueOnce(new Error("ответ потерян"));
+    render(<MealResultScreen result={{ status: "ok", dishes: [{ ...borscht }], meals_left: 7 }} manual origin="repeat" isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByText("В дневник"));
+    await screen.findByRole("alert");
+    const stored = JSON.parse(localStorage.getItem("sedobno.pendingSave.v1")!);
+    expect(stored.body.dishes[0]).toMatchObject({ grams: 300 });
+
+    fireEvent.change(screen.getByLabelText("Граммовка"), { target: { value: "350" } });
+    fireEvent.click(screen.getByText("В дневник"));
+    await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(2));
+    const [b1, b2] = createManualMeal.mock.calls.map((c) => c[0] as { client_key: string; dishes: { grams: number }[] });
+    expect(b2.client_key).toBe(b1.client_key);
+    expect(b2.dishes[0].grams).toBe(350);
+    // Подтверждено — из хранилища убрано.
+    expect(localStorage.getItem("sedobno.pendingSave.v1")).toBeNull();
   });
 });

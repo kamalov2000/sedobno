@@ -125,9 +125,12 @@ func (s *Store) InsertMeal(ctx context.Context, m MealRow) (int64, error) {
 	return id, err
 }
 
-// InsertMealOnce — InsertMeal с ключом идемпотентности. created=false — запись с этим
-// ClientKey у пользователя уже была (повтор после потерянного ответа), возвращён её id и
-// новая не создана. Без ClientKey всегда создаёт.
+// InsertMealOnce — InsertMeal с ключом идемпотентности. Ключ обозначает ОДНО сохранение с
+// экрана, а не первый вариант его содержимого: если запись с этим ClientKey уже есть
+// (ответ на первую попытку потерялся, человек поправил вес и повторил), она ОБНОВЛЯЕТСЯ
+// присланным — блюда, суммы, тип приёма, — а не возвращается старой и не дублируется.
+// created=false — запись была. Одним выражением, без гонки между проверкой и вставкой.
+// Без ClientKey всегда создаёт.
 func (s *Store) InsertMealOnce(ctx context.Context, m MealRow) (id int64, created bool, err error) {
 	const q = `
 INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fat_g, carb_g,
@@ -136,19 +139,15 @@ INSERT INTO meals (user_id, eaten_at, status, source, items, kcal, protein_g, fa
 VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12, $13, $14,
         COALESCE($15::date, (COALESCE($2, now()) AT TIME ZONE 'Europe/Moscow')::date),
         $16, NULLIF($17, ''), NULLIF($18, ''), NULLIF($19, ''))
-ON CONFLICT (user_id, client_key) WHERE client_key IS NOT NULL DO NOTHING
-RETURNING id`
+ON CONFLICT (user_id, client_key) WHERE client_key IS NOT NULL DO UPDATE
+   SET items = EXCLUDED.items, kcal = EXCLUDED.kcal, protein_g = EXCLUDED.protein_g,
+       fat_g = EXCLUDED.fat_g, carb_g = EXCLUDED.carb_g, source = EXCLUDED.source,
+       meal_type = COALESCE(EXCLUDED.meal_type, meals.meal_type)
+RETURNING id, (xmax = 0)`
 	err = s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
 		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB,
-		nilIfEmpty(m.LocalDate), m.Escalated, m.EscalationTrigger, m.ImageSHA, m.ClientKey).Scan(&id)
-	if err == nil {
-		return id, true, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) || m.ClientKey == "" {
-		return 0, false, err
-	}
-	err = s.pool.QueryRow(ctx, `SELECT id FROM meals WHERE user_id = $1 AND client_key = $2`, m.UserID, m.ClientKey).Scan(&id)
-	return id, false, err
+		nilIfEmpty(m.LocalDate), m.Escalated, m.EscalationTrigger, m.ImageSHA, m.ClientKey).Scan(&id, &created)
+	return id, created, err
 }
 
 // FindMealByImageSHA ищет приём, уже созданный из ЭТОГО кадра в ЭТОТ день пользователя.
