@@ -80,6 +80,34 @@ func TestReminderDue(t *testing.T) {
 	}
 }
 
+// В день, когда придёт сообщение о конце пробной недели, напоминание молчит — и тогда, когда
+// по времени оно раньше (09.10.2026): решение принимается заранее, отправленное не отменить.
+func TestReminderDue_УступаетКонцуПробнойНедели(t *testing.T) {
+	msk := userLocation("Europe/Moscow")
+	day := func(d, h, m int) time.Time { return time.Date(2026, 10, d, h, m, 0, 0, msk) }
+	cases := []struct {
+		name    string
+		now     time.Time // время напоминания (выбрано человеком)
+		expires time.Time
+		want    bool
+	}{
+		{"неделя кончается завтра в 03:00 — сообщение сегодня днём; напоминание на 08:00 молчит", day(8, 8, 5), day(9, 3, 0), false},
+		{"то же, напоминание на 13:00 — молчит", day(8, 13, 5), day(9, 3, 0), false},
+		{"кончается сегодня в 22:00 — сообщение сегодня днём; утреннее напоминание молчит", day(8, 8, 5), day(8, 22, 0), false},
+		{"кончается завтра в 23:00 — сообщение завтра днём; сегодня напоминание идёт", day(8, 13, 5), day(9, 23, 0), true},
+		{"…а завтра утром уже молчит", day(9, 8, 5), day(9, 23, 0), false},
+		{"кончается через три дня — напоминание идёт", day(8, 13, 5), day(11, 13, 0), true},
+		{"дневные часы прошли (напоминание на 21:30) — сегодня сообщение уже не придёт", day(8, 21, 35), day(9, 21, 0), true},
+	}
+	for _, c := range cases {
+		d := notifyDay{Today: c.now.Format(dayLayout), TrialPending: c.expires}
+		reminderAt := c.now.Add(-5 * time.Minute).Format("15:04")
+		if got := reminderDue(c.now, reminderAt, d); got != c.want {
+			t.Errorf("%s: напоминание %v, ждали %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestQuietHoursAndTrialDaytime(t *testing.T) {
 	for hhmm, quiet := range map[string]bool{"09:59": true, "10:00": false, "20:59": false, "21:00": true, "03:00": true} {
 		if got := inQuietHours(at(t, "Europe/Moscow", hhmm)); got != quiet {

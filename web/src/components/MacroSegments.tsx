@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { MealMacros } from "../types";
-import { MACRO_COLORS, macroPercents } from "../meal";
+import type { MacroKey, MealMacros } from "../types";
+import { MACRO_COLORS, macroPercents, type MacroState } from "../meal";
 
 // Сегментированная полоска Б/Ж/У (доли по калориям) + подписи под сегментами. Общий
 // элемент языка модуля калорий: результат, дневник, онбординг. Цвета тема-независимы.
@@ -16,6 +16,7 @@ export default function MacroSegments({
   trackBg = "var(--bg)",
   labelSize = 10.5,
   collapsible = false,
+  states,
 }: {
   total: MealMacros;
   height?: number;
@@ -23,13 +24,16 @@ export default function MacroSegments({
   trackBg?: string;
   labelSize?: number;
   collapsible?: boolean;
+  /** Неизвестные БЖУ (09.10.2026): «—» — значения нет ни у одного приёма, «+?» — только
+   *  у части; сумма известного не выдаётся за полную. Нет — все известны. */
+  states?: Partial<Record<MacroKey, MacroState["state"]>>;
 }) {
   const [open, setOpen] = useState(false);
   const pct = macroPercents(total);
   const segs = [
-    { w: pct.p, c: MACRO_COLORS.p, label: `Б ${Math.round(total.protein_g)} г` },
-    { w: pct.f, c: MACRO_COLORS.f, label: `Ж ${Math.round(total.fat_g)} г` },
-    { w: pct.c, c: MACRO_COLORS.c, label: `У ${Math.round(total.carb_g)} г` },
+    { w: pct.p, c: MACRO_COLORS.p, label: macroGrams("Б", total.protein_g, states?.protein) },
+    { w: pct.f, c: MACRO_COLORS.f, label: macroGrams("Ж", total.fat_g, states?.fat) },
+    { w: pct.c, c: MACRO_COLORS.c, label: macroGrams("У", total.carb_g, states?.carb) },
   ];
   const labelsShown = collapsible ? open : showLabels;
 
@@ -78,4 +82,10 @@ export default function MacroSegments({
       {body}
     </div>
   );
+}
+
+/** «Б 20 г», «Б 20+? г» (часть без значения), «Б —» (неизвестно). */
+export function macroGrams(label: string, value: number, state: MacroState["state"] = "known"): string {
+  if (state === "unknown") return `${label} —`;
+  return `${label} ${Math.round(value)}${state === "partial" ? "+?" : ""} г`;
 }

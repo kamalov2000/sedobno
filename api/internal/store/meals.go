@@ -339,9 +339,16 @@ LIMIT $4`
 }
 
 // MealDay возвращает дневной агрегат за day (пустой день → нули, не ошибка).
+//
+// COALESCE — не украшение (09.10.2026): колонки БЖУ допускают NULL, и сумма дня, где ни у
+// одного приёма значения нет, — NULL. Скан NULL в float64 падал бы, и вместе с ним молча
+// падали итог дня, напоминание («записал ли сегодня») и экран дневника. Сегодняшние пути
+// записи кладут 0 и отметку macros_unknown в блюда, но агрегат не должен зависеть от этого.
+// Неизвестное ≠ ноль: отличать их — дело экрана по отметкам в блюдах, а не этой суммы.
 func (s *Store) MealDay(ctx context.Context, userID int64, day string) (MealDaily, error) {
 	const q = `
-SELECT meals_count, kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8
+SELECT meals_count, COALESCE(kcal, 0)::float8, COALESCE(protein_g, 0)::float8,
+       COALESCE(fat_g, 0)::float8, COALESCE(carb_g, 0)::float8
 FROM meal_daily WHERE user_id = $1 AND day = $2::date`
 	d := MealDaily{Day: day}
 	err := s.pool.QueryRow(ctx, q, userID, day).Scan(&d.MealsCount, &d.Kcal, &d.ProteinG, &d.FatG, &d.CarbG)
@@ -358,7 +365,8 @@ FROM meal_daily WHERE user_id = $1 AND day = $2::date`
 // возрастанию даты (для недельного экрана). Дни без приёмов в выборку не попадают.
 func (s *Store) MealDailyRange(ctx context.Context, userID int64, from, to string) ([]MealDaily, error) {
 	const q = `
-SELECT day::text, meals_count, kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8
+SELECT day::text, meals_count, COALESCE(kcal, 0)::float8, COALESCE(protein_g, 0)::float8,
+       COALESCE(fat_g, 0)::float8, COALESCE(carb_g, 0)::float8
 FROM meal_daily
 WHERE user_id = $1 AND day >= $2::date AND day <= $3::date
 ORDER BY day ASC`

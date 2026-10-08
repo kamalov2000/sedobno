@@ -3,9 +3,9 @@ import AddMealActions from "../components/AddMealActions";
 import type { MealTemplate } from "../api";
 import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
-import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal, round1 } from "../meal";
+import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, macroSummary, mealBudgetKcal, round1, type MacroState } from "../meal";
 import { haptic } from "../telegram";
-import MacroSegments from "../components/MacroSegments";
+import MacroSegments, { macroGrams } from "../components/MacroSegments";
 import WaterCard from "../components/WaterCard";
 import WeightCard from "../components/WeightCard";
 import StreakCard from "../components/StreakCard";
@@ -417,6 +417,7 @@ function DayView({
   const atToday = day != null && today !== "" && day >= today;
   const isToday = day === today;
   const empty = items.length === 0;
+  const macroStates = dayMacroStates(items);
   const streakShown = streak != null && streak.days > 0;
   const weightShown = weightSummary != null && onOpenWeight != null;
 
@@ -446,7 +447,7 @@ function DayView({
         </div>
       )}
       {offer}
-      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} empty={empty} onOpenWizard={onOpenWizard} />)}
+      {total && (profile ? <RemainderCard total={total} states={macroStates} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} states={macroStates} empty={empty} onOpenWizard={onOpenWizard} />)}
 
       {loading && empty && <Muted>Загружаем…</Muted>}
 
@@ -526,6 +527,17 @@ function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhot
   );
 }
 
+type DayMacroStates = Partial<Record<"protein" | "fat" | "carb", MacroState["state"]>>;
+
+/** Б/Ж/У дня: известны, известны у части приёмов или неизвестны (09.10.2026). Суммы дня
+ *  приходят с сервера, где неизвестное лежит нулём, — по отметкам в блюдах отличаем одно
+ *  от другого, иначе приём «только калории» показал бы день как «Б 0 г». */
+export function dayMacroStates(items: MealDiaryItem[]): DayMacroStates {
+  const dishes = items.filter((i) => i.status === "ok").flatMap((i) => i.dishes);
+  const m = macroSummary(dishes);
+  return { protein: m.protein.state, fat: m.fat.state, carb: m.carb.state };
+}
+
 // Карточка остатка (профиль заполнен) — главный экран дневника v2 по макету.
 //
 // Крупно — ОСТАТОК до нормы: в дневник заходят с вопросом «сколько мне ещё можно», и
@@ -537,18 +549,22 @@ function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhot
 // цвет тут врал бы. Полоска в переборе заполнена целиком.
 //
 // Тап по карточке — пересчёт нормы (как было у кольца).
-function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; profile: NutritionProfile; onOpenWizard: () => void }) {
+function RemainderCard({ total, states, profile, onOpenWizard }: { total: MealDaily; states: DayMacroStates; profile: NutritionProfile; onOpenWizard: () => void }) {
   const target = profile.daily_kcal_target ?? 0;
   const eaten = Math.round(total.kcal);
   const left = kcalLeft(eaten, target);
   const over = left < 0;
   const pct = target > 0 ? Math.min(1, eaten / target) : 0;
-  const macros = `Б${NBSP}${fmtInt(total.protein_g)}${NBSP}г · Ж${NBSP}${fmtInt(total.fat_g)}${NBSP}г · У${NBSP}${fmtInt(total.carb_g)}${NBSP}г`;
+  const nb = (s: string) => s.replace(/ /g, NBSP);
+  const macros = [macroGrams("Б", total.protein_g, states.protein), macroGrams("Ж", total.fat_g, states.fat), macroGrams("У", total.carb_g, states.carb)].map(nb).join(" · ");
   // Остаток Б/Ж/У до нормы — та же логика, что у ккал. Показываем, только если у профиля
   // есть таргеты макросов; перебор макроса — «осталось 0».
   const macroTargets = profile.daily_protein_g != null || profile.daily_fat_g != null || profile.daily_carb_g != null;
-  const leftMacro = (t: number | undefined, e: number) => Math.max(0, Math.round((t ?? 0) - e));
-  const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
+  // Неизвестный макрос — остаток неизвестен («—»); известный лишь у части приёмов — это
+  // верхняя граница («≤»): съедено не меньше известной суммы.
+  const leftMacro = (t: number | undefined, e: number, st: MacroState["state"] = "known") =>
+    st === "unknown" ? "—" : `${st === "partial" ? "≤" : ""}${Math.max(0, Math.round((t ?? 0) - e))}`;
+  const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g, states.protein)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g, states.fat)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g, states.carb)}${NBSP}г`;
 
   return (
     <div className="sj-rem" onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "20px 20px 18px", marginBottom: 16, cursor: "pointer" }}>
@@ -572,7 +588,7 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
 
       {/* Б/Ж/У — как были: полоска долей плюс строка остатка. */}
       <div className="sj-rem-macro" style={{ marginTop: 14 }}>
-        <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
+        <MacroSegments total={total} states={states} height={7} showLabels={false} trackBg="var(--bg)" />
       </div>
       <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
       {macroTargets && (
@@ -587,7 +603,7 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
 // Пустой день — отдельная верстка: крупный «0 ккал» там ничего не сообщает («съедено 0»
 // человек и так знает) и читается уныло. Вместо цифры — то, ради чего карточка на пустом
 // дне вообще показывается: предложение посчитать норму.
-function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boolean; onOpenWizard: () => void }) {
+function SumsCard({ total, states, empty, onOpenWizard }: { total: MealDaily; states: DayMacroStates; empty: boolean; onOpenWizard: () => void }) {
   return (
     <div className="sj-rem" style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px", marginBottom: 16 }}>
       {empty ? (
@@ -605,7 +621,7 @@ function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boo
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>съедено за день</div>
           <div className="sj-rem-macro" style={{ marginTop: 16 }}>
-            <MacroSegments total={total} height={8} trackBg="var(--bg)" />
+            <MacroSegments total={total} states={states} height={8} trackBg="var(--bg)" />
           </div>
         </>
       )}

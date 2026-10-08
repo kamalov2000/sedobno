@@ -7,7 +7,11 @@ package server
 //   - оплата и итог в обоих порядках: отправленное не отменить, правило это учитывает.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"testing"
@@ -166,5 +170,88 @@ VALUES ($1,'sbp','active','monthly','pm_test', now() + interval '30 hours', now(
 		if sc.count() != 2 {
 			t.Errorf("предупреждение об оплате не ушло после итога: отправок %d", sc.count())
 		}
+	})
+}
+
+// call — запрос к API от имени человека из notifyRig.
+func (r *notifyRig) call(t *testing.T, method, path string, body any) (int, map[string]any) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		raw, _ := json.Marshal(body)
+		rd = bytes.NewReader(raw)
+	}
+	req, _ := http.NewRequest(method, r.srv.URL+path, rd)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+r.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+// Ручной приём с пустыми БЖУ (09.10.2026): сводка дня, итог и напоминание работают — и на
+// приёме, сохранённом приложением (0 + отметка macros_unknown), и на строке, где колонки
+// БЖУ пусты (NULL), — такой путь записи сегодня не порождает, но агрегат от этого не зависит.
+func TestNotify_ПустыеБЖУНеЛомаютСводкуИРассылку(t *testing.T) {
+	msk := userLocation("Europe/Moscow")
+	now := time.Now().In(msk)
+	day := now.Format(dayLayout)
+	evening := time.Date(now.Year(), now.Month(), now.Day(), 20, 10, 0, 0, msk)
+	noon := time.Date(now.Year(), now.Month(), now.Day(), 13, 5, 0, 0, msk)
+
+	check := func(t *testing.T, r *notifyRig, sc *tgScript, kcal float64) {
+		t.Helper()
+		code, got := r.call(t, http.MethodGet, "/api/meals?day="+day, nil)
+		if code != 200 {
+			t.Fatalf("дневник: %d %v", code, got)
+		}
+		if k := got["total"].(map[string]any)["kcal"]; k != kcal {
+			t.Errorf("сводка дня: %v ккал, ждали %v", k, kcal)
+		}
+		r.s.tickReminder(context.Background(), noon)
+		if sc.count() != 0 {
+			t.Errorf("напоминание ушло, хотя сегодня есть запись: %d", sc.count())
+		}
+		r.s.tickDailyDigestAt(context.Background(), evening)
+		if sc.count() != 1 {
+			t.Fatalf("итог дня не ушёл: отправок %d", sc.count())
+		}
+	}
+	setup := func(t *testing.T, tgID int64) (*notifyRig, *tgScript) {
+		r := newNotifyRig(t, tgID)
+		sc := &tgScript{}
+		sc.install(r)
+		r.patch(t, map[string]any{"device_tz": "Europe/Moscow", "digest_enabled": true, "reminder_enabled": true, "reminder_time": "13:00"})
+		return r, sc
+	}
+
+	t.Run("приём из приложения: только калории", func(t *testing.T) {
+		r, sc := setup(t, 999000842)
+		code, saved := r.call(t, http.MethodPost, "/api/meals", map[string]any{
+			"date": day, "client_key": "unknown-macros-01",
+			"dishes": []map[string]any{{"name": "суп из столовой", "grams": 300, "kcal_per_100": 60}},
+		})
+		if code != 200 {
+			t.Fatalf("ручной приём: %d %v", code, saved)
+		}
+		d := saved["dishes"].([]any)[0].(map[string]any)
+		if fmt.Sprint(d["macros_unknown"]) != "[protein fat carb]" {
+			t.Errorf("БЖУ должны остаться неизвестными: %v", d["macros_unknown"])
+		}
+		check(t, r, sc, 180)
+	})
+
+	t.Run("строка с пустыми колонками БЖУ", func(t *testing.T) {
+		r, sc := setup(t, 999000843)
+		if _, err := r.s.pool.Exec(context.Background(), `INSERT INTO meals (user_id, status, source, items, kcal, local_date)
+VALUES ($1, 'ok', 'manual', '[{"name":"без БЖУ","grams":100,"kcal":250}]', 250, $2::date)`, r.uid, day); err != nil {
+			t.Fatal(err)
+		}
+		check(t, r, sc, 250)
 	})
 }

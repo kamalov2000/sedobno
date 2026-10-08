@@ -76,6 +76,9 @@ func (s *Server) tickReminder(ctx context.Context, now time.Time) {
 		local := now.In(userLocation(c.TZ))
 		today := local.Format(dayLayout)
 		d := notifyDay{Today: today, LastDigest: c.LastDigest, LastReminder: c.LastReminder, ServiceDay: c.ServiceDay, PausedUntil: c.PausedUntil}
+		if c.TrialPending != nil {
+			d.TrialPending = *c.TrialPending
+		}
 		// Сначала дешёвые проверки, потом агрегат дня (запрос в базу).
 		if !reminderDue(local, c.ReminderTime, d) {
 			continue

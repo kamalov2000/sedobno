@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -87,6 +88,8 @@ type ReminderCandidate struct {
 	LastReminder string
 	LastDigest   string
 	ServiceDay   string
+	// TrialPending — сообщение о конце пробной недели ещё впереди: когда кончается неделя.
+	TrialPending *time.Time
 }
 
 // ReminderCandidates — включённые напоминания живых (не заблокировавших бота) людей.
@@ -94,7 +97,10 @@ func (s *Store) ReminderCandidates(ctx context.Context) ([]ReminderCandidate, er
 	rows, err := s.pool.Query(ctx, `
 SELECT id, telegram_id, COALESCE(tz, ''), reminder_time, COALESCE(reminder_paused_until::text, ''),
        COALESCE(reminder_last_date::text, ''), COALESCE(last_digest_date::text, ''),
-       COALESCE(service_msg_date::text, '')
+       COALESCE(service_msg_date::text, ''),
+       -- те же условия, что у кандидатов на сообщение о конце недели (TrialReminderCandidates)
+       CASE WHEN NOT is_subscribed AND trial_reminder_sent_at IS NULL AND trial_expires_at > now()
+            THEN trial_expires_at END
   FROM users
  WHERE reminder_enabled AND reminder_time IS NOT NULL AND blocked_at IS NULL`)
 	if err != nil {
@@ -104,7 +110,7 @@ SELECT id, telegram_id, COALESCE(tz, ''), reminder_time, COALESCE(reminder_pause
 	var out []ReminderCandidate
 	for rows.Next() {
 		var c ReminderCandidate
-		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.TZ, &c.ReminderTime, &c.PausedUntil, &c.LastReminder, &c.LastDigest, &c.ServiceDay); err != nil {
+		if err := rows.Scan(&c.UserID, &c.TelegramID, &c.TZ, &c.ReminderTime, &c.PausedUntil, &c.LastReminder, &c.LastDigest, &c.ServiceDay, &c.TrialPending); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

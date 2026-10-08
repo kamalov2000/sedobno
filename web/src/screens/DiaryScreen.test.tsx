@@ -344,3 +344,46 @@ describe("DiaryScreen — удаление единственного приём
     await waitFor(() => expect(screen.queryByTitle(/Серия/)).toBeTruthy());
   });
 });
+
+// Ручной приём «только калории» (09.10.2026): в сводке дня его БЖУ — неизвестны, а не ноль.
+// Неразрывные пробелы матчер testing-library сводит к обычным.
+describe("DiaryScreen — неизвестные БЖУ в сводке дня", () => {
+  const soup = { name: "Суп", grams: 300, kcal: 180, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1, macros_unknown: ["protein", "fat", "carb"] as ("protein" | "fat" | "carb")[] };
+  const porridge = { name: "Каша", grams: 200, kcal: 300, protein_g: 8, fat_g: 6, carb_g: 55, confidence: 0.8 };
+  const day = (dishes: (typeof soup | typeof porridge)[][]) => async (): Promise<MealsByDay> => ({
+    day: "2026-07-17",
+    total: {
+      day: "2026-07-17", meals_count: dishes.length,
+      kcal: dishes.flat().reduce((a, d) => a + d.kcal, 0),
+      protein_g: dishes.flat().reduce((a, d) => a + d.protein_g, 0),
+      fat_g: dishes.flat().reduce((a, d) => a + d.fat_g, 0),
+      carb_g: dishes.flat().reduce((a, d) => a + d.carb_g, 0),
+    },
+    items: dishes.map((ds, i) => ({
+      id: i + 1, eaten_at: "2026-07-17T09:00:00Z", created_at: "2026-07-17T09:00:00Z", status: "ok", source: "manual", edited: false,
+      dishes: ds, total: { kcal: ds.reduce((a, d) => a + d.kcal, 0), protein_g: 0, fat_g: 0, carb_g: 0 },
+    })),
+    water_ml: 0, water_goal_ml: 2000, streak: { days: 1, today_logged: true },
+  });
+
+  it("только приём без БЖУ — «—», не «0 г»; остаток БЖУ тоже неизвестен", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={day([[soup]])} loadWeek={weekData} />);
+    expect(await screen.findByText("Осталось до нормы")).toBeTruthy();
+    // Неразрывные пробелы матчер testing-library сводит к обычным.
+    expect(screen.getByText(/^Б — · Ж — · У —$/)).toBeTruthy();
+    expect(screen.getByText(/^осталось Б — · Ж — · У — г$/)).toBeTruthy();
+    expect(screen.queryByText(/Б 0 г/)).toBeNull();
+  });
+
+  it("часть приёмов без БЖУ — сумма известного с «+?», остаток — верхняя граница «≤»", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={day([[soup], [porridge]])} loadWeek={weekData} />);
+    expect(await screen.findByText(/^Б 8\+\? г · Ж 6\+\? г · У 55\+\? г$/)).toBeTruthy();
+    expect(screen.getByText(/^осталось Б ≤132 · Ж ≤64 · У ≤205 г$/)).toBeTruthy();
+  });
+
+  it("все БЖУ известны — как раньше", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={day([[porridge]])} loadWeek={weekData} />);
+    expect(await screen.findByText(/^Б 8 г · Ж 6 г · У 55 г$/)).toBeTruthy();
+    expect(screen.getByText(/^осталось Б 132 · Ж 64 · У 205 г$/)).toBeTruthy();
+  });
+});

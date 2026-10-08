@@ -235,6 +235,43 @@ func TestTrialReminder_ДнёмИВытесняетИтог(t *testing.T) {
 	}
 }
 
+// Утреннее напоминание и дневное сообщение о конце пробной недели — не в один день
+// (09.10.2026): напоминание уступает заранее, хотя по времени оно раньше.
+func TestReminder_УступаетКонцуПробнойНеделиЗаранее(t *testing.T) {
+	r := newNotifyRig(t, 999000841)
+	ctx := context.Background()
+	r.patch(t, map[string]any{"device_tz": "Europe/Moscow", "reminder_enabled": true, "reminder_time": "08:00"})
+	var expires time.Time
+	if err := r.s.pool.QueryRow(ctx, `UPDATE users SET trial_expires_at = now() + interval '20 hours' WHERE id = $1 RETURNING trial_expires_at`, r.uid).Scan(&expires); err != nil {
+		t.Fatal(err)
+	}
+	msk := userLocation("Europe/Moscow")
+	// День, когда уйдёт сообщение о конце недели: первый дневной час последних суток.
+	start := expires.Add(-trialReminderWindow).In(msk)
+	y, m, d := start.Date()
+	switch {
+	case start.Hour() < quietTo:
+		start = time.Date(y, m, d, quietTo, 5, 0, 0, msk)
+	case start.Hour() >= digestHour:
+		start = time.Date(y, m, d+1, quietTo, 5, 0, 0, msk)
+	}
+	y, m, d = start.Date()
+	morning := time.Date(y, m, d, 8, 5, 0, 0, msk)
+
+	r.s.tickReminder(ctx, morning)
+	if r.sends() != 0 {
+		t.Fatalf("утром дня сообщения о пробной неделе напоминание ушло")
+	}
+	r.s.tickTrialReminderAt(ctx, start)
+	if r.sends() != 1 {
+		t.Fatalf("сообщение о конце пробной недели: отправок %d", r.sends())
+	}
+	r.s.tickReminder(ctx, morning.AddDate(0, 0, 1))
+	if r.sends() != 2 {
+		t.Errorf("на следующий день напоминание снова идёт: отправок %d", r.sends())
+	}
+}
+
 // Окончательный отказ Telegram («chat not found») — одна попытка за день, а не каждые
 // 10 минут до конца окна (бета, 08.10.2026: было пять попыток за час).
 func TestReminder_ОкончательныйОтказНеПовторяется(t *testing.T) {

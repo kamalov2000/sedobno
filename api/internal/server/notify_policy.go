@@ -79,6 +79,9 @@ type notifyDay struct {
 	ServiceDay   string // день обязательного сообщения
 	PausedUntil  string // напоминание на паузе до этой даты (не включая)
 	HasMealToday bool
+	// TrialPending — сообщение о конце пробной недели ещё не ушло, неделя кончается в этот
+	// момент. Нулевое — ждать нечего (подписчик, уже отправлено, неделя прошла).
+	TrialPending time.Time
 }
 
 // digestDue — пора ли отправить вечерний итог. Итог — только тем, кто сегодня что-то
@@ -112,7 +115,33 @@ func reminderDue(local time.Time, reminderTime string, d notifyDay) bool {
 	if d.HasMealToday {
 		return false // сегодня уже записывал — молчим
 	}
+	// Конец пробной недели может прийти сегодня позже — напоминание уступает ему ЗАРАНЕЕ
+	// (решение владельца 09.10.2026): иначе утреннее напоминание и дневное сообщение о
+	// пробной неделе пришли бы в один день, а отправленное не отменить.
+	if !d.TrialPending.IsZero() && trialNoticeMayComeToday(local, d.TrialPending) {
+		return false
+	}
 	return true
+}
+
+// trialNoticeMayComeToday — может ли сообщение о конце пробной недели ещё прийти в этот
+// местный день. Оно уходит в первый дневной час (trialDaytime) из последних суток недели;
+// здесь — пересекается ли это окно с оставшимися дневными часами сегодня.
+func trialNoticeMayComeToday(local, expires time.Time) bool {
+	y, m, dd := local.Date()
+	dayFrom := time.Date(y, m, dd, quietTo, 0, 0, 0, local.Location())
+	dayTo := time.Date(y, m, dd, digestHour, 0, 0, 0, local.Location())
+	from := expires.Add(-trialReminderWindow)
+	for _, t := range []time.Time{local, dayFrom} {
+		if t.After(from) {
+			from = t
+		}
+	}
+	to := expires
+	if dayTo.Before(to) {
+		to = dayTo
+	}
+	return from.Before(to)
 }
 
 // trialDaytime — конец пробной недели сообщаем днём, с 10:00 до 20:00: вне тихих часов и
