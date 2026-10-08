@@ -1013,7 +1013,7 @@ export default function App() {
             if (result.nutrition?.kcal != null) {
               setView("scan_to_diary");
             } else {
-              setMealTextPrefill(scanDiaryPrefill(result.product_name));
+              setMealTextPrefill(scanDiaryPrefill(result.product_name, result.package));
               setView("meal_text");
             }
           }}
@@ -1036,7 +1036,7 @@ export default function App() {
             if (result.nutrition?.kcal != null) {
               setView("scan_to_diary");
             } else {
-              setMealTextPrefill(scanDiaryPrefill(result.product_name));
+              setMealTextPrefill(scanDiaryPrefill(result.product_name, result.package));
               setView("meal_text");
             }
           }}

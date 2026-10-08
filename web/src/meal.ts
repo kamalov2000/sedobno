@@ -440,9 +440,32 @@ export const FIRST_RUN_EXAMPLES = ["овсянка с бананом, тарел
  *  продукт; мера всё равно правится руками, а пустое поле требовало бы печатать всё.
  *  Названия нет — отдаём пустую строку: экран откроется с обычным пустым вводом, это
  *  по-прежнему путь, а не стена. */
-export function scanDiaryPrefill(productName?: string): string {
-  const name = (productName ?? "").trim();
-  return name ? `${name}, 1 шт` : "";
+export function scanDiaryPrefill(productName?: string, pkg?: { net_amount: number; net_unit: string }): string {
+  const name = productDisplayName(productName);
+  if (!name) return "";
+  // Нетто известно — пишем его как описание упаковки, а не как съеденное: «упаковка 30 г»,
+  // а не «30 г» (человек мог съесть половину). Мера правится руками (решение владельца
+  // 08.10.2026). Нетто нет — прежняя «1 шт».
+  if (pkg && pkg.net_amount > 0) {
+    const unit = pkg.net_unit === "ml" ? "мл" : "г";
+    const amount = Number.isInteger(pkg.net_amount) ? String(pkg.net_amount) : pkg.net_amount.toFixed(1);
+    return `${name} (упаковка ${amount} ${unit})`;
+  }
+  return `${name}, 1 шт`;
+}
+
+/** Название с упаковки для подстановки: этикетки часто набраны капсом («СМЕТАНА МАССОВОЙ
+ *  ДОЛЕЙ ЖИРА 20 %»), в дневнике это кричит — такое приводим к обычному регистру. Смешанный
+ *  регистр (бренд, «Протеин+ со вкусом…») не трогаем. */
+export function productDisplayName(productName?: string): string {
+  const name = (productName ?? "").trim().replace(/\s+/g, " ");
+  if (!name) return "";
+  const letters = name.replace(/[^A-Za-zА-Яа-яЁё]/g, "");
+  if (letters.length >= 3 && letters === letters.toUpperCase()) {
+    const low = name.toLowerCase();
+    return low.charAt(0).toUpperCase() + low.slice(1);
+  }
+  return name;
 }
 
 /** Готов ли текст к отправке (не режем пробелы за пользователя — только проверяем). */

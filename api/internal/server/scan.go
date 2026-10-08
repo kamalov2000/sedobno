@@ -116,8 +116,13 @@ type scanResponse struct {
 	// знака «≈» в калориях. Совпали прочтения — поля нет (норма не объявляется).
 	ScoreApproximate bool               `json:"score_approximate,omitempty"`
 	Nutrition        *scanNutritionView `json:"nutrition,omitempty"`
-	Explanation      string             `json:"explanation,omitempty"`
-	Message          string             `json:"message,omitempty"`
+	// Package — масса нетто упаковки, когда таблица КБЖУ НЕ прочиталась, а нетто модель
+	// видела. Раньше оно терялось вместе с пустой таблицей (на проде 7 из 29 таких сканов
+	// к 08.10.2026), и заготовка для дневника писала «1 шт» вместо «упаковка 30 г». Есть
+	// Nutrition — нетто внутри неё, это поле не заполняется.
+	Package     *packageView `json:"package,omitempty"`
+	Explanation string       `json:"explanation,omitempty"`
+	Message     string       `json:"message,omitempty"`
 	// ProductName — название продукта с упаковки. Пусто — не прочиталось (нормальный
 	// исход: на кадре мог быть только оборот). Интерфейс подписывает им результат, а
 	// при уходе в дневник — предзаполняет им название приёма.
@@ -350,6 +355,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 			Status:      res.Status,
 			Ingredients: ings,
 			Nutrition:   nutritionView(res.Nutrition),
+			Package:     packageNet(res.Nutrition),
 			ProductName: res.ProductName,
 			Message:     "Наша методология оценивает пищевые добавки, а у алкоголя главный фактор — сам спирт, который она не учитывает. Балл был бы обманчив, поэтому мы его не ставим.",
 			ScansLeft:   s.remainingScans(u), // не списано
@@ -452,6 +458,7 @@ func buildScanResponse(res *pipeline.Result, scansLeft, scanNumber int) scanResp
 		LowConfidence:    res.LowConfidence,
 		ScoreApproximate: res.ScoreApproximate,
 		Nutrition:        nutritionView(res.Nutrition),
+		Package:          packageNet(res.Nutrition),
 		ProductName:      res.ProductName,
 		Explanation:      res.Explanation, ScanNumber: scanNumber, ScansLeft: scansLeft,
 	}
@@ -467,6 +474,24 @@ func nutritionView(n *llm.Nutrition) *scanNutritionView {
 		Basis: n.Basis, Kcal: n.Kcal, ProteinG: n.ProteinG, FatG: n.FatG, CarbG: n.CarbG,
 		NetAmount: n.NetAmount, NetUnit: n.NetUnit,
 	}
+}
+
+// packageView — масса нетто упаковки без таблицы КБЖУ.
+type packageView struct {
+	NetAmount float64 `json:"net_amount"`
+	NetUnit   string  `json:"net_unit"`
+}
+
+// packageNet отдаёт нетто ТОЛЬКО когда таблица КБЖУ не прочиталась (иначе оно уже в
+// nutrition) и нетто осмысленное: положительное число в граммах или миллилитрах.
+func packageNet(n *llm.Nutrition) *packageView {
+	if n == nil || n.HasValues() || n.NetAmount == nil || *n.NetAmount <= 0 || *n.NetAmount > 100000 {
+		return nil
+	}
+	if n.NetUnit != "g" && n.NetUnit != "ml" {
+		return nil
+	}
+	return &packageView{NetAmount: *n.NetAmount, NetUnit: n.NetUnit}
 }
 
 // remainingScans — остаток бесплатных сканов без списания (подписчик → -1).

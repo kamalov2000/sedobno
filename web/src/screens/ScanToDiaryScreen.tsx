@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ScanResult, MealType } from "../types";
 import { createManualMeal } from "../api";
 import { haptic, notify } from "../telegram";
-import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
+import { writePending, clearPending, newSaveKey } from "../pendingSave";
+import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, productDisplayName, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
 
 // Экран «Скан → дневник» (backlog п.1). Сканер и калории были двумя разъединёнными
 // треками — юзер отсканировал продукт в магазине, но добавить его в дневник было
 // нельзя. Экран открывается по кнопке «В дневник» с результата сканера (только когда
 // КБЖУ извлеклись — если нет, кнопки нет вовсе, ничего не выдумываем).
 //
-// Сканер НЕ извлекает имя продукта (фото — это панель состава, не лицевая сторона), это
-// принципиальное ограничение, а не недосмотр: спрашиваем один раз при добавлении, как и
-// у обычного ручного ввода. Порция считается от нетто упаковки (net_amount), которое
+// Название: сканер читает его с упаковки (product_name), и оно подставляется в поле —
+// человек может поправить. Не прочиталось — поле пустое и прямо просит «Назовите продукт»
+// (до 08.10.2026 поле было пустым всегда, а серая подсказка «Проверка №1» выглядела как
+// готовое название, и кнопка молча не нажималась). Порция считается от нетто упаковки (net_amount), которое
 // сканер уже прочитал: вся пачка / половина / своя — тривиальный пересчёт, КБЖУ ведь уже
 // на 100 г/мл.
 
@@ -26,11 +28,18 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const unit = labelPortionUnit(nutrition?.basis);
   const netAmount = nutrition?.net_amount;
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(() => productDisplayName(result.product_name));
   const [portion, setPortion] = useState<LabelPortion>(netAmount ? "full" : "custom");
   const [customRaw, setCustomRaw] = useState("100");
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  // Надёжное сохранение — тот же механизм, что у редактора приёма (pendingSave): ключ
+  // выдаётся на ПЕРВУЮ попытку и живёт до подтверждения. Повтор после сбоя — с тем же
+  // ключом, даже если порцию поправили: сервер обновит уже записанное, а не создаст второе.
+  // Запрос с ключом лежит в localStorage до ответа и досылается после перезапуска.
+  const saveKey = useRef<string | null>(null);
+  const saving = useRef(false);
 
   const grams = labelPortionGrams(netAmount, portion, customRaw);
   const gramsValid = labelPortionValid(grams);
@@ -40,12 +49,17 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const blocked = !nameValid || !gramsValid || busy;
 
   const save = async () => {
-    if (blocked || !nutrition?.kcal) return;
+    // saving — защита от двойного нажатия до перерисовки (busy ещё не успел выставиться).
+    if (blocked || !nutrition?.kcal || saving.current) return;
     haptic("light");
+    saving.current = true;
+    if (!saveKey.current) saveKey.current = newSaveKey();
     setBusy(true);
+    setSaveError(false);
     try {
-      await createManualMeal({
-        source: "scan",
+      const body = {
+        client_key: saveKey.current,
+        source: "scan" as const,
         dishes: [
           {
             name: name.trim(),
@@ -57,12 +71,19 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
           },
         ],
         ...(mealType ? { meal_type: mealType } : {}),
-      });
+      };
+      writePending({ key: saveKey.current, body, at: Date.now() });
+      await createManualMeal(body);
+      clearPending(saveKey.current);
       notify("success");
       onSaved();
     } catch {
+      // Ответа нет — запись могла уже лечь. Не утверждаем, что её нет; введённое на месте.
       notify("error");
+      setSaveError(true);
       setBusy(false);
+    } finally {
+      saving.current = false;
     }
   };
 
@@ -87,10 +108,16 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={result.scan_number ? `Проверка №${result.scan_number}` : "Название продукта"}
+          placeholder="Например, сметана 20%"
           aria-label="Название продукта"
-          style={{ width: "100%", height: 48, border: "1px solid var(--border)", borderRadius: 12, background: "var(--bg-soft)", fontFamily: "'Golos Text',sans-serif", fontSize: 16, color: "var(--text)", padding: "0 14px", boxSizing: "border-box", outline: "none" }}
+          style={{ width: "100%", height: 48, border: "1px solid", borderColor: nameValid ? "var(--border)" : "var(--cal-border)", borderRadius: 12, background: "var(--bg-soft)", fontFamily: "'Golos Text',sans-serif", fontSize: 16, color: "var(--text)", padding: "0 14px", boxSizing: "border-box", outline: "none" }}
         />
+
+        {!nameValid && (
+          <div role="status" style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6, lineHeight: 1.4 }}>
+            Назовите продукт — так запись будет подписана в дневнике
+          </div>
+        )}
 
         <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>Порция</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -168,6 +195,12 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
       </div>
 
       <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 16px" }}>
+        {saveError && (
+          <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 8, padding: "9px 11px", borderRadius: 10, background: "var(--bg-soft)", border: "1px solid var(--border)", fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
+            <i className="ti ti-wifi-off" aria-hidden="true" style={{ fontSize: 15, flex: "none", marginTop: 1 }} />
+            <span>Не удалось подтвердить сохранение. Проверьте связь и нажмите кнопку ещё раз — всё введённое на месте, повтор не создаст второй записи.</span>
+          </div>
+        )}
         <button
           type="button"
           disabled={blocked}
