@@ -74,6 +74,9 @@ type dishInput struct {
 	// KcalByUser — калорийность ввёл человек: при правке сохранённого ручного блюда клиент
 	// возвращает флаг, и сверка с БЖУ его число не трогает (llm.MealItem.KcalByUser).
 	KcalByUser bool `json:"kcal_by_user"`
+	// MacrosUnknown — какие БЖУ неизвестны (llm.MealItem.MacrosUnknown); клиент возвращает
+	// отметку при правке сохранённого блюда, иначе «не знаю» стало бы нулём.
+	MacrosUnknown []string `json:"macros_unknown"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -101,10 +104,11 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 		item := llm.MealItem{
 			Name: name, Grams: d.Grams, Kcal: d.Kcal,
 			ProteinG: d.ProteinG, FatG: d.FatG, CarbG: d.CarbG, AlcoholG: d.AlcoholG,
-			Confidence: d.Confidence,
-			Pieces:     d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
-			Assumed:    d.Assumed,
-			KcalByUser: d.KcalByUser,
+			Confidence:    d.Confidence,
+			Pieces:        d.Pieces, // примитивы (штучные + ложечные) — санитизация нормализует и посчитает
+			Assumed:       d.Assumed,
+			KcalByUser:    d.KcalByUser,
+			MacrosUnknown: cleanMacrosUnknown(d.MacrosUnknown),
 		}
 
 		switch {
@@ -172,5 +176,36 @@ func manualToPortion(name string, idx int, d dishInput) (llm.MealItem, string) {
 		// Ручное блюдо не проходило распознавание — метим максимальной уверенностью.
 		Confidence: manualDishConfidence,
 		KcalByUser: true,
+		// Пустое поле Б/Ж/У — «не знаю»: число хранится нулём, а отметка говорит, что это не ноль.
+		MacrosUnknown: unknownMacros(d.ProteinPer100, d.FatPer100, d.CarbPer100),
 	}, ""
+}
+
+// unknownMacros — какие из Б/Ж/У на 100 г человек не указал.
+func unknownMacros(p, f, c *float64) []string {
+	var out []string
+	if p == nil {
+		out = append(out, "protein")
+	}
+	if f == nil {
+		out = append(out, "fat")
+	}
+	if c == nil {
+		out = append(out, "carb")
+	}
+	return out
+}
+
+// cleanMacrosUnknown пропускает только известные имена, без повторов: поле приходит от
+// клиента и уходит в items.
+func cleanMacrosUnknown(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, v := range in {
+		if (v == "protein" || v == "fat" || v == "carb") && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }

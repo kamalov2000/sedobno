@@ -150,3 +150,76 @@ func TestMealTemplates_СохранитьДобавитьОтменить(t *tes
 		t.Errorf("повторное удаление: %d, ждали 404", code)
 	}
 }
+
+// Своя порция (решение владельца 08.10.2026): граммы вводятся напрямую, ноль и минус не
+// проходят, повтор после потерянного ответа с ИЗМЕНЁННОЙ порцией обновляет ту же запись,
+// неизвестные БЖУ остаются неизвестными, шаблон не меняется.
+func TestMealTemplates_СвояПорция(t *testing.T) {
+	cls := &classifier{res: &llm.MealAnalysis{}}
+	rd := &reader{ext: &llm.Extraction{}}
+	r := newRig(t, cls, rd, 999000821)
+
+	// Ручной приём: калории известны, белок известен, жиры и углеводы — нет.
+	code, saved := postManual(t, r, map[string]any{
+		"client_key": "src-portion-0001",
+		"dishes":     []map[string]any{{"name": "домашний пирог", "grams": 200, "kcal_per_100": 300, "protein_per_100": 5}},
+	})
+	if code != 200 {
+		t.Fatalf("исходный приём: %d %v", code, saved)
+	}
+	mealID := int64(saved["id"].(float64))
+	code, tpl := r.call(t, http.MethodPost, "/api/meal-templates", map[string]any{"meal_id": mealID, "name": "Пирог"})
+	if code != http.StatusCreated {
+		t.Fatalf("шаблон: %d %v", code, tpl)
+	}
+	tplID := int64(tpl["id"].(float64))
+	unknown := tpl["dishes"].([]any)[0].(map[string]any)["macros_unknown"]
+	if fmt.Sprint(unknown) != "[fat carb]" {
+		t.Fatalf("в шаблоне отметка неизвестных %v, ждали [fat carb]", unknown)
+	}
+	addPath := fmt.Sprintf("/api/meal-templates/%d/add", tplID)
+
+	// Ноль, минус и мусор — отказ без записи.
+	for _, g := range []any{0, -5, 6000} {
+		if code, out := r.call(t, http.MethodPost, addPath, map[string]any{"client_key": "tpl-bad-0001", "grams": g}); code != http.StatusBadRequest {
+			t.Errorf("вес %v: %d %v, ждали 400", g, code, out)
+		}
+	}
+	if n := r.count(t, `SELECT count(*) FROM meals WHERE source = 'template'`); n != 0 {
+		t.Fatalf("после отказов записей %d", n)
+	}
+
+	// 150 г вместо 200: всё ×0,75.
+	add := map[string]any{"client_key": "tpl-portion-0001", "grams": 150}
+	code, a1 := r.call(t, http.MethodPost, addPath, add)
+	if code != 200 {
+		t.Fatalf("добавление 150 г: %d %v", code, a1)
+	}
+	if k := a1["total"].(map[string]any)["kcal"]; k != float64(450) {
+		t.Errorf("150 г пирога: %v ккал, ждали 450", k)
+	}
+	d1 := a1["dishes"].([]any)[0].(map[string]any)
+	if d1["grams"] != float64(150) || d1["protein_g"] != 7.5 || fmt.Sprint(d1["macros_unknown"]) != "[fat carb]" {
+		t.Errorf("блюдо после пересчёта: %v", d1)
+	}
+
+	// Ответ потерялся, человек поправил порцию на 100 г и повторил с ТЕМ ЖЕ ключом.
+	add["grams"] = 100
+	code, a2 := r.call(t, http.MethodPost, addPath, add)
+	if code != 200 || a2["id"] != a1["id"] {
+		t.Fatalf("повтор: %d id=%v, ждали ту же запись %v", code, a2["id"], a1["id"])
+	}
+	if n := r.count(t, `SELECT count(*) FROM meals WHERE source = 'template'`); n != 1 {
+		t.Errorf("записей из шаблона %d, ждали 1", n)
+	}
+	if n := r.count(t, `SELECT count(*) FROM meals WHERE source = 'template' AND kcal = 300 AND (items->0->>'grams')::numeric = 100`); n != 1 {
+		t.Error("повтор не обновил запись до 100 г / 300 ккал")
+	}
+
+	// Шаблон прежний: 200 г, 600 ккал.
+	code, list := r.call(t, http.MethodGet, "/api/meal-templates", nil)
+	it := list["items"].([]any)[0].(map[string]any)
+	if code != 200 || it["grams"] != float64(200) || it["total"].(map[string]any)["kcal"] != float64(600) {
+		t.Errorf("шаблон изменился: %v", it)
+	}
+}

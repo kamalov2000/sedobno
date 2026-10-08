@@ -1,7 +1,7 @@
 // Чистые помощники модуля калорий (feature/calories): клиентский пересчёт КБЖУ при
 // правке граммовки и маппинг статуса разбора на экран. Без React — тестируется юнит-тестом.
 
-import type { MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType, ScaleBase, ScanNutrition } from "./types";
+import type { MacroKey, MealDiaryItem, MealItem, MealMacros, MealPiece, MealResult, MealStatus, MealType, ScaleBase, ScanNutrition } from "./types";
 
 export function round1(v: number): number {
   return Math.round(v * 10) / 10;
@@ -192,6 +192,32 @@ export const REPEAT_LIMIT = 3;
 /** Подпись приёма в одну строку: названия блюд через запятую. */
 export function mealTitle(item: MealDiaryItem): string {
   return item.dishes.map((d) => d.name.trim()).filter(Boolean).join(", ");
+}
+
+/** Неизвестен ли макрос у блюда. Отметка macros_unknown ставится ручным вводом с 08.10.2026;
+ *  у старых ручных блюд её нет — тогда «калории ввёл человек, а все три БЖУ нули» значит,
+ *  что БЖУ не вводили (так работал ручной ввод без полей Б/Ж/У). */
+export function macroUnknown(d: MealItem, k: MacroKey): boolean {
+  if (d.macros_unknown) return d.macros_unknown.includes(k);
+  return !!d.kcal_by_user && d.kcal > 0 && d.protein_g === 0 && d.fat_g === 0 && d.carb_g === 0;
+}
+
+export type MacroState = { value: number; state: "known" | "partial" | "unknown" };
+
+/** Б/Ж/У приёма с учётом неизвестных: известное — сумма; часть компонентов без значения —
+ *  «partial» (сумма известного — это не всё); ни у кого нет — «unknown». factor — изменение
+ *  порции (все компоненты в одной пропорции). */
+export function macroSummary(dishes: MealItem[], factor = 1): Record<MacroKey, MacroState> {
+  const field: Record<MacroKey, "protein_g" | "fat_g" | "carb_g"> = { protein: "protein_g", fat: "fat_g", carb: "carb_g" };
+  const out = {} as Record<MacroKey, MacroState>;
+  for (const k of ["protein", "fat", "carb"] as MacroKey[]) {
+    const live = dishes.filter((d) => !d.assumed);
+    const unknown = live.filter((d) => macroUnknown(d, k)).length;
+    const pieces = live.reduce((a, d) => a + pieceMacros(d.pieces)[field[k]], 0);
+    const value = (live.filter((d) => !macroUnknown(d, k)).reduce((a, d) => a + d[field[k]], 0) + pieces) * factor;
+    out[k] = { value, state: live.length > 0 && unknown === live.length && pieces === 0 ? "unknown" : unknown > 0 ? "partial" : "known" };
+  }
+  return out;
 }
 
 /** Прошлые приёмы, которые есть смысл повторить одним тапом (backlog п.16, идея Numify

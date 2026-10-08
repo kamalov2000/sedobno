@@ -37,7 +37,10 @@ describe("AddMealActions — мои блюда", () => {
     const addTemplate = vi.fn(async (_id: number, _b: AddBody) => okResult);
     render(<AddMealActions onText={noop} onManual={noop} templates={[tpl]} addTemplate={addTemplate} />);
     open();
-    expect(screen.getByText(/Порция 370 г · 510 ккал · Б 20 · Ж 28 · У 44/)).toBeTruthy();
+    expect((screen.getByLabelText("Порция, грамм") as HTMLInputElement).value).toBe("370");
+    expect(screen.getByText("510 ккал")).toBeTruthy();
+    expect(screen.getByText("Б 20 · Ж 28 · У 44")).toBeTruthy();
+    expect(screen.getByText(/Все компоненты изменятся пропорционально/)).toBeTruthy();
     expect(screen.getByText("круассан с лососем, капучино")).toBeTruthy();
     expect(addTemplate).not.toHaveBeenCalled();
   });
@@ -95,12 +98,94 @@ describe("AddMealActions — мои блюда", () => {
   });
 
   it("БЖУ не вводили — так и написано, а не «Б 0 · Ж 0 · У 0»", () => {
-    const noMacros: MealTemplate = { ...tpl, id: 8, name: "Ручное", total: { kcal: 500, protein_g: 0, fat_g: 0, carb_g: 0 } };
+    const noMacros: MealTemplate = {
+      id: 8, name: "Ручное", grams: 200, total: { kcal: 500, protein_g: 0, fat_g: 0, carb_g: 0 },
+      dishes: [{ name: "пирог", grams: 200, kcal: 500, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1, kcal_by_user: true }],
+    };
     render(<AddMealActions onText={noop} onManual={noop} templates={[noMacros]} />);
     fireEvent.click(screen.getByLabelText("Повторить"));
-    fireEvent.click(screen.getByLabelText("Ручное: 370 г, 500 ккал"));
-    expect(screen.getByText(/Порция 370 г · 500 ккал · БЖУ не указаны/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Ручное: 200 г, 500 ккал"));
+    expect(screen.getByText("БЖУ не указаны")).toBeTruthy();
     expect(screen.queryByText(/Б 0/)).toBeNull();
+  });
+
+  it("часть БЖУ неизвестна — «—» и «+?», и при изменении порции они не становятся нулями", () => {
+    const partial: MealTemplate = {
+      id: 9, name: "Пирог с чаем", grams: 400, total: { kcal: 640, protein_g: 10, fat_g: 0, carb_g: 8 },
+      dishes: [
+        { name: "пирог", grams: 200, kcal: 600, protein_g: 10, fat_g: 0, carb_g: 0, confidence: 1, kcal_by_user: true, macros_unknown: ["fat", "carb"] },
+        { name: "чай с сахаром", grams: 200, kcal: 40, protein_g: 0, fat_g: 0, carb_g: 8, confidence: 1 },
+      ],
+    };
+    render(<AddMealActions onText={noop} onManual={noop} templates={[partial]} />);
+    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Пирог с чаем: 400 г, 640 ккал"));
+    expect(screen.getByText(/Б 10 · Ж 0\+\? · У 8\+\?/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Порция, грамм"), { target: { value: "200" } });
+    expect(screen.getByText("320 ккал")).toBeTruthy();
+    expect(screen.getByText(/Б 5 · Ж 0\+\? · У 4\+\?/)).toBeTruthy();
+  });
+
+  it("своя порция: граммы вводятся напрямую и ±10, уходит в добавление, шаблон прежний", async () => {
+    const addTemplate = vi.fn(async (_id: number, _b: AddBody & { grams?: number }) => okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[tpl]} addTemplate={addTemplate} />);
+    open();
+    const field = screen.getByLabelText("Порция, грамм") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "185" } });
+    expect(screen.getByText("255 ккал")).toBeTruthy();
+    expect(screen.getByText(/Шаблон останется прежним — 370 г/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Меньше на 10 грамм"));
+    expect(field.value).toBe("175");
+    fireEvent.click(screen.getByLabelText("Больше на 10 грамм"));
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await screen.findByText(/Добавлено:/);
+    expect(addTemplate.mock.calls[0][1].grams).toBe(185);
+  });
+
+  it("не меняли порцию — граммы не отправляются: в дневник уходят ровно числа шаблона", async () => {
+    const addTemplate = vi.fn(async (_id: number, _b: AddBody & { grams?: number }) => okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[tpl]} addTemplate={addTemplate} />);
+    open();
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await screen.findByText(/Добавлено:/);
+    expect(addTemplate.mock.calls[0][1]).not.toHaveProperty("grams");
+  });
+
+  it("ноль, минус и пустое поле — добавить нельзя, с объяснением", () => {
+    const addTemplate = vi.fn(async () => okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[tpl]} addTemplate={addTemplate} />);
+    open();
+    const field = screen.getByLabelText("Порция, грамм");
+    // Минус в поле не вводится вовсе: знак отбрасывается при наборе.
+    fireEvent.change(field, { target: { value: "-5" } });
+    expect((field as HTMLInputElement).value).toBe("5");
+    for (const v of ["0", "", "0,0"]) {
+      fireEvent.change(field, { target: { value: v } });
+      expect((screen.getByText("Добавить в дневник").closest("button") as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByText("Укажите вес больше нуля")).toBeTruthy();
+    }
+    // Кнопкой «−» ниже нуля не уйти.
+    fireEvent.change(field, { target: { value: "5" } });
+    fireEvent.click(screen.getByLabelText("Меньше на 10 грамм"));
+    expect((field as HTMLInputElement).value).toBe("0");
+    expect(addTemplate).not.toHaveBeenCalled();
+  });
+
+  it("повтор после сбоя с ИЗМЕНЁННОЙ порцией — тот же ключ, новая порция; она же в хранилище", async () => {
+    const addTemplate = vi.fn<(id: number, b: AddBody & { grams?: number }) => Promise<typeof okResult>>()
+      .mockRejectedValueOnce(new Error("сеть"))
+      .mockResolvedValueOnce(okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[tpl]} addTemplate={addTemplate} />);
+    open();
+    fireEvent.change(screen.getByLabelText("Порция, грамм"), { target: { value: "200" } });
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await screen.findByRole("alert");
+    fireEvent.change(screen.getByLabelText("Порция, грамм"), { target: { value: "150" } });
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await screen.findByText(/Добавлено:/);
+    const [first, second] = addTemplate.mock.calls.map((c) => c[1]);
+    expect(second.client_key).toBe(first.client_key);
+    expect([first.grams, second.grams]).toEqual([200, 150]);
   });
 
   it("своих блюд нет — подсказка, как их завести", () => {

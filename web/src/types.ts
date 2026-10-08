@@ -196,6 +196,8 @@ export type MealStatus = "ok" | "not_food" | "label_detected" | "package_front" 
 export type MealType = "breakfast" | "lunch" | "dinner" | "snack";
 
 /** Одно распознанное блюдо. КБЖУ — для оценённой порции (grams), не на 100 г. */
+export type MacroKey = "protein" | "fat" | "carb";
+
 export interface MealItem {
   name: string;
   grams: number;
@@ -230,6 +232,9 @@ export interface MealItem {
   /** Калорийность ввёл человек: сервер не переписывает её сверкой с БЖУ. Приходит с
    *  сервера в сохранённом приёме и обязательно возвращается при правке. */
   kcal_by_user?: boolean;
+  /** Какие из Б/Ж/У человек не знал при ручном вводе. Их число — ноль, но это «неизвестно»,
+   *  и показывать его нулём нельзя (решение владельца 08.10.2026). */
+  macros_unknown?: MacroKey[];
 }
 
 /** Пищевая ценность при известном весе — база пересчёта граммовки. */

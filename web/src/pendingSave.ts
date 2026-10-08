@@ -20,6 +20,8 @@ export interface PendingSave {
   /** Добавление «моего блюда» (п.16): досылается в /api/meal-templates/{id}/add с тем же
    *  ключом. body тогда несёт только meal_type, блюда берёт сервер из шаблона. */
   template?: number;
+  /** Своя порция при добавлении «моего блюда» (вес приёма целиком). */
+  grams?: number;
 }
 
 /** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
@@ -94,7 +96,7 @@ export function clearPending(key: string): void {
  *  вышла (она остаётся до следующего раза), "none" — досылать нечего. */
 export async function flushPending(
   send: (b: ManualBody) => Promise<unknown> = createManualMeal,
-  sendTemplate: (id: number, b: { client_key: string; meal_type?: ManualBody["meal_type"] }) => Promise<unknown> = addMealTemplate,
+  sendTemplate: (id: number, b: { client_key: string; meal_type?: ManualBody["meal_type"]; grams?: number }) => Promise<unknown> = addMealTemplate,
 ): Promise<"none" | "sent" | "failed"> {
   const jobs: Array<() => Promise<unknown>> = [];
   const manual = readPending();
@@ -104,7 +106,11 @@ export async function flushPending(
   });
   const tpl = readPendingTemplate();
   if (tpl) jobs.push(async () => {
-    await sendTemplate(tpl.template!, { client_key: tpl.key, ...(tpl.body.meal_type ? { meal_type: tpl.body.meal_type } : {}) });
+    await sendTemplate(tpl.template!, {
+      client_key: tpl.key,
+      ...(tpl.body.meal_type ? { meal_type: tpl.body.meal_type } : {}),
+      ...(typeof tpl.grams === "number" ? { grams: tpl.grams } : {}),
+    });
     clearPending(tpl.key);
   });
   if (jobs.length === 0) return "none";

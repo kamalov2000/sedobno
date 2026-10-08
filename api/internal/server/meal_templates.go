@@ -14,6 +14,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -38,6 +39,9 @@ const maxMealTemplates = 50
 // maxTemplateNameRunes — название видно в одну строку на 320 px.
 const maxTemplateNameRunes = 60
 
+// maxPortionGrams — потолок изменённой порции: больше пяти килограммов за раз — опечатка.
+const maxPortionGrams = 5000
+
 type mealTemplateItem struct {
 	ID         int64          `json:"id"`
 	Name       string         `json:"name"`
@@ -53,12 +57,10 @@ func toTemplateItem(t store.MealTemplate) mealTemplateItem {
 	if dishes == nil {
 		dishes = []llm.MealItem{}
 	}
-	grams := 0.0
-	for _, d := range dishes {
-		grams += d.Grams
-	}
 	return mealTemplateItem{
-		ID: t.ID, Name: t.Name, Dishes: dishes, Grams: grams, LastUsedAt: t.LastUsedAt,
+		// Порция — с весом счётных единиц (яйца, ложки масла): иначе «40 г» рядом с
+		// калориями, где уже сидят четыре яйца.
+		ID: t.ID, Name: t.Name, Dishes: dishes, Grams: meal.PortionGrams(dishes), LastUsedAt: t.LastUsedAt,
 		Total: llm.MealMacros{Kcal: t.Kcal, ProteinG: t.ProteinG, FatG: t.FatG, CarbG: t.CarbG},
 	}
 }
@@ -207,6 +209,9 @@ func (s *Server) handleMealTemplateAdd(w http.ResponseWriter, r *http.Request) {
 		ClientKey string `json:"client_key"`
 		MealType  string `json:"meal_type"`
 		Date      string `json:"date"`
+		// Grams — своя порция на этот раз (вес приёма целиком). Не задано — порция шаблона.
+		// Все компоненты меняются в одной пропорции; шаблон не меняется.
+		Grams *float64 `json:"grams"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "ожидается JSON {client_key, meal_type, date}")
@@ -239,10 +244,24 @@ func (s *Server) handleMealTemplateAdd(w http.ResponseWriter, r *http.Request) {
 			localDate = day
 		}
 	}
+	if req.Grams != nil && (math.IsNaN(*req.Grams) || *req.Grams <= 0 || *req.Grams > maxPortionGrams) {
+		writeError(w, http.StatusBadRequest, "bad_grams", "Укажите вес больше нуля — до 5000 г")
+		return
+	}
 	item := toTemplateItem(t)
 	total := item.Total
+	items := []byte(t.Items)
+	if req.Grams != nil && math.Abs(*req.Grams-item.Grams) >= 0.5 {
+		if item.Grams <= 0 {
+			writeError(w, http.StatusUnprocessableEntity, "no_portion", "У этого блюда не записан вес — порцию не изменить")
+			return
+		}
+		item.Dishes = meal.ScalePortion(item.Dishes, *req.Grams/item.Grams)
+		total = meal.Totals(item.Dishes)
+		items, _ = json.Marshal(item.Dishes)
+	}
 	mealID, created, err := s.store.InsertMealOnce(ctx, store.MealRow{
-		UserID: claims.UserID, Status: meal.StatusOK, Source: mealSourceTemplate, Items: t.Items,
+		UserID: claims.UserID, Status: meal.StatusOK, Source: mealSourceTemplate, Items: items,
 		Kcal: &total.Kcal, ProteinG: &total.ProteinG, FatG: &total.FatG, CarbG: &total.CarbG,
 		MealType: req.MealType, LocalDate: localDate, ClientKey: req.ClientKey,
 	})

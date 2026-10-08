@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import type { MealDiaryItem } from "../types";
 import type { MealTemplate } from "../api";
 import { addMealTemplate as addMealTemplateApi, deleteMeal as deleteMealApi } from "../api";
-import { mealTitle, guessMealType } from "../meal";
+import { mealTitle, guessMealType, macroSummary } from "../meal";
+import type { MacroState } from "../meal";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import { haptic, notify } from "../telegram";
 
@@ -46,6 +47,9 @@ interface Added {
 export default function AddMealActions({ onPhoto, onText, onManual, recent, onRepeat, templates, onDiaryChanged, addTemplate = addMealTemplateApi, deleteMeal = deleteMealApi }: Props) {
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
+  // Своя порция на этот раз (п.16, 08.10.2026): сырой ввод, чтобы «1» на пути к «150» не
+  // схлопывался. Шаблон не меняется — меняется только то, что уйдёт в дневник.
+  const [gramsRaw, setGramsRaw] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [added, setAdded] = useState<Added | null>(null);
@@ -57,16 +61,20 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
   const hasTemplates = !!templates && templates.length > 0;
   const canRepeat = hasRecent || hasTemplates;
 
-  const add = async (t: MealTemplate) => {
+  const add = async (t: MealTemplate, grams: number) => {
     if (busy) return;
+    // Порция не менялась — не шлём граммы: в дневник уйдут ровно числа шаблона.
+    const custom = Math.abs(grams - t.grams) >= 0.5 ? { grams } : {};
     if (attemptKey.current?.id !== t.id) attemptKey.current = { id: t.id, key: newSaveKey() };
     const key = attemptKey.current.key;
     const mealType = guessMealType(new Date());
     setBusy(true);
     setError("");
-    writePending({ key, body: { dishes: [], meal_type: mealType }, at: Date.now(), template: t.id });
+    // Повтор после сбоя — с ТЕМ ЖЕ ключом, даже если порцию поправили: сервер обновит уже
+    // записанное, а не создаст второе.
+    writePending({ key, body: { dishes: [], meal_type: mealType }, at: Date.now(), template: t.id, ...custom });
     try {
-      const res = await addTemplate(t.id, { client_key: key, meal_type: mealType });
+      const res = await addTemplate(t.id, { client_key: key, meal_type: mealType, ...custom });
       clearPending(key);
       attemptKey.current = null;
       notify("success");
@@ -158,6 +166,7 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
                         onClick={() => {
                           haptic("light");
                           setPicked(open ? null : t.id);
+                          setGramsRaw(String(Math.round(t.grams)));
                           setError("");
                         }}
                         style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, minHeight: 40, padding: "6px 12px", border: "none", background: "none", cursor: "pointer", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text)", textAlign: "left" }}
@@ -171,17 +180,7 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
                       </button>
                       {open && (
                         <div style={{ padding: "0 12px 10px" }}>
-                          <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5 }}>
-                            {/* БЖУ, которых человек не вводил, сервер хранит нулями. Показать «Б 0 · Ж 0 ·
-                                У 0» значило бы выдать неизвестное за ноль — пишем, что их нет. */}
-                            Порция {grams} г · {kcal} ккал ·{" "}
-                            {t.total.protein_g + t.total.fat_g + t.total.carb_g > 0
-                              ? `Б ${Math.round(t.total.protein_g)} · Ж ${Math.round(t.total.fat_g)} · У ${Math.round(t.total.carb_g)}`
-                              : "БЖУ не указаны"}
-                          </div>
-                          <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 2, overflowWrap: "anywhere" }}>
-                            {t.dishes.map((d) => d.name).join(", ")}
-                          </div>
+                          <PortionPreview t={t} gramsRaw={gramsRaw} onGrams={setGramsRaw} />
                           {error && (
                             <div role="alert" style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6, lineHeight: 1.4 }}>
                               {error}
@@ -189,8 +188,11 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
                           )}
                           <button
                             type="button"
-                            disabled={busy}
-                            onClick={() => void add(t)}
+                            disabled={busy || parsePortion(gramsRaw) == null}
+                            onClick={() => {
+                              const g = parsePortion(gramsRaw);
+                              if (g != null) void add(t, g);
+                            }}
                             style={{ width: "100%", height: 40, marginTop: 8, background: "var(--cal)", color: "var(--on-cal)", border: "none", borderRadius: 10, fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 600, cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1 }}
                           >
                             {busy ? "Добавляем…" : "Добавить в дневник"}
@@ -239,6 +241,76 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
               Частый приём можно сохранить как своё блюдо: откройте его в дневнике → «Сохранить как моё блюдо».
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const GRAM_STEP = 10;
+const MAX_PORTION = 5000;
+
+/** Вес порции из поля: число больше нуля и не больше 5 кг; иначе null — добавить нельзя. */
+export function parsePortion(raw: string): number | null {
+  const v = Number(raw.replace(",", ".").trim());
+  return raw.trim() !== "" && Number.isFinite(v) && v > 0 && v <= MAX_PORTION ? v : null;
+}
+
+const fmtMacro = (label: string, m: MacroState) =>
+  m.state === "unknown" ? `${label} —` : m.state === "partial" ? `${label} ${Math.round(m.value)}+?` : `${label} ${Math.round(m.value)}`;
+
+// Порция перед добавлением: вес вводится напрямую или кнопками ±10 г, калории и БЖУ
+// пересчитываются сразу. Неизвестные БЖУ показываются неизвестными — «—» или «+?», не нулём.
+function PortionPreview({ t, gramsRaw, onGrams }: { t: MealTemplate; gramsRaw: string; onGrams: (v: string) => void }) {
+  const g = parsePortion(gramsRaw);
+  const factor = g != null && t.grams > 0 ? g / t.grams : 1;
+  const changed = g != null && Math.abs(g - t.grams) >= 0.5;
+  const kcal = Math.round(t.total.kcal * factor);
+  const m = macroSummary(t.dishes, factor);
+  const allUnknown = m.protein.state === "unknown" && m.fat.state === "unknown" && m.carb.state === "unknown";
+  const anyPartial = [m.protein, m.fat, m.carb].some((x) => x.state === "partial");
+  const step = (d: number) => {
+    const cur = parsePortion(gramsRaw) ?? 0;
+    onGrams(String(Math.max(0, Math.round(cur + d))));
+  };
+  const btn = { width: 40, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } as const;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 10px" }}>
+        <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid", borderColor: g == null ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 10, overflow: "hidden", height: 40 }}>
+          <button type="button" aria-label="Меньше на 10 грамм" onClick={() => step(-GRAM_STEP)} style={btn}>
+            <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 15 }} />
+          </button>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={gramsRaw}
+            onChange={(e) => onGrams(e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6))}
+            aria-label="Порция, грамм"
+            // 16 px: на поле мельче iOS увеличивает страницу при фокусе.
+            style={{ width: 56, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+          />
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", paddingRight: 6 }}>г</span>
+          <button type="button" aria-label="Больше на 10 грамм" onClick={() => step(GRAM_STEP)} style={btn}>
+            <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 15 }} />
+          </button>
+        </div>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{g == null ? "—" : kcal} ккал</span>
+      </div>
+      {g == null ? (
+        <div role="status" style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6, lineHeight: 1.4 }}>Укажите вес больше нуля</div>
+      ) : (
+        <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5, marginTop: 6 }}>
+          {allUnknown ? "БЖУ не указаны" : `${fmtMacro("Б", m.protein)} · ${fmtMacro("Ж", m.fat)} · ${fmtMacro("У", m.carb)}`}
+          {anyPartial && <span style={{ color: "var(--text3)" }}> («+?» — не указано для части компонентов)</span>}
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 2, overflowWrap: "anywhere" }}>
+        {t.dishes.map((d) => d.name).join(", ")}
+      </div>
+      {(t.dishes.length > 1 || changed) && (
+        <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 4 }}>
+          {t.dishes.length > 1 ? "Все компоненты изменятся пропорционально. " : ""}Шаблон останется прежним — {Math.round(t.grams)} г.
         </div>
       )}
     </div>

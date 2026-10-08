@@ -13,6 +13,7 @@ import type {
   MealDiaryItem,
   MealItem,
   MealMacros,
+  MacroKey,
   MealHistoryPage,
   FoodRefItem,
   MealType,
@@ -418,6 +419,8 @@ export interface DishPatch {
   assumed?: boolean;
   /** Калорийность ввёл человек — сервер не переписывает её сверкой с БЖУ. */
   kcal_by_user?: boolean;
+  /** Неизвестные Б/Ж/У сохранённого блюда — возвращаем при правке, иначе «не знаю» станет нулём. */
+  macros_unknown?: MacroKey[];
   /** Примитивы блюда (штучные + ложечные добавки) — КБЖУ считает сервер по константам
    *  поверх базы. Флаг assumed переживает правку (модель предположила добавку). */
   pieces?: { kind: string; count: number; assumed?: boolean }[];
@@ -526,7 +529,7 @@ export async function deleteMealTemplate(id: number): Promise<void> {
 /** POST /api/meal-templates/{id}/add — записать «моё блюдо» в дневник. Без модели и без
  *  списания разборов; client_key обязателен — повтор после потерянного ответа вернёт ту же
  *  запись, а не создаст вторую. */
-export async function addMealTemplate(id: number, body: { client_key: string; meal_type?: MealType }): Promise<MealResult> {
+export async function addMealTemplate(id: number, body: { client_key: string; meal_type?: MealType; grams?: number }): Promise<MealResult> {
   const res = await apiFetch(`/api/meal-templates/${id}/add`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...opHeaders() },

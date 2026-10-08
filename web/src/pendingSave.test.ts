@@ -77,3 +77,12 @@ describe("pendingSave — добавление «моего блюда»", () =>
     expect(readPendingTemplate()?.key).toBe("tpl-key-0002");
   });
 });
+
+describe("pendingSave — своя порция «моего блюда»", () => {
+  it("порция переживает перезапуск и досылается с тем же ключом", async () => {
+    writePending({ key: "tpl-key-0003", body: { dishes: [], meal_type: "lunch" }, at: Date.now(), template: 9, grams: 150 });
+    const sendTemplate = vi.fn(async () => ({}));
+    expect(await flushPending(vi.fn(async () => ({})), sendTemplate)).toBe("sent");
+    expect(sendTemplate).toHaveBeenCalledWith(9, { client_key: "tpl-key-0003", meal_type: "lunch", grams: 150 });
+  });
+});

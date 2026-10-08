@@ -443,6 +443,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             // Калории ввёл человек — возвращаем признак, иначе правка уже сохранённого
             // ручного блюда отдала бы его число на «сверку» с неполными БЖУ.
             ...(d.kcal_by_user ? { kcal_by_user: true } : {}),
+            ...(d.macros_unknown?.length ? { macros_unknown: d.macros_unknown } : {}),
             ...pieces,
           };
     });
