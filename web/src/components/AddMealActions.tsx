@@ -172,7 +172,12 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
                       {open && (
                         <div style={{ padding: "0 12px 10px" }}>
                           <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5 }}>
-                            Порция {grams} г · {kcal} ккал · Б {Math.round(t.total.protein_g)} · Ж {Math.round(t.total.fat_g)} · У {Math.round(t.total.carb_g)}
+                            {/* БЖУ, которых человек не вводил, сервер хранит нулями. Показать «Б 0 · Ж 0 ·
+                                У 0» значило бы выдать неизвестное за ноль — пишем, что их нет. */}
+                            Порция {grams} г · {kcal} ккал ·{" "}
+                            {t.total.protein_g + t.total.fat_g + t.total.carb_g > 0
+                              ? `Б ${Math.round(t.total.protein_g)} · Ж ${Math.round(t.total.fat_g)} · У ${Math.round(t.total.carb_g)}`
+                              : "БЖУ не указаны"}
                           </div>
                           <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 2, overflowWrap: "anywhere" }}>
                             {t.dishes.map((d) => d.name).join(", ")}

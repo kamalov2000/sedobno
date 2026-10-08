@@ -94,6 +94,15 @@ describe("AddMealActions — мои блюда", () => {
     await waitFor(() => expect(onDiaryChanged).toHaveBeenCalledTimes(2)); // добавление + отмена
   });
 
+  it("БЖУ не вводили — так и написано, а не «Б 0 · Ж 0 · У 0»", () => {
+    const noMacros: MealTemplate = { ...tpl, id: 8, name: "Ручное", total: { kcal: 500, protein_g: 0, fat_g: 0, carb_g: 0 } };
+    render(<AddMealActions onText={noop} onManual={noop} templates={[noMacros]} />);
+    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Ручное: 370 г, 500 ккал"));
+    expect(screen.getByText(/Порция 370 г · 500 ккал · БЖУ не указаны/)).toBeTruthy();
+    expect(screen.queryByText(/Б 0/)).toBeNull();
+  });
+
   it("своих блюд нет — подсказка, как их завести", () => {
     const recent: MealDiaryItem[] = [{
       id: 1, eaten_at: "", created_at: "", status: "ok", source: "photo", edited: false,
