@@ -31,7 +31,7 @@ export default function EggCounter({ dish, onName, onCount, onRemove }: Props) {
           onChange={(e) => onName(e.target.value)}
           placeholder="Название блюда"
           aria-label="Название блюда"
-          style={{ flex: 1, minWidth: 0, border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14.5, fontWeight: 500, color: "var(--text)", padding: 0, outline: "none", textOverflow: "ellipsis" }}
+          style={{ flex: 1, minWidth: 0, border: "none", background: "none", fontFamily: "'Golos Text',sans-serif", fontSize: 16, fontWeight: 500, color: "var(--text)", padding: 0, outline: "none", textOverflow: "ellipsis" }}
         />
         {/* Число на карточке = ПОЛНЫЙ вклад блюда: яичная база (желток+белок) + ложечные
             примитивы (масло). Раньше показывали dish.kcal (только яйца) — и вклад масла на

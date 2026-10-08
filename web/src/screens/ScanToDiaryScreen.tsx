@@ -89,7 +89,7 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
           onChange={(e) => setName(e.target.value)}
           placeholder={result.scan_number ? `Проверка №${result.scan_number}` : "Название продукта"}
           aria-label="Название продукта"
-          style={{ width: "100%", height: 48, border: "1px solid var(--border)", borderRadius: 12, background: "var(--bg-soft)", fontFamily: "'Golos Text',sans-serif", fontSize: 15, color: "var(--text)", padding: "0 14px", boxSizing: "border-box", outline: "none" }}
+          style={{ width: "100%", height: 48, border: "1px solid var(--border)", borderRadius: 12, background: "var(--bg-soft)", fontFamily: "'Golos Text',sans-serif", fontSize: 16, color: "var(--text)", padding: "0 14px", boxSizing: "border-box", outline: "none" }}
         />
 
         <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>Порция</div>
@@ -118,7 +118,7 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
                   value={customRaw}
                   onChange={(e) => setCustomRaw(e.target.value)}
                   aria-label="Своя порция"
-                  style={{ width: 80, height: 40, border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)", fontFamily: "'PT Mono',monospace", fontSize: 15, color: "var(--text)", textAlign: "center", outline: "none" }}
+                  style={{ width: 80, height: 40, border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", textAlign: "center", outline: "none" }}
                 />
                 <span style={{ fontSize: 13, color: "var(--text3)" }}>{unit}</span>
               </div>

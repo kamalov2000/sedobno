@@ -175,7 +175,9 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
           Свободное место уходит под ссылки внизу. */}
       {meal ? <div style={{ height: 18, flexShrink: 0 }} /> : (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
-        <div style={{ position: "relative", padding: 12 }}>
+        {/* Не шире экрана: при крупном шрифте повёрнутая карточка вылезала на 8 px и
+            срезалась краем (обход витрины 320 px / 130%, 08.10.2026). */}
+        <div style={{ position: "relative", padding: 12, maxWidth: "100%", boxSizing: "border-box" }}>
           <Corner style={{ top: 0, left: 0, borderTop: "2px solid var(--text3)", borderLeft: "2px solid var(--text3)", borderTopLeftRadius: 5 }} />
           <Corner style={{ top: 0, right: 0, borderTop: "2px solid var(--text3)", borderRight: "2px solid var(--text3)", borderTopRightRadius: 5 }} />
           <Corner style={{ bottom: 0, left: 0, borderBottom: "2px solid var(--text3)", borderLeft: "2px solid var(--text3)", borderBottomLeftRadius: 5 }} />
@@ -185,7 +187,7 @@ export default function HomeScreen({ me, mode, onModeChange, onScan, onSubscribe
               <i className="ti ti-tools-kitchen-2" aria-hidden="true" style={{ fontSize: 44, color: "var(--text3)" }} />
             </div>
           ) : (
-            <div style={{ width: 206, background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", transform: "rotate(-2deg)" }}>
+            <div style={{ width: 206, maxWidth: "100%", boxSizing: "border-box", background: "var(--bg-soft)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", transform: "rotate(-2deg)" }}>
               <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 10, lineHeight: 1.7, color: "var(--text2)" }}>
                 <span style={{ color: "var(--text)" }}>СОСТАВ:</span> творог, сахар, сироп глюкозы, масло пальмовое, крахмал кукурузный, ароматизатор…
               </div>

@@ -669,7 +669,9 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
 
         {/* Карточка-герой */}
         <div style={{ marginTop: 16, borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          {/* «ккал» переносится под число, а не уходит за край: при крупном системном шрифте
+              четырёхзначный итог на 320 px шире карточки (проверка 08.10.2026). */}
+          <div style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "2px 10px" }}>
             <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 60, lineHeight: 0.9, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{rolledKcal}</span>
             <span style={{ fontSize: 15, fontWeight: 500, color: "var(--cal-num)" }}>ккал</span>
           </div>
@@ -1015,7 +1017,9 @@ function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { valu
         border: "none",
         background: "none",
         fontFamily: "'Golos Text',sans-serif",
-        fontSize: 14.5,
+        // 16 px — не меньше: iOS при фокусе на поле с текстом мельче 16 px сам увеличивает
+        // страницу, и правая часть формы уходит за край (снимок владельца 08.10.2026).
+        fontSize: 16,
         fontWeight: 500,
         color: "var(--text)",
         padding: 0,
@@ -1092,8 +1096,8 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
           </button>
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "6px 10px", marginTop: 10 }}>
+        <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44 }}>
           <button type="button" onPointerDown={() => start(-GRAM_STEP)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label="Меньше грамм" style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
             <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
@@ -1104,7 +1108,7 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
               value={Math.round(fullGrams)}
               onChange={(e) => onSet(parseInt(e.target.value, 10) - piecesG)}
               aria-label="Граммовка"
-              style={{ width: 40, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+              style={{ width: 42, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>г</span>
           </div>
@@ -1206,8 +1210,12 @@ function ManualDishCard({
         </button>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44, background: "var(--bg)" }}>
+      {/* Строка переносится, а не сжимает степпер: при крупном системном шрифте (130%) на
+          320 px степпер схлопывался до одной кнопки «—», поле граммов и «+» исчезали
+          (снимок владельца с телефона, 08.10.2026). Не помещается — поле калорий уходит на
+          следующую строку во всю ширину. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", marginTop: 10, gap: 10 }}>
+        <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44, background: "var(--bg)" }}>
           <button type="button" onClick={() => onStep(-GRAM_STEP)} aria-label="Меньше грамм" style={{ width: 42, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
@@ -1218,7 +1226,7 @@ function ManualDishCard({
               value={Math.round(dish.grams)}
               onChange={(e) => onSet(parseInt(e.target.value, 10))}
               aria-label="Граммовка"
-              style={{ width: 40, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+              style={{ width: 42, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>г</span>
           </div>
@@ -1227,7 +1235,7 @@ function ManualDishCard({
           </button>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 4, border: "1px solid", borderColor: perBad ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 11, height: 44, padding: "0 10px", background: "var(--bg)" }}>
+        <div style={{ flex: "1 0 auto", justifyContent: "flex-end", display: "flex", alignItems: "center", gap: 4, border: "1px solid", borderColor: perBad ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 11, height: 44, padding: "0 10px", background: "var(--bg)" }}>
           <input
             className="cal-g"
             type="text"
@@ -1236,7 +1244,7 @@ function ManualDishCard({
             onChange={(e) => onPer100(e.target.value)}
             placeholder="0"
             aria-label="Калорийность на 100 грамм"
-            style={{ width: 46, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 14, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+            style={{ width: 52, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
           />
           <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)", whiteSpace: "nowrap" }}>ккал/100 г</span>
         </div>
@@ -1261,7 +1269,7 @@ function ManualDishCard({
                 onChange={(e) => onMacro(k, e.target.value)}
                 placeholder="—"
                 aria-label={`${full} на 100 грамм`}
-                style={{ width: "100%", minWidth: 0, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 13.5, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
+                style={{ width: "100%", minWidth: 0, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
               />
               <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)" }}>г</span>
             </label>

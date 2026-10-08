@@ -62,7 +62,7 @@ export default function DishTextInput({ value, onChange, onSubmit, busy = false,
     background: "var(--bg)",
     color: "var(--text)",
     fontFamily: "'Golos Text',sans-serif",
-    fontSize: 14.5,
+    fontSize: 16, // не меньше 16 px: иначе iOS увеличивает страницу при фокусе
     lineHeight: 1.45,
     padding: multiline ? "12px 14px" : "0 14px",
     height: multiline ? undefined : 46,
