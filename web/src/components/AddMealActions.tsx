@@ -340,18 +340,17 @@ function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit;
         aria-expanded={expandable ? open : undefined}
         aria-label={label}
         onClick={onToggle}
-        style={{ width: "100%", display: "flex", alignItems: "flex-start", gap: 8, minHeight: 40, padding: "7px 12px", border: "none", background: "none", cursor: "pointer", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text)", textAlign: "left" }}
+        style={{ width: "100%", display: "flex", flexWrap: "wrap", alignItems: "flex-start", columnGap: 8, rowGap: 1, minHeight: 40, padding: "7px 12px", border: "none", background: "none", cursor: "pointer", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, color: "var(--text)", textAlign: "left" }}
       >
         <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 15, color: "var(--cal-num)", flex: "none", marginTop: 2 }} />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          {/* Название целиком, с переносом: в выдаче похожие названия («Гречка с курицей» /
-              «Гречка с маслом») различаются как раз концом, обрезать его нельзя. */}
-          <span style={{ display: "block", overflowWrap: "anywhere" }}>{hit.name}</span>
-          {/* Переносится, а не обрезается: БЖУ должны быть видны до добавления и на 320 px. */}
-          {meta && !open && <span style={{ display: "block", fontSize: 11.5, color: "var(--text3)", marginTop: 1, lineHeight: 1.4 }}>{meta}</span>}
-        </span>
+        {/* Название целиком, с переносом: в выдаче похожие названия («Гречка с курицей» /
+            «Гречка с маслом») различаются как раз концом, обрезать его нельзя. */}
+        <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{hit.name}</span>
+        {/* Строка порции и БЖУ — на всю ширину под названием и калориями (order), а не в
+            узкой колонке рядом с ними: на 320 px и крупном шрифте она иначе рвалась на 4 строки. */}
+        {meta && !open && <span style={{ order: 3, flexBasis: "100%", paddingLeft: 23, fontSize: 11.5, color: "var(--text3)", lineHeight: 1.4 }}>{meta}</span>}
         {/* Раскрыто — калории в строке порции ниже, а название получает всю ширину. */}
-        {!open && <span style={{ flex: "none", color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>{kcal} ккал</span>}
+        {!open && <span style={{ order: 2, flex: "none", color: "var(--text3)", fontVariantNumeric: "tabular-nums" }}>{kcal} ккал</span>}
       </button>
       {open && expandable && <div style={{ padding: "0 12px 10px" }}>{children}</div>}
     </div>
