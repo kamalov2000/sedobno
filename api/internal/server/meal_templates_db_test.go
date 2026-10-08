@@ -223,3 +223,36 @@ func TestMealTemplates_СвояПорция(t *testing.T) {
 		t.Errorf("шаблон изменился: %v", it)
 	}
 }
+
+// Объём не превращается в граммы молча (08.10.2026): продукт с этикетки «на 100 мл»
+// хранится в мл, шаблон отдаёт единицу порции, пересчёт порции её сохраняет.
+func TestMealTemplates_МиллилитрыОстаютсяМиллилитрами(t *testing.T) {
+	cls := &classifier{res: &llm.MealAnalysis{}}
+	rd := &reader{ext: &llm.Extraction{}}
+	r := newRig(t, cls, rd, 999000822)
+
+	code, saved := postManual(t, r, map[string]any{
+		"client_key": "src-ml-0001", "source": "scan",
+		"dishes": []map[string]any{{"name": "кефир 2,5%", "grams": 250, "unit": "ml", "kcal_per_100": 42, "protein_per_100": 3, "fat_per_100": 2.5, "carb_per_100": 4}},
+	})
+	if code != 200 {
+		t.Fatalf("приём: %d %v", code, saved)
+	}
+	if u := saved["dishes"].([]any)[0].(map[string]any)["unit"]; u != "ml" {
+		t.Fatalf("единица приёма %v, ждали ml", u)
+	}
+	code, tpl := r.call(t, http.MethodPost, "/api/meal-templates", map[string]any{"meal_id": saved["id"], "name": "Кефир"})
+	if code != http.StatusCreated || tpl["unit"] != "ml" || tpl["grams"] != float64(250) {
+		t.Fatalf("шаблон: %d %v", code, tpl)
+	}
+	code, a := r.call(t, http.MethodPost, fmt.Sprintf("/api/meal-templates/%v/add", tpl["id"]), map[string]any{"client_key": "tpl-ml-0001", "grams": 500})
+	d := a["dishes"].([]any)[0].(map[string]any)
+	if code != 200 || d["unit"] != "ml" || d["grams"] != float64(500) || a["total"].(map[string]any)["kcal"] != float64(210) {
+		t.Errorf("500 мл: %d %v", code, a)
+	}
+	// Мусорная единица не проходит — граммы.
+	_, junk := postManual(t, r, map[string]any{"client_key": "src-ml-0002", "dishes": []map[string]any{{"name": "x", "grams": 100, "unit": "литры", "kcal_per_100": 10}}})
+	if u := junk["dishes"].([]any)[0].(map[string]any)["unit"]; u != nil {
+		t.Errorf("мусорная единица дошла: %v", u)
+	}
+}

@@ -188,6 +188,20 @@ describe("AddMealActions — мои блюда", () => {
     expect([first.grams, second.grams]).toEqual([200, 150]);
   });
 
+  it("продукт в мл: порция и подписи в мл, не в граммах", () => {
+    const kefir: MealTemplate = {
+      id: 11, name: "Кефир", grams: 250, unit: "ml", total: { kcal: 105, protein_g: 7.5, fat_g: 6.3, carb_g: 10 },
+      dishes: [{ name: "кефир 2,5%", grams: 250, kcal: 105, protein_g: 7.5, fat_g: 6.3, carb_g: 10, confidence: 1, unit: "ml" }],
+    };
+    render(<AddMealActions onText={noop} onManual={noop} templates={[kefir]} />);
+    fireEvent.click(screen.getByLabelText("Повторить"));
+    fireEvent.click(screen.getByLabelText("Кефир: 250 мл, 105 ккал"));
+    expect(screen.getByLabelText("Порция, миллилитров")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Порция, миллилитров"), { target: { value: "500" } });
+    expect(screen.getByText("210 ккал")).toBeTruthy();
+    expect(screen.getByText(/Шаблон останется прежним — 250 мл/)).toBeTruthy();
+  });
+
   it("своих блюд нет — подсказка, как их завести", () => {
     const recent: MealDiaryItem[] = [{
       id: 1, eaten_at: "", created_at: "", status: "ok", source: "photo", edited: false,

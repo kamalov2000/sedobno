@@ -43,12 +43,15 @@ const maxTemplateNameRunes = 60
 const maxPortionGrams = 5000
 
 type mealTemplateItem struct {
-	ID         int64          `json:"id"`
-	Name       string         `json:"name"`
-	Dishes     []llm.MealItem `json:"dishes"`
-	Total      llm.MealMacros `json:"total"`
-	Grams      float64        `json:"grams"` // порция целиком — её человек видит перед добавлением
-	LastUsedAt *time.Time     `json:"last_used_at,omitempty"`
+	ID     int64          `json:"id"`
+	Name   string         `json:"name"`
+	Dishes []llm.MealItem `json:"dishes"`
+	Total  llm.MealMacros `json:"total"`
+	Grams  float64        `json:"grams"` // порция целиком — её человек видит перед добавлением
+	// Unit — в чём порция: "ml" (все компоненты в миллилитрах), "g" — граммы, "mixed" —
+	// компоненты в разных единицах (сумма тогда условная, подписываем без единицы).
+	Unit       string     `json:"unit"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
 func toTemplateItem(t store.MealTemplate) mealTemplateItem {
@@ -60,7 +63,7 @@ func toTemplateItem(t store.MealTemplate) mealTemplateItem {
 	return mealTemplateItem{
 		// Порция — с весом счётных единиц (яйца, ложки масла): иначе «40 г» рядом с
 		// калориями, где уже сидят четыре яйца.
-		ID: t.ID, Name: t.Name, Dishes: dishes, Grams: meal.PortionGrams(dishes), LastUsedAt: t.LastUsedAt,
+		ID: t.ID, Name: t.Name, Dishes: dishes, Grams: meal.PortionGrams(dishes), Unit: portionUnit(dishes), LastUsedAt: t.LastUsedAt,
 		Total: llm.MealMacros{Kcal: t.Kcal, ProteinG: t.ProteinG, FatG: t.FatG, CarbG: t.CarbG},
 	}
 }
@@ -70,6 +73,28 @@ func templateName(v string) (string, bool) {
 	v = strings.Join(strings.Fields(v), " ")
 	n := utf8.RuneCountInString(v)
 	return v, n >= 1 && n <= maxTemplateNameRunes
+}
+
+// portionUnit — единица порции шаблона по его компонентам (неподтверждённые не в счёт).
+func portionUnit(dishes []llm.MealItem) string {
+	ml, g := 0, 0
+	for _, d := range dishes {
+		if d.Assumed {
+			continue
+		}
+		if d.Unit == "ml" {
+			ml++
+		} else {
+			g++
+		}
+	}
+	switch {
+	case ml > 0 && g > 0:
+		return "mixed"
+	case ml > 0:
+		return "ml"
+	}
+	return "g"
 }
 
 func templateIDFromURL(w http.ResponseWriter, r *http.Request) (int64, bool) {

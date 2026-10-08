@@ -73,18 +73,25 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
             ...(nutrition.protein_g != null ? { protein_per_100: nutrition.protein_g } : {}),
             ...(nutrition.fat_g != null ? { fat_per_100: nutrition.fat_g } : {}),
             ...(nutrition.carb_g != null ? { carb_per_100: nutrition.carb_g } : {}),
+            // Этикетка «на 100 мл» — количество в миллилитрах, не в граммах.
+            ...(unit === "мл" ? { unit: "ml" as const } : {}),
           },
         ],
         ...(mealType ? { meal_type: mealType } : {}),
       };
-      writePending({ key: saveKey.current, body, at: Date.now() });
+      // Отметка «Мои блюда» едет в том же отложенном запросе: потерялся ответ и приложение
+      // перезапустили — при запуске дошлётся приём и затем создастся шаблон (pendingSave).
+      const keep = keepAsMine ? { name: name.trim() } : undefined;
+      writePending({ key: saveKey.current, body, at: Date.now(), ...(keep ? { keep } : {}) });
       const saved = await createManualMeal(body);
-      clearPending(saveKey.current);
       notify("success");
       // Приём уже в дневнике. Сбой «Моих блюд» его не отменяет и не выдаётся за сбой
       // сохранения — говорим отдельно, что получилось.
-      const note = keepAsMine && saved.id ? await keepTemplate(saved.id, name.trim()) : undefined;
-      onSaved(note);
+      const kept = keep && saved.id ? await keepTemplate(saved.id, keep.name) : null;
+      // Шаблон не подтвердился по сети — запрос остаётся: при следующем запуске приём
+      // перешлётся тем же ключом (та же запись) и шаблон создастся. Иначе — убираем.
+      if (!kept || kept.done) clearPending(saveKey.current);
+      onSaved(kept?.note);
     } catch {
       // Ответа нет — запись могла уже лечь. Не утверждаем, что её нет; введённое на месте.
       notify("error");
@@ -255,15 +262,17 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
 
 /** Сохранить только что записанный приём как «моё блюдо». Возвращает текст для плашки в
  *  дневнике: что получилось. Название занято — не ошибка: продукт уже в списке. */
-async function keepTemplate(mealId: number, name: string): Promise<string> {
+async function keepTemplate(mealId: number, name: string): Promise<{ note: string; done: boolean }> {
   try {
     const t = await createMealTemplate(mealId, name);
-    return `Приём сохранён. «${t.name}» — в ваших блюдах: «Повторить» на главной`;
+    return { note: `Приём сохранён. «${t.name}» — в ваших блюдах: «Повторить» на главной`, done: true };
   } catch (err) {
+    // 409 — название занято (или шаблон уже создан прошлой попыткой): дубля нет, это не сбой.
     if (err instanceof ApiError && err.status === 409) {
-      return `Приём сохранён. ${err.message}`;
+      return { note: `Приём сохранён. ${err.message}`, done: true };
     }
-    return "Приём сохранён, а в «Мои блюда» добавить не удалось — откройте приём в дневнике → «Сохранить как моё блюдо»";
+    // Не дошло до сервера или не пришёл ответ: досылаем при следующем запуске.
+    return { note: "Приём сохранён. В «Мои блюда» добавим при следующем открытии приложения", done: false };
   }
 }
 

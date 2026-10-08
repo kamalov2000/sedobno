@@ -77,6 +77,8 @@ type dishInput struct {
 	// MacrosUnknown — какие БЖУ неизвестны (llm.MealItem.MacrosUnknown); клиент возвращает
 	// отметку при правке сохранённого блюда, иначе «не знаю» стало бы нулём.
 	MacrosUnknown []string `json:"macros_unknown"`
+	// Unit — "ml", если количество в миллилитрах (llm.MealItem.Unit); иначе граммы.
+	Unit string `json:"unit"`
 }
 
 // manualDishConfidence — уверенность ручного блюда. Единица, а не ноль: confidence
@@ -109,6 +111,7 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			Assumed:       d.Assumed,
 			KcalByUser:    d.KcalByUser,
 			MacrosUnknown: cleanMacrosUnknown(d.MacrosUnknown),
+			Unit:          cleanUnit(d.Unit),
 		}
 
 		switch {
@@ -178,7 +181,16 @@ func manualToPortion(name string, idx int, d dishInput) (llm.MealItem, string) {
 		KcalByUser: true,
 		// Пустое поле Б/Ж/У — «не знаю»: число хранится нулём, а отметка говорит, что это не ноль.
 		MacrosUnknown: unknownMacros(d.ProteinPer100, d.FatPer100, d.CarbPer100),
+		Unit:          cleanUnit(d.Unit),
 	}, ""
+}
+
+// cleanUnit — единица количества блюда: "ml" или пусто (граммы). Прочее не принимаем.
+func cleanUnit(v string) string {
+	if v == "ml" {
+		return "ml"
+	}
+	return ""
 }
 
 // unknownMacros — какие из Б/Ж/У на 100 г человек не указал.

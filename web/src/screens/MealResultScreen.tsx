@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle } from "../meal";
+import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle, amountUnit } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import SaveAsMyDish from "../components/SaveAsMyDish";
@@ -429,6 +429,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             ...(d.proteinPer100 != null ? { protein_per_100: d.proteinPer100 } : {}),
             ...(d.fatPer100 != null ? { fat_per_100: d.fatPer100 } : {}),
             ...(d.carbPer100 != null ? { carb_per_100: d.carbPer100 } : {}),
+            ...(d.unit === "ml" ? { unit: "ml" as const } : {}),
             ...pieces,
           }
         : {
@@ -444,6 +445,7 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
             // ручного блюда отдала бы его число на «сверку» с неполными БЖУ.
             ...(d.kcal_by_user ? { kcal_by_user: true } : {}),
             ...(d.macros_unknown?.length ? { macros_unknown: d.macros_unknown } : {}),
+            ...(d.unit === "ml" ? { unit: "ml" as const } : {}),
             ...pieces,
           };
     });
@@ -1111,13 +1113,13 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
               aria-label="Граммовка"
               style={{ width: 42, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />
-            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>г</span>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{amountUnit(dish)}</span>
           </div>
           <button type="button" onPointerDown={() => start(GRAM_STEP)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label="Больше грамм" style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
         </div>
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 г</span>
+        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 {amountUnit(dish)}</span>
       </div>
       {/* Сервер не смог достоверно оценить калорийность (вес есть, ккал вышли нулевые) —
           зовём проверить, а не показываем ложный ноль как факт. Поправка веса пересчитает. */}
@@ -1229,7 +1231,7 @@ function ManualDishCard({
               aria-label="Граммовка"
               style={{ width: 42, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />
-            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>г</span>
+            <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{amountUnit(dish)}</span>
           </div>
           <button type="button" onClick={() => onStep(GRAM_STEP)} aria-label="Больше грамм" style={{ width: 42, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
@@ -1247,7 +1249,7 @@ function ManualDishCard({
             aria-label="Калорийность на 100 грамм"
             style={{ width: 52, border: "none", background: "none", textAlign: "right", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
           />
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)", whiteSpace: "nowrap" }}>ккал/100 г</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)", whiteSpace: "nowrap" }}>ккал/100 {amountUnit(dish)}</span>
         </div>
       </div>
 

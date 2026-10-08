@@ -194,6 +194,11 @@ export function mealTitle(item: MealDiaryItem): string {
   return item.dishes.map((d) => d.name.trim()).filter(Boolean).join(", ");
 }
 
+/** Подпись количества блюда: «мл» для объёма, иначе «г». */
+export function amountUnit(d: { unit?: string }): "г" | "мл" {
+  return d.unit === "ml" ? "мл" : "г";
+}
+
 /** Неизвестен ли макрос у блюда. Отметка macros_unknown ставится ручным вводом с 08.10.2026;
  *  у старых ручных блюд её нет — тогда «калории ввёл человек, а все три БЖУ нули» значит,
  *  что БЖУ не вводили (так работал ручной ввод без полей Б/Ж/У). */

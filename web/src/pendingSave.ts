@@ -9,7 +9,7 @@
 // localStorage может быть недоступен (приватный режим, запрет сайтовых данных) — тогда
 // очередь просто не переживёт перезагрузку, а повтор на открытом экране работает и так.
 
-import { createManualMeal, addMealTemplate } from "./api";
+import { createManualMeal, addMealTemplate, createMealTemplate, ApiError } from "./api";
 
 type ManualBody = Parameters<typeof createManualMeal>[0];
 
@@ -22,6 +22,9 @@ export interface PendingSave {
   template?: number;
   /** Своя порция при добавлении «моего блюда» (вес приёма целиком). */
   grams?: number;
+  /** «Сохранить в „Мои блюда“» при переносе со скана: после подтверждения приёма создать
+   *  шаблон с этим названием. Едет в запросе, чтобы отметка пережила перезапуск. */
+  keep?: { name: string };
 }
 
 /** Ключ одного сохранения (UUID, если браузер умеет; иначе случайная строка того же вида). */
@@ -95,13 +98,24 @@ export function clearPending(key: string): void {
  *  "sent" — сервер подтвердил хотя бы одну и ни одна не упала, "failed" — какая-то снова не
  *  вышла (она остаётся до следующего раза), "none" — досылать нечего. */
 export async function flushPending(
-  send: (b: ManualBody) => Promise<unknown> = createManualMeal,
+  send: (b: ManualBody) => Promise<{ id?: number } | unknown> = createManualMeal,
   sendTemplate: (id: number, b: { client_key: string; meal_type?: ManualBody["meal_type"]; grams?: number }) => Promise<unknown> = addMealTemplate,
+  keepTemplate: (mealId: number, name: string) => Promise<unknown> = createMealTemplate,
 ): Promise<"none" | "sent" | "failed"> {
   const jobs: Array<() => Promise<unknown>> = [];
   const manual = readPending();
   if (manual) jobs.push(async () => {
-    await send({ ...manual.body, client_key: manual.key });
+    const res = (await send({ ...manual.body, client_key: manual.key })) as { id?: number } | undefined;
+    // Отметка «Мои блюда»: приём подтверждён (тот же ключ — та же запись), создаём шаблон.
+    // 409 — уже есть (создан прошлой попыткой или название занято): дубля нет, готово.
+    // Иной сбой — запрос остаётся до следующего запуска.
+    if (manual.keep && res?.id) {
+      try {
+        await keepTemplate(res.id, manual.keep.name);
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 409)) throw err;
+      }
+    }
     clearPending(manual.key);
   });
   const tpl = readPendingTemplate();

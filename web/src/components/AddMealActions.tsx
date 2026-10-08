@@ -162,7 +162,7 @@ export default function AddMealActions({ onPhoto, onText, onManual, recent, onRe
                       <button
                         type="button"
                         aria-expanded={open}
-                        aria-label={`${t.name}: ${grams} г, ${kcal} ккал`}
+                        aria-label={`${t.name}: ${grams} ${t.unit === "ml" ? "мл" : "г"}, ${kcal} ккал`}
                         onClick={() => {
                           haptic("light");
                           setPicked(open ? null : t.id);
@@ -273,12 +273,15 @@ function PortionPreview({ t, gramsRaw, onGrams }: { t: MealTemplate; gramsRaw: s
     const cur = parsePortion(gramsRaw) ?? 0;
     onGrams(String(Math.max(0, Math.round(cur + d))));
   };
+  // Порция в мл у продукта «на 100 мл»; у компонентов в разных единицах — без подписи.
+  const u = t.unit === "ml" ? "мл" : t.unit === "mixed" ? "" : "г";
+  const uWord = t.unit === "ml" ? "миллилитров" : "грамм";
   const btn = { width: 40, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } as const;
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 10px" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid", borderColor: g == null ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 10, overflow: "hidden", height: 40 }}>
-          <button type="button" aria-label="Меньше на 10 грамм" onClick={() => step(-GRAM_STEP)} style={btn}>
+          <button type="button" aria-label={`Меньше на 10 ${uWord}`} onClick={() => step(-GRAM_STEP)} style={btn}>
             <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 15 }} />
           </button>
           <input
@@ -286,12 +289,12 @@ function PortionPreview({ t, gramsRaw, onGrams }: { t: MealTemplate; gramsRaw: s
             inputMode="decimal"
             value={gramsRaw}
             onChange={(e) => onGrams(e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6))}
-            aria-label="Порция, грамм"
+            aria-label={`Порция, ${uWord}`}
             // 16 px: на поле мельче iOS увеличивает страницу при фокусе.
             style={{ width: 56, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
           />
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", paddingRight: 6 }}>г</span>
-          <button type="button" aria-label="Больше на 10 грамм" onClick={() => step(GRAM_STEP)} style={btn}>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", paddingRight: 6 }}>{u}</span>
+          <button type="button" aria-label={`Больше на 10 ${uWord}`} onClick={() => step(GRAM_STEP)} style={btn}>
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 15 }} />
           </button>
         </div>
@@ -310,7 +313,7 @@ function PortionPreview({ t, gramsRaw, onGrams }: { t: MealTemplate; gramsRaw: s
       </div>
       {(t.dishes.length > 1 || changed) && (
         <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 4 }}>
-          {t.dishes.length > 1 ? "Все компоненты изменятся пропорционально. " : ""}Шаблон останется прежним — {Math.round(t.grams)} г.
+          {t.dishes.length > 1 ? "Все компоненты изменятся пропорционально. " : ""}Шаблон останется прежним — {Math.round(t.grams)}{u ? ` ${u}` : ""}.
         </div>
       )}
     </div>
