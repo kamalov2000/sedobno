@@ -161,26 +161,29 @@ describe("DiaryScreen — вход в добавление приёма", () => 
     loadWeek: weekData, loadWeight: noWeight, saveWater: noWater,
   };
 
-  it("футер дня даёт добавить приём", async () => {
-    const onAddManual = vi.fn();
-    render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} onAddManual={onAddManual} />);
-    fireEvent.click(await screen.findByText("Добавить приём"));
-    expect(onAddManual).toHaveBeenCalled();
+  it("футер дня — те же способы, что на главной: фото, словами, цифрами", async () => {
+    const onAddManual = vi.fn(), onAddDigits = vi.fn(), onAddPhoto = vi.fn();
+    render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} onAddManual={onAddManual} onAddDigits={onAddDigits} onAddPhoto={onAddPhoto} />);
+    fireEvent.click(await screen.findByText("Написать"));
+    fireEvent.click(screen.getByText("Вручную"));
+    fireEvent.click(screen.getByText("Фото"));
+    expect(onAddManual).toHaveBeenCalledTimes(1);
+    expect(onAddDigits).toHaveBeenCalledTimes(1);
+    expect(onAddPhoto).toHaveBeenCalledTimes(1);
   });
 
-  it("в пустой день кнопка тоже на месте — иначе вечерний ужин без фото не спасти", async () => {
+  it("в пустой день входы тоже на месте — иначе вечерний ужин без фото не спасти", async () => {
     const onAddManual = vi.fn();
     render(<DiaryScreen {...props} loadDay={async () => makeEmptyDiary()} onAddManual={onAddManual} />);
-    // Пустое состояние зовёт сфоткать — и футер даёт путь без фото.
     expect(await screen.findByText(/Сфоткай/)).toBeTruthy();
-    fireEvent.click(screen.getByText("Добавить приём"));
+    fireEvent.click(screen.getByText("Написать"));
     expect(onAddManual).toHaveBeenCalled();
   });
 
-  it("без обработчика вход не рисуется вовсе", async () => {
+  it("без обработчика входы не рисуются вовсе", async () => {
     render(<DiaryScreen {...props} loadDay={async () => makeDiary("under")} />);
     await screen.findByText("ПРИЁМЫ ПИЩИ");
-    expect(screen.queryByText("Добавить приём")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Добавить приём" })).toBeNull();
   });
 });
 

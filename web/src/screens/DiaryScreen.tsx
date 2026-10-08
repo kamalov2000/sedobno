@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AddMealActions from "../components/AddMealActions";
 import type { MealsByDay, MealDaily, MealDiaryItem, MealType, NutritionProfile, WeightResponse, WaterResponse, WeightSummary, Streak } from "../types";
 import { getMeals, getMealDays, deleteMeal, getWeight, addWater } from "../api";
 import { MEAL_TYPE_ICONS, emptyMealWord, kcalLeft, mealBudgetKcal, round1 } from "../meal";
@@ -31,8 +32,16 @@ interface Props {
    *  До 13.09.2026 строка дневника умела только удалять, и человек, ожидавший открыть
    *  приём тапом, упирался в глухую строку (наблюдение владельца в Telegram Web). */
   onOpen?: (item: MealDiaryItem) => void;
-  /** Открыть пустой разбор для приёма, вписанного руками. Не задан — входы скрыты. */
+  /** Способы добавить приём — те же, что на главной (компонент AddMealActions). Не заданы —
+   *  входов нет (превью/тесты). onAddManual — исторически «Добавить приём» = словами. */
   onAddManual?: () => void;
+  onAddDigits?: () => void;
+  onAddPhoto?: () => void;
+  recent?: MealDiaryItem[];
+  onRepeat?: (item: MealDiaryItem) => void;
+  /** Явный факт сохранения: показываем сверху, когда человек пришёл сюда сразу после
+   *  «В дневник» (задание владельца 08.10.2026). */
+  notice?: string;
 }
 
 function addDays(day: string, n: number): string {
@@ -60,7 +69,7 @@ const fmtInt = (v: number) => String(Math.round(v));
 export default function DiaryScreen({
   onBack, profile, onOpenWizard, onShare,
   loadDay = getMeals, loadWeek = getMealDays,
-  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onOpen,
+  onOpenWeight, loadWeight = getWeight, saveWater = addWater, onAddManual, onAddDigits, onAddPhoto, recent, onRepeat, notice, onOpen,
 }: Props) {
   const [mode, setMode] = useState<"day" | "week">("day");
   const [day, setDay] = useState<string | null>(null);
@@ -261,7 +270,7 @@ export default function DiaryScreen({
   const canShare = !dayEmpty && !!onShare;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
+    <div className="sj-diary" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}>
       {/* Шапка */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px 4px", flex: "none" }}>
         <button type="button" onClick={onBack} aria-label="Назад" style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -304,6 +313,7 @@ export default function DiaryScreen({
             onNext={() => goDay(1)}
             onTrash={onTrash}
             onOpen={onOpen}
+            notice={notice}
             onOpenWizard={onOpenWizard}
             water={data ? { ml: data.water_ml, goalMl: data.water_goal_ml } : undefined}
             streak={streak}
@@ -318,7 +328,9 @@ export default function DiaryScreen({
 
       {/* Футер с «Добавить приём» — только в режиме дня: в недельном обзоре добавлять
           нечего, там смотрят на столбики. */}
-      {mode === "day" && onAddManual && <AddMealFooter onClick={onAddManual} />}
+      {mode === "day" && onAddManual && (
+        <AddMealFooter onText={onAddManual} onManual={onAddDigits ?? onAddManual} onPhoto={onAddPhoto} recent={recent} onRepeat={onRepeat} />
+      )}
 
       {/* Undo-снекбар — над футером, иначе кнопка «Вернуть» ушла бы под кнопку добавления. */}
       {(pending || delError) && (
@@ -353,6 +365,7 @@ function DayView({
   onNext,
   onTrash,
   onOpen,
+  notice,
   onOpenWizard,
   water,
   streak,
@@ -378,6 +391,7 @@ function DayView({
   onNext: () => void;
   onTrash: (item: MealDiaryItem) => void;
   onOpen?: (item: MealDiaryItem) => void;
+  notice?: string;
   onOpenWizard: () => void;
 }) {
   const atToday = day != null && today !== "" && day >= today;
@@ -405,21 +419,13 @@ function DayView({
           единственный вход в расчёт нормы, а новичок открывает дневник как раз пустым:
           скан состава сам сюда не попадает. Спрятанная карточка означала, что человек
           может пользоваться приложением и не узнать, что норма вообще есть. */}
-      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} empty={empty} onOpenWizard={onOpenWizard} />)}
-
-      {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
-          поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
-      {water && <WaterCard waterMl={water.ml} goalMl={water.goalMl} onChange={onWater} />}
-
-      {/* Серия и вес — ряд из двух равных карточек. Обе умеют исчезать поодиночке
-          (нулевая серия, отсутствующий вход на вес), и оставшаяся занимает ширину
-          сама: flex:1 на каждой, без ветвлений по числу карточек. */}
-      {(streakShown || weightShown) && (
-        <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-          {streakShown && <StreakCard streak={streak!} />}
-          {weightShown && <WeightCard summary={weightSummary!} onOpen={onOpenWeight!} />}
+      {notice && (
+        <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, padding: "10px 12px", borderRadius: 12, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", fontSize: 13.5, color: "var(--text)" }}>
+          <i className="ti ti-circle-check" aria-hidden="true" style={{ fontSize: 18, color: "var(--cal-num)", flex: "none" }} />
+          <span>{notice}</span>
         </div>
       )}
+      {total && (profile ? <RemainderCard total={total} profile={profile} onOpenWizard={onOpenWizard} /> : <SumsCard total={total} empty={empty} onOpenWizard={onOpenWizard} />)}
 
       {loading && empty && <Muted>Загружаем…</Muted>}
 
@@ -445,7 +451,7 @@ function DayView({
           а не только отчёт. Без нормы делить нечего: показываем плоский список, как было. */}
       {!empty && (
         <>
-          <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)", margin: "18px 0 4px" }}>ПРИЁМЫ ПИЩИ</div>
+          <div className="sj-meals-label" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, letterSpacing: "0.08em", color: "var(--text3)", margin: "18px 0 4px" }}>ПРИЁМЫ ПИЩИ</div>
           {profile && budgets ? (
             <MealBudgetList items={items} target={profile.daily_kcal_target} budgets={budgets} onTrash={onTrash} onOpen={onOpen} />
           ) : (
@@ -455,10 +461,29 @@ function DayView({
               ))}
             </div>
           )}
-          {/* Резерв, чтобы undo-снекбар не перекрывал последний приём. */}
-          <div style={{ height: 104 }} />
         </>
       )}
+
+      {/* Вода, серия и вес — ПОСЛЕ приёмов (задание 08.10.2026): на коротком экране они
+          стояли выше списка, и только что сохранённой записи не было видно. Сами функции
+          не тронуты — переставлены. */}
+      <div style={{ marginTop: 16 }}>
+      {/* Вода и вес показываются в любой день, даже пустой: налить стакан можно и не
+          поев, а вход на экран веса не должен зависеть от того, был ли завтрак. */}
+      {water && <WaterCard waterMl={water.ml} goalMl={water.goalMl} onChange={onWater} />}
+
+      {/* Серия и вес — ряд из двух равных карточек. Обе умеют исчезать поодиночке
+          (нулевая серия, отсутствующий вход на вес), и оставшаяся занимает ширину
+          сама: flex:1 на каждой, без ветвлений по числу карточек. */}
+      {(streakShown || weightShown) && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+          {streakShown && <StreakCard streak={streak!} />}
+          {weightShown && <WeightCard summary={weightSummary!} onOpen={onOpenWeight!} />}
+        </div>
+      )}
+      </div>
+      {/* Резерв, чтобы undo-снекбар не перекрывал последнюю карточку. */}
+      <div style={{ height: 104 }} />
     </>
   );
 }
@@ -470,25 +495,12 @@ function DayView({
 //
 // Кнопка постоянная, а не элемент списка: добавить приём нужно и в пустой день, и после
 // десятого — искать её в конце прокрутки незачем.
-function AddMealFooter({ onClick }: { onClick: () => void }) {
+function AddMealFooter(props: { onText: () => void; onManual: () => void; onPhoto?: () => void; recent?: MealDiaryItem[]; onRepeat?: (item: MealDiaryItem) => void }) {
+  // Те же четыре способа, что на главной: фото, словами, цифрами, повтор (задание
+  // 08.10.2026). Раньше здесь была одна кнопка «Добавить приём» — только словами.
   return (
-    <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "12px 20px 4px" }}>
-      <button
-        type="button"
-        onClick={() => {
-          haptic("light");
-          onClick();
-        }}
-        style={{
-          width: "100%", height: 52, background: "var(--cal)", color: "var(--on-cal)",
-          border: "none", borderRadius: 13, fontFamily: "'Golos Text',sans-serif",
-          fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center",
-          justifyContent: "center", gap: 8, cursor: "pointer",
-        }}
-      >
-        <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 19 }} />
-        Добавить приём
-      </button>
+    <div style={{ flex: "none", borderTop: "0.5px solid var(--border)", background: "var(--bg)", padding: "10px 16px 4px", maxHeight: "45vh", overflowY: "auto" }}>
+      <AddMealActions {...props} />
     </div>
   );
 }
@@ -518,11 +530,11 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
   const macrosLeft = `осталось Б${NBSP}${leftMacro(profile.daily_protein_g, total.protein_g)} · Ж${NBSP}${leftMacro(profile.daily_fat_g, total.fat_g)} · У${NBSP}${leftMacro(profile.daily_carb_g, total.carb_g)}${NBSP}г`;
 
   return (
-    <div onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "20px 20px 18px", marginBottom: 16, cursor: "pointer" }}>
+    <div className="sj-rem" onClick={onOpenWizard} style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "20px 20px 18px", marginBottom: 16, cursor: "pointer" }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 13, color: "var(--text2)" }}>{over ? "Перебор нормы" : "Осталось до нормы"}</div>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 7, marginTop: 4 }}>
-          <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 1, color: over ? "var(--text2)" : "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>
+          <span className="sj-rem-num" style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 1, color: over ? "var(--text2)" : "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>
             {Math.abs(left)}
           </span>
           <span style={{ fontSize: 16, color: "var(--text2)" }}>ккал</span>
@@ -533,17 +545,17 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
       </div>
 
       {/* Прогресс дня. Перебор — серым: полоска говорит «норма закрыта», а не «ошибка». */}
-      <div style={{ height: 8, borderRadius: 99, background: "var(--bg)", overflow: "hidden", marginTop: 14 }}>
+      <div className="sj-rem-bar" style={{ height: 8, borderRadius: 99, background: "var(--bg)", overflow: "hidden", marginTop: 14 }}>
         <div style={{ height: "100%", borderRadius: 99, background: over ? "var(--text2)" : "var(--cal)", width: `${Math.round(pct * 100)}%` }} />
       </div>
 
       {/* Б/Ж/У — как были: полоска долей плюс строка остатка. */}
-      <div style={{ marginTop: 14 }}>
+      <div className="sj-rem-macro" style={{ marginTop: 14 }}>
         <MacroSegments total={total} height={7} showLabels={false} trackBg="var(--bg)" />
       </div>
-      <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
+      <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text2)", marginTop: 8, textAlign: "center" }}>{macros}</div>
       {macroTargets && (
-        <div style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3, textAlign: "center" }}>{macrosLeft}</div>
+        <div className="sj-rem-grams" style={{ fontFamily: "'PT Mono',monospace", fontSize: 10, color: "var(--text3)", marginTop: 3, textAlign: "center" }}>{macrosLeft}</div>
       )}
     </div>
   );
@@ -556,7 +568,7 @@ function RemainderCard({ total, profile, onOpenWizard }: { total: MealDaily; pro
 // дне вообще показывается: предложение посчитать норму.
 function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boolean; onOpenWizard: () => void }) {
   return (
-    <div style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px", marginBottom: 16 }}>
+    <div className="sj-rem" style={{ borderRadius: 18, background: "var(--cal-soft)", border: "1px solid var(--cal-border)", padding: "22px 20px 18px", marginBottom: 16 }}>
       {empty ? (
         <>
           <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)", lineHeight: 1.3 }}>Сколько вам нужно в день?</div>
@@ -567,16 +579,16 @@ function SumsCard({ total, empty, onOpenWizard }: { total: MealDaily; empty: boo
       ) : (
         <>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-            <span style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 0.9, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{fmtInt(total.kcal)}</span>
+            <span className="sj-rem-num" style={{ fontFamily: "'Unbounded',sans-serif", fontWeight: 600, fontSize: 52, lineHeight: 0.9, color: "var(--cal-num)", fontVariantNumeric: "tabular-nums" }}>{fmtInt(total.kcal)}</span>
             <span style={{ fontSize: 15, fontWeight: 500, color: "var(--cal-num)" }}>ккал</span>
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 4 }}>съедено за день</div>
-          <div style={{ marginTop: 16 }}>
+          <div className="sj-rem-macro" style={{ marginTop: 16 }}>
             <MacroSegments total={total} height={8} trackBg="var(--bg)" />
           </div>
         </>
       )}
-      <button type="button" onClick={onOpenWizard} style={{ width: "100%", height: 40, marginTop: 16, background: "none", border: "1px solid var(--cal-border)", borderRadius: 11, color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <button type="button" className="sj-rem-cta" onClick={onOpenWizard} style={{ width: "100%", height: 40, marginTop: 16, background: "none", border: "1px solid var(--cal-border)", borderRadius: 11, color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13.5, fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
         Рассчитать мою норму
         <i className="ti ti-arrow-right" aria-hidden="true" style={{ fontSize: 16 }} />
       </button>
@@ -617,7 +629,9 @@ function MealRow({ item, onTrash, onOpen, inGroup = false }: { item: MealDiaryIt
           <i className={`ti ${icon}`} aria-hidden="true" style={{ fontSize: 19 }} />
         </span>
         <span style={{ flex: 1, minWidth: 0, display: "block" }}>
-          <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          {/* flexWrap: при крупном шрифте на узком экране «Завтрак 12:10» не влезает в
+              строку и время наезжало на калории справа — теперь переносится. */}
+          <span style={{ display: "flex", alignItems: "baseline", flexWrap: "wrap", columnGap: 8 }}>
             <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{item.meal_type ? { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин", snack: "Перекус" }[item.meal_type] : "Приём"}</span>
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{fmtTime(item.eaten_at)}</span>
           </span>

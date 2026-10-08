@@ -679,8 +679,10 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
           </div>
         </div>
 
-        {/* Чипы типов приёма */}
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        {/* Чипы типов приёма. flexWrap: на 320 px с крупным шрифтом четыре чипа в строку не
+            влезали и давали горизонтальную прокрутку экрана (проверка 08.10.2026) — теперь
+            переносятся на вторую строку. */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 16 }}>
           {MEAL_TYPES.map((t) => {
             const active = mealType === t;
             return (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
+import { bootAuth, scanPhoto, analyzeMeal, payCreate, sbpPay, getMe, getMeals, mealsHistory, localDay, ApiError, appEvent, routingEvent, startOp, APP_BUILD, type ModeEntry, type RoutingInfo } from "./api";
 import { initTelegram, tg, notify } from "./telegram";
 import type { Me, ScanResult, MealResult, MealDiaryItem, SubPlan } from "./types";
 import HomeScreen, { type HomeMode } from "./screens/HomeScreen";
@@ -274,6 +274,11 @@ export default function App() {
    *  экран с ним закрылся. Задан — возвращаемся на него. */
   const [wizardReturnTo, setWizardReturnTo] = useState<View | null>(null);
   const [todayHasMeals, setTodayHasMeals] = useState(false); // янтарная точка на иконке дневника
+  // Итог сегодняшнего дня для главной (задание 08.10.2026). День — ЛОКАЛЬНЫЙ день клиента:
+  // запрос идёт с явной датой, и после полуночи главная показывает уже новый день.
+  const [todayTotal, setTodayTotal] = useState<{ kcal: number; count: number } | undefined>(undefined);
+  // «Сохранено» в дневнике сразу после «В дневник»; гаснет, как только человек уходит.
+  const [diaryNotice, setDiaryNotice] = useState<string | undefined>(undefined);
   // Приём, оценённый по ТЕКСТОВОМУ описанию (backlog п.2): открывается тем же редактором,
   // что и ручной, но с числами от модели и source="text" при сохранении. null — обычный
   // ручной ввод цифрами.
@@ -297,8 +302,11 @@ export default function App() {
     if (phase !== "ready") return;
     void flushPending()
       .catch(() => "failed" as const)
-      .then(() => getMeals())
-      .then((d) => setTodayHasMeals(d.items.length > 0))
+      .then(() => getMeals(localDay()))
+      .then((d) => {
+        setTodayHasMeals(d.items.length > 0);
+        setTodayTotal({ kcal: d.total?.kcal ?? 0, count: d.items.length });
+      })
       .catch(() => {});
   }, [phase]);
 
@@ -308,7 +316,26 @@ export default function App() {
   useEffect(() => {
     if (phase !== "ready" || view !== "home" || mode !== "meal") return;
     void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
+    // Итог дня — тем же возвратом на главную: человек мог только что сохранить приём или
+    // вернуться утром следующего дня. Один запрос на показ экрана, не на каждую клавишу.
+    void getMeals(localDay())
+      .then((d) => {
+        setTodayHasMeals(d.items.length > 0);
+        setTodayTotal({ kcal: d.total?.kcal ?? 0, count: d.items.length });
+      })
+      .catch(() => {});
   }, [phase, view, mode]);
+
+  // Прошлые приёмы для «Повторить» в дневнике — там тоже есть этот вход.
+  useEffect(() => {
+    if (phase !== "ready" || view !== "meal_diary") return;
+    void mealsHistory().then((p) => setRecentMeals(repeatCandidates(p.items))).catch(() => {});
+  }, [phase, view]);
+
+  // Факт сохранения живёт, пока человек в дневнике.
+  useEffect(() => {
+    if (view !== "meal_diary") setDiaryNotice(undefined);
+  }, [view]);
 
   // Остаток бесплатных попыток на главном — с сервера при КАЖДОМ возврате на него.
   //
@@ -742,7 +769,10 @@ export default function App() {
         <HomeScreen
           me={me}
           mode={mode}
-          onModeChange={setMode}
+          // Ручное переключение вкладки — entry="tab". Раньше сюда передавался setMode как
+          // есть, и событие получало значение по умолчанию "auto": в аналитике ручной выбор
+          // был неотличим от автоматического (задание 08.10.2026).
+          onModeChange={(m) => setMode(m, "tab")}
           onScan={onScan}
           onSubscribe={() => setView("paywall")}
           // Часы контекстны режиму: в «Составе» ведут в историю сканов, в
@@ -750,14 +780,23 @@ export default function App() {
           // того, чем ты сейчас занят», и вторая рядом заставляла бы выбирать
           // между двумя одинаковыми часами.
           onHistory={() => setView(mode === "meal" ? "meal_history" : "history")}
-          onAddManual={() => {
+          onAddText={() => {
             setReturnTo("home");
             setTextMeal(null);
-            setMealTextPrefill(""); // обычный вход из дневника — поле пустое
+            setRepeatMeal(null);
+            setMealTextPrefill(""); // обычный вход с главной — поле пустое
             setView("meal_text");
+          }}
+          onAddManual={() => {
+            // Цифрами вручную — сразу пустая карточка с полями, без модели и без квоты.
+            setReturnTo("home");
+            setTextMeal(null);
+            setRepeatMeal(null);
+            setView("meal_manual");
           }}
           onDiary={() => setView("meal_diary")}
           todayHasMeals={todayHasMeals}
+          today={todayTotal}
           recent={recentMeals}
           onRepeat={(item) => {
             // Повтор — новый приём на том же экране, что и ручной: правка граммов, тип
@@ -829,9 +868,29 @@ export default function App() {
           onAddManual={() => {
             setReturnTo("meal_diary");
             setTextMeal(null);
+            setRepeatMeal(null);
             setMealTextPrefill(""); // обычный вход из дневника — поле пустое
             setView("meal_text");
           }}
+          onAddDigits={() => {
+            setReturnTo("meal_diary");
+            setTextMeal(null);
+            setRepeatMeal(null);
+            setView("meal_manual");
+          }}
+          // Фото снимается с главной «Калорий» — там камера и подсказки кадра.
+          onAddPhoto={() => {
+            setMode("meal", "tab");
+            setView("home");
+          }}
+          recent={recentMeals}
+          onRepeat={(item) => {
+            setTextMeal(null);
+            setRepeatMeal(repeatToResult(item, me?.meals_left ?? -1));
+            setReturnTo("meal_diary");
+            setView("meal_manual");
+          }}
+          notice={diaryNotice}
           onShare={(data, profile) => {
             // Клиентский рендер (фото/данные на сервер не уходят). Формат — пост 4:5,
             // тема — текущая (data-theme на <html>). Рендер поддерживает и сторис/meal.
@@ -988,6 +1047,7 @@ export default function App() {
             // повторным кадром приём тоже сохранён, но пришли на него с камеры, и
             // история приёмов там ни при чём.
             const back = returnTo === "meal_history" ? "meal_history" : "meal_diary";
+            if (back === "meal_diary") setDiaryNotice(savedMeal ? "Изменения сохранены" : "Приём сохранён — он в списке ниже");
             setSavedMeal(null);
             setReturnTo(null);
             setView(back);
@@ -1054,6 +1114,7 @@ export default function App() {
             setTextMeal(null);
             setRepeatMeal(null);
             setTodayHasMeals(true);
+            setDiaryNotice("Приём сохранён — он в списке ниже");
             setView("meal_diary");
           }}
           onRetake={() => {

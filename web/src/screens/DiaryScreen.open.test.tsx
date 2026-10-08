@@ -53,3 +53,31 @@ describe("DiaryScreen — тап по строке открывает приём
     expect((row as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+// Порядок дневника (задание владельца 08.10.2026): итог дня → приёмы → вода, вес, серия.
+// На коротком экране вода и серия стояли выше списка, и только что сохранённой записи
+// не было видно.
+describe("DiaryScreen — порядок и факт сохранения", () => {
+  it("приёмы идут раньше воды", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={dayData} loadWeek={weekData} />);
+    const meal = await screen.findByLabelText("Открыть приём: паста фузилли");
+    const water = screen.getByLabelText("Добавить стакан");
+    expect(meal.compareDocumentPosition(water) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("после сохранения сверху — явное «сохранено»", async () => {
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={dayData} loadWeek={weekData} notice="Приём сохранён — он в списке ниже" />);
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(screen.getByText("Приём сохранён — он в списке ниже")).toBeTruthy();
+  });
+
+  // Решение по пустому дню: пустые бюджеты НЕ показываем. Сразу под пустым состоянием —
+  // способы добавить приём; рамка «завтрак 0 / 525» до первой записи — шум, а план дня
+  // уже виден в карточке остатка над списком. Бюджеты появляются с первой записью.
+  it("в пустой день с нормой бюджеты скрыты, способы добавления видны", async () => {
+    const empty = async () => ({ ...(await dayData()), items: [], total: { day: "2026-09-11", meals_count: 0, kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0 }, meal_budgets: { breakfast: 0.25, lunch: 0.35, dinner: 0.25, snack: 0.15 } });
+    render(<DiaryScreen onBack={noop} onOpenWizard={noop} profile={filled} loadDay={empty} loadWeek={weekData} onAddManual={noop} />);
+    expect(await screen.findByRole("group", { name: "Добавить приём" })).toBeTruthy();
+    expect(screen.queryByText("ПРИЁМЫ ПИЩИ")).toBeNull();
+  });
+});

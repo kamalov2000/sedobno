@@ -221,3 +221,50 @@ body {
 @media (prefers-reduced-motion: reduce) {
   @keyframes sjstreak { 0%, 100% { transform: none; filter: none; } }
 }
+
+/* Способы добавить приём (AddMealActions, задание 08.10.2026). Container queries — по
+   ширине самого блока, а не окна: на 320 px с крупным шрифтом (130 %) на блок остаётся
+   ~200 CSS-пикселей, и подписи «Написать»/«Повторить» в одну строку из трёх-четырёх кнопок
+   не влезали. Тогда кнопки встают в две колонки. Старый вебвью без container queries
+   просто оставит строку — подписи там обрежутся многоточием, но не пропадут. */
+.sj-add { container-type: inline-size; }
+.sj-add-row { display: flex; gap: 8px; }
+/* Четыре кнопки (дневник): на узкой строке — короткие подписи, а не две строки кнопок:
+   сетка 2×2 съедала первый экран, и при крупном шрифте приёмов не было видно вовсе. */
+.sj-add-short { display: none; }
+@container (max-width: 300px) {
+  .sj-add-row.sj-add-4 { gap: 4px; }
+  .sj-add-row.sj-add-4 .sj-add-btn { padding-left: 0 !important; padding-right: 0 !important; }
+  .sj-add-row.sj-add-4 .sj-add-label { font-size: 11px; }
+  .sj-add-row.sj-add-4 .sj-add-has-short .sj-add-full { display: none; }
+  .sj-add-row.sj-add-4 .sj-add-short { display: inline; }
+}
+@container (max-width: 230px) {
+  /* Три кнопки остаются в строку (две колонки сделали бы блок выше и увели «Повторить»
+     за край короткого экрана) — уменьшаем подписи. */
+  .sj-add-row:not(.sj-add-4) { gap: 5px; }
+  .sj-add-row:not(.sj-add-4) .sj-add-label { font-size: 11px; }
+  /* Боковые поля кнопки задаются инлайном — перебиваем их только здесь. */
+  .sj-add-row:not(.sj-add-4) .sj-add-btn { padding-left: 0 !important; padding-right: 0 !important; }
+}
+
+/* Главная: на коротком экране (маленький телефон, крупный шрифт, открытая клавиатура)
+   прячем второстепенный подзаголовок — главные действия должны остаться в первом экране.
+   Остальное, если не влезло, прокручивается (overflow на корне HomeScreen). */
+.sj-home { container-type: size; }
+@container (max-height: 480px) {
+  .sj-home-sub { display: none; }
+}
+
+/* Дневник на коротком экране: итог дня — компактный, чтобы список приёмов начинался в
+   первом экране (задание 08.10.2026: «итог дня → приёмы»). Полоски БЖУ скрыты — граммы
+   остаются в строке под числом. */
+.sj-diary { container-type: size; }
+@container (max-height: 560px) {
+  .sj-rem { padding: 12px 14px !important; margin-bottom: 10px !important; }
+  .sj-rem-num { font-size: 30px !important; }
+  .sj-rem-macro, .sj-rem-grams { display: none; }
+  .sj-rem-bar { margin-top: 8px !important; height: 6px !important; }
+  .sj-meals-label { margin-top: 8px !important; }
+  .sj-rem-cta { height: 34px !important; margin-top: 10px !important; }
+}

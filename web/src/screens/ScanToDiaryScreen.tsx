@@ -132,7 +132,7 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         )}
 
         <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>Приём (необязательно)</div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {MEAL_TYPES.map((t) => {
             const active = mealType === t;
             return (

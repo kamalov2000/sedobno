@@ -155,6 +155,13 @@ const mealHistoryLoad = async (): Promise<MealHistoryPage> => ({
   ],
 });
 const mealHistoryEmpty = async (): Promise<MealHistoryPage> => ({ items: [] });
+// Прошлые приёмы для «Повторить» — из той же мок-истории, что и экран истории.
+const PREVIEW_RECENT: MealDiaryItem[] = [
+  { ...savedMeal, id: 43, source: "manual", meal_type: "dinner",
+    dishes: [{ name: "Творог 5%", grams: 200, kcal: 242, protein_g: 34, fat_g: 10, carb_g: 3, confidence: 1 }],
+    total: { kcal: 242, protein_g: 34, fat_g: 10, carb_g: 3 } },
+  savedMeal,
+];
 
 const mockEggMeal: MealResult = {
   status: "ok", id: 2, meals_left: 6, confidence: 0.8, note: "",
@@ -188,8 +195,9 @@ const mockTextMeal: MealResult = {
 
 const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "01 · ГЛАВНЫЙ · состав · свободно", node: <HomeScreen me={meFree} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · калории (режим)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} onManageSub={noop} /> },
-  { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddManual={noop} onManageSub={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · новый пользователь", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} today={{ kcal: 0, count: 0 }} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · возвращается (итог дня, повтор)", node: <HomeScreen me={meFree} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} todayHasMeals today={{ kcal: 780, count: 2 }} recent={PREVIEW_RECENT} onRepeat={noop} /> },
+  { title: "01 · ГЛАВНЫЙ · калории · 0 из 10", node: <HomeScreen me={{ ...meFree, meals_left: 0 }} mode="meal" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onAddText={noop} onAddManual={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · 0 из 10", node: <HomeScreen me={{ ...meFree, scans_left: 0 }} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
   { title: "01 · ГЛАВНЫЙ · подписка активна", node: <HomeScreen me={meSub} mode="scan" onModeChange={noop} onScan={noop} onSubscribe={noop} onHistory={noop} onDiary={noop} onManageSub={noop} /> },
   { title: "02 · ЛОАДЕР", node: <ScanLoader /> },
@@ -229,10 +237,22 @@ const SCREENS: { title: string; node: ReactNode }[] = [
   { title: "07 · КАЛОРИИ · история приёмов", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} onAddManual={noop} load={mealHistoryLoad} /> },
   { title: "07 · КАЛОРИИ · история пустая", node: <MealHistoryScreen onBack={noop} onOpen={noop} onScan={noop} onAddManual={noop} load={mealHistoryEmpty} /> },
   { title: "07 · КАЛОРИИ · приём из истории", node: <MealResultScreen result={{ status: "ok", id: savedMeal.id, dishes: savedMeal.dishes, total: savedMeal.total, confidence: savedMeal.confidence, meals_left: -1 }} saved={savedMeal} isSubscribed onDone={noop} onRetake={noop} /> },
-  { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
-  { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
+  { title: "08 · ДНЕВНИК · день (без нормы)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} onAddManual={noop} onAddDigits={noop} onAddPhoto={noop} recent={PREVIEW_RECENT} onRepeat={noop} loadDay={diaryDay} loadWeek={diaryWeek} /> },
+  { title: "08 · ДНЕВНИК · день (с нормой)", node: <DiaryScreen onBack={noop} onOpenWizard={noop} onAddManual={noop} onAddDigits={noop} onAddPhoto={noop} recent={PREVIEW_RECENT} onRepeat={noop} profile={filledProfile} loadDay={diaryDay} loadWeek={diaryWeek} /> },
   { title: "09 · ВИЗАРД · профиль питания", node: <ProfileWizard onDone={noop} onCancel={noop} /> },
 ];
+
+// Проверка вёрстки (задание 08.10.2026): ?preview&w=320&h=568&zoom=1.3&only=ГЛАВНЫЙ
+//   w, h  — размер экрана в CSS-пикселях (по умолчанию 380×760);
+//   zoom  — крупный шрифт системы, эмулируется масштабом страницы: содержимое увеличено,
+//           ширина для вёрстки уменьшена во столько же раз (как у вебвью с крупным текстом);
+//   only  — показать только экраны, в названии которых есть подстрока.
+// Открытая клавиатура — это просто малая высота: h=330 на телефоне 320×568.
+const PARAMS = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+const FRAME_W = Number(PARAMS.get("w")) || 380;
+const FRAME_H = Number(PARAMS.get("h")) || 760;
+const ZOOM = Number(PARAMS.get("zoom")) || 1;
+const ONLY = PARAMS.get("only") ?? "";
 
 function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNode }) {
   return (
@@ -243,8 +263,8 @@ function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNo
       <div
         data-theme={theme === "dark" ? "dark" : undefined}
         style={{
-          width: 380,
-          height: 760,
+          width: FRAME_W,
+          height: FRAME_H,
           display: "flex",
           flexDirection: "column",
           background: "var(--bg)",
@@ -255,7 +275,9 @@ function Frame({ theme, children }: { theme: "light" | "dark"; children: ReactNo
           flex: "none",
         }}
       >
-        {children}
+        {ZOOM === 1 ? children : (
+          <div style={{ zoom: ZOOM, width: FRAME_W / ZOOM, height: FRAME_H / ZOOM, display: "flex", flexDirection: "column", minHeight: 0 }}>{children}</div>
+        )}
       </div>
     </div>
   );
@@ -272,7 +294,7 @@ export default function Preview() {
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 40, maxWidth: 820, margin: "0 auto" }}>
-        {SCREENS.map((s) => (
+        {SCREENS.filter((s) => !ONLY || s.title.includes(ONLY)).map((s) => (
           <section key={s.title}>
             <div style={{ fontFamily: "'PT Mono', monospace", fontSize: 12, letterSpacing: "0.06em", color: "#55544f", marginBottom: 14 }}>{s.title}</div>
             <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>

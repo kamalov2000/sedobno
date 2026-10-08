@@ -11,7 +11,7 @@ afterEach(cleanup);
 
 const noop = () => {};
 
-function renderHome(mode: "scan" | "meal", opts: { mealsLeft?: number; onAddManual?: () => void } = {}) {
+function renderHome(mode: "scan" | "meal", opts: { mealsLeft?: number; onAddManual?: () => void; onAddText?: () => void } = {}) {
   const me = makeMe("quota");
   return render(
     <HomeScreen
@@ -24,35 +24,41 @@ function renderHome(mode: "scan" | "meal", opts: { mealsLeft?: number; onAddManu
       onHistory={noop}
       onDiary={noop}
       onAddManual={opts.onAddManual ?? noop}
+      onAddText={opts.onAddText ?? noop}
     />,
   );
 }
 
-describe("HomeScreen — вход в ручной приём", () => {
-  it("в режиме «Калории» есть — добавить еду можно, не заходя в дневник", () => {
+// Задание владельца 08.10.2026: рядом с камерой — «Написать» и «Вручную» (и «Повторить»,
+// когда есть что повторять), а не одна мелкая строка внизу.
+describe("HomeScreen — способы добавить приём", () => {
+  it("в режиме «Калории» есть «Написать» и «Вручную» — добавить еду можно без фото и без дневника", () => {
     renderHome("meal");
-    expect(screen.getByText("Написать, что съели")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Добавить приём" })).toBeTruthy();
+    expect(screen.getByText("Написать")).toBeTruthy();
+    expect(screen.getByText("Вручную")).toBeTruthy();
   });
 
-  it("в режиме «Состав» его нет: состав придумать нельзя, его читают с упаковки", () => {
+  it("в режиме «Состав» их нет: состав придумать нельзя, его читают с упаковки", () => {
     renderHome("scan");
-    expect(screen.queryByText("Написать, что съели")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Добавить приём" })).toBeNull();
   });
 
-  it("тап зовёт обработчик", () => {
+  it("«Написать» ведёт в ввод словами, «Вручную» — в ручной ввод цифрами", () => {
+    const onAddText = vi.fn();
     const onAddManual = vi.fn();
-    renderHome("meal", { onAddManual });
-    fireEvent.click(screen.getByText("Написать, что съели"));
+    renderHome("meal", { onAddText, onAddManual });
+    fireEvent.click(screen.getByText("Написать"));
+    fireEvent.click(screen.getByText("Вручную"));
+    expect(onAddText).toHaveBeenCalledTimes(1);
     expect(onAddManual).toHaveBeenCalledTimes(1);
   });
 
-  it("при исчерпанной квоте остаётся и объясняет, что списания не будет", () => {
+  it("при исчерпанной квоте входы остаются и сказано, какие из них без списания", () => {
     renderHome("meal", { mealsLeft: 0 });
-    // Пейволл показан…
     expect(screen.getByText("Оформить подписку")).toBeTruthy();
-    // …но дневник не закрыт: руками вписать по-прежнему можно, и это сказано вслух.
-    expect(screen.getByText("Написать, что съели")).toBeTruthy();
-    expect(screen.getByText("Без подписки и без списания разборов")).toBeTruthy();
+    expect(screen.getByText("Вручную")).toBeTruthy();
+    expect(screen.getByText(/«Вручную» и «Повторить» — без подписки и без списания разборов/)).toBeTruthy();
   });
 
   it("подпись истории следует за режимом", () => {
@@ -381,7 +387,9 @@ describe("HomeScreen — инструкция съёмки своя у кажд�
   it("в режиме еды говорит про тарелку и молчит про этикетку", () => {
     renderMode("meal");
     const body = document.body.textContent ?? "";
-    expect(body).toContain("СФОТОГРАФИРУЙТЕ ВСЮ ТАРЕЛКУ");
+    // Декоративная рамка с подсказкой в «Калориях» убрана (задание 08.10.2026), про
+    // тарелку говорит подзаголовок.
+    expect(body).toContain("Сфотографируйте тарелку");
     expect(body).not.toContain("ингредиент");
     expect(body).not.toContain("этикет");
   });

@@ -79,7 +79,7 @@ describe("HomeScreen — блок «Повторить»", () => {
     const me = makeMe("quota");
     render(
       <HomeScreen me={{ ...me, is_subscribed: false, meals_left: 0 }} mode={mode} onModeChange={noop} onScan={noop} onSubscribe={noop}
-        onManageSub={noop} onHistory={noop} onDiary={noop} onAddManual={noop} recent={recent} onRepeat={onRepeat} />,
+        onManageSub={noop} onHistory={noop} onDiary={noop} onAddManual={noop} onAddText={noop} recent={recent} onRepeat={onRepeat} />,
     );
     return onRepeat;
   }
@@ -87,16 +87,18 @@ describe("HomeScreen — блок «Повторить»", () => {
   it("в «Калориях» показывает прошлые приёмы, тап отдаёт выбранный — даже при исчерпанной квоте", () => {
     const recent = repeatCandidates(makeMealHistory().items);
     const onRepeat = renderHome("meal", recent);
+    // «Повторить» — одна из кнопок способов добавления; список раскрывается по тапу.
+    fireEvent.click(screen.getByText("Повторить"));
     fireEvent.click(screen.getByLabelText("Повторить: Гречка с котлетой, Салат, 540 ккал"));
     expect(onRepeat).toHaveBeenCalledWith(expect.objectContaining({ id: 11 }));
   });
 
-  it("у нового человека (нечего повторять) и в «Составе» блока нет", () => {
+  it("у нового человека (нечего повторять) и в «Составе» кнопки нет", () => {
     renderHome("meal", []);
-    expect(screen.queryByText("ПОВТОРИТЬ")).toBeNull();
+    expect(screen.queryByText("Повторить")).toBeNull();
     cleanup();
     renderHome("scan", repeatCandidates(makeMealHistory().items));
-    expect(screen.queryByText("ПОВТОРИТЬ")).toBeNull();
+    expect(screen.queryByText("Повторить")).toBeNull();
   });
 });
 
