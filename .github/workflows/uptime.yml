@@ -1,0 +1,39 @@
+# Внешний мониторинг прода «Съедобно» и Астры — вне общего VPS (решение владельца
+# 09.10.2026, после падения dockerd: docs/incidents/2026-10-09-dockerd-crash.md).
+# Сообщает только о подтверждённом падении (3 попытки подряд) и о восстановлении;
+# состояние — открытый issue с меткой `uptime`. Логика — ops/uptime/uptime.py.
+#
+# Telegram (необязательно): секреты репозитория UPTIME_TG_TOKEN (токен бота) и
+# UPTIME_TG_CHAT (id чата). Без них — только issue (уведомление GitHub).
+#
+# Частота. Расписание GitHub срабатывает не точнее ~5 минут, бывает с задержкой. В
+# ПРИВАТНОМ репозитории каждый запуск тратит минимум минуту из 2000 бесплатных в месяц:
+# раз в 30 минут — ~1450 минут. В ПУБЛИЧНОМ — минуты бесплатны, можно */5.
+name: uptime
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: ops/uptime
+      - name: Проверка
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPTIME_TG_TOKEN: ${{ secrets.UPTIME_TG_TOKEN }}
+          UPTIME_TG_CHAT: ${{ secrets.UPTIME_TG_CHAT }}
+        run: python3 ops/uptime/uptime.py
