@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { ScanResult, MealType } from "../types";
+import type { ScanResult, MealType, ScanNutrition } from "../types";
 import { createManualMeal, createMealTemplate, ApiError } from "../api";
 import { haptic, notify } from "../telegram";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
@@ -55,37 +55,50 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const saveKey = useRef<string | null>(null);
   const saving = useRef(false);
 
+  // Учёт ПОРЦИЯМИ (решение владельца 13.10.2026): значения на порцию есть, веса нет —
+  // человек записывает 1, ½, 2 порции по этим значениям, граммы остаются неизвестными. Вес
+  // нужен только чтобы перевести в граммы и «на 100 г»; для учёта порции он не нужен.
+  const countMode = perPortion && !nutrition;
+  const [countChoice, setCountChoice] = useState<"1" | "0.5" | "2" | "custom">("1");
+  const [countRaw, setCountRaw] = useState("1");
+  const [showWeight, setShowWeight] = useState(false);
+  const count = countChoice === "custom" ? labelCount(countRaw) : Number(countChoice);
+
   const grams = labelPortionGrams(netAmount, portion, customRaw, servingAmount);
-  const gramsValid = labelPortionValid(grams);
+  const gramsValid = countMode ? count != null : labelPortionValid(grams);
   const nameValid = name.trim().length > 0;
-  const portionMacros = labelPortionMacros(nutrition, grams);
-  const kcalPreview = portionMacros ? Math.round(portionMacros.kcal) : null;
-  const blocked = !nameValid || !gramsValid || busy || !nutrition;
+  const portionMacros = countMode ? null : labelPortionMacros(nutrition, grams);
+  const kcalPreview = countMode
+    ? count != null && label?.kcal != null ? Math.round(label.kcal * count) : null
+    : portionMacros ? Math.round(portionMacros.kcal) : null;
+  const blocked = !nameValid || !gramsValid || busy || (!countMode && !nutrition) || (countMode && label?.kcal == null);
 
   const save = async () => {
     // saving — защита от двойного нажатия до перерисовки (busy ещё не успел выставиться).
-    if (blocked || !nutrition?.kcal || saving.current) return;
+    if (blocked || saving.current) return;
+    if (!countMode && !nutrition?.kcal) return;
     haptic("light");
     saving.current = true;
     if (!saveKey.current) saveKey.current = newSaveKey();
     setBusy(true);
     setSaveError(false);
     try {
+      const dish = countMode && label && count != null
+        ? portionDish(name.trim(), label, count)
+        : {
+            name: name.trim(),
+            grams,
+            kcal_per_100: nutrition!.kcal!,
+            ...(nutrition!.protein_g != null ? { protein_per_100: nutrition!.protein_g } : {}),
+            ...(nutrition!.fat_g != null ? { fat_per_100: nutrition!.fat_g } : {}),
+            ...(nutrition!.carb_g != null ? { carb_per_100: nutrition!.carb_g } : {}),
+            // Этикетка «на 100 мл» — количество в миллилитрах, не в граммах.
+            ...(unit === "мл" ? { unit: "ml" as const } : {}),
+          };
       const body = {
         client_key: saveKey.current,
         source: "scan" as const,
-        dishes: [
-          {
-            name: name.trim(),
-            grams,
-            kcal_per_100: nutrition.kcal,
-            ...(nutrition.protein_g != null ? { protein_per_100: nutrition.protein_g } : {}),
-            ...(nutrition.fat_g != null ? { fat_per_100: nutrition.fat_g } : {}),
-            ...(nutrition.carb_g != null ? { carb_per_100: nutrition.carb_g } : {}),
-            // Этикетка «на 100 мл» — количество в миллилитрах, не в граммах.
-            ...(unit === "мл" ? { unit: "ml" as const } : {}),
-          },
-        ],
+        dishes: [dish],
         ...(mealType ? { meal_type: mealType } : {}),
       };
       // Отметка «Мои блюда» едет в том же отложенном запросе: потерялся ответ и приложение
@@ -149,7 +162,16 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
           )}
         </div>
 
-        {perPortion && (
+        {perPortion && !showWeight && !servingRaw && (
+          <button
+            type="button"
+            onClick={() => setShowWeight(true)}
+            style={{ display: "block", marginTop: -8, marginBottom: 16, padding: "4px 0", background: "none", border: "none", color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13, cursor: "pointer", textAlign: "left" }}
+          >
+            Знаю вес порции — посчитать в граммах
+          </button>
+        )}
+        {perPortion && (showWeight || servingRaw) && (
           <div style={{ marginTop: -6, marginBottom: 18 }}>
             <label style={{ display: "block", fontSize: 12.5, color: "var(--text2)", marginBottom: 6 }}>
               Вес одной порции — на упаковке он не прочитался
@@ -176,11 +198,9 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
                 </button>
               ))}
             </div>
-            {!nutrition && (
-              <div role="status" style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6, lineHeight: 1.4 }}>
-                Без веса порции нельзя посчитать вашу порцию: значения на упаковке даны на порцию, а не на 100 г.
-              </div>
-            )}
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 6, lineHeight: 1.4 }}>
+              Необязательно: без веса запишем порциями, граммы останутся неизвестными.
+            </div>
           </div>
         )}
 
@@ -199,7 +219,35 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
           </div>
         )}
 
-        <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>Порция</div>
+        <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>{countMode ? "Сколько съели" : "Порция"}</div>
+        {countMode ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(["1", "0.5", "2"] as const).map((c) => (
+              <PortionOption key={c} active={countChoice === c} label={c === "1" ? "1 порция" : c === "0.5" ? "½ порции" : "2 порции"} hint={label?.kcal != null ? `${Math.round(label.kcal * Number(c))} ккал` : undefined} onClick={() => setCountChoice(c)} />
+            ))}
+            <PortionOption active={countChoice === "custom"} label="Своё количество порций" onClick={() => setCountChoice("custom")}>
+              {countChoice === "custom" && (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 8 }}>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={countRaw}
+                    onChange={(e) => setCountRaw(e.target.value.replace(/[^0-9.,]/g, "").slice(0, 5))}
+                    aria-label="Количество порций"
+                    style={{ width: 80, height: 40, border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", textAlign: "center", outline: "none" }}
+                  />
+                  <span style={{ fontSize: 13, color: "var(--text3)" }}>порц.</span>
+                </div>
+              )}
+            </PortionOption>
+            {countChoice === "custom" && count == null && (
+              <div style={{ fontSize: 11.5, color: "var(--text3)" }}>Количество — больше нуля и до {MAX_LABEL_PORTIONS} порций</div>
+            )}
+            <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.4 }}>
+              Граммы останутся неизвестными — в дневнике будет «{countChoice === "custom" ? countRaw || "…" : countChoice.replace(".", ",")} порц.».
+            </div>
+          </div>
+        ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {servingAmount != null && (
             <PortionOption
@@ -240,7 +288,8 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
             )}
           </PortionOption>
         </div>
-        {portion === "custom" && !gramsValid && (
+        )}
+        {!countMode && portion === "custom" && !gramsValid && (
           <div style={{ fontSize: 11.5, color: "var(--text3)", marginTop: 6 }}>
             Порция — от {LABEL_MIN_GRAMS} до {LABEL_MAX_GRAMS} {unit}
           </div>
@@ -294,7 +343,7 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         {kcalPreview != null && (
           <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 20, padding: "12px 14px", background: "var(--cal-soft)", border: "1px solid var(--cal-border)", borderRadius: 12 }}>
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 20, fontWeight: 600, color: "var(--cal-num)" }}>{kcalPreview}</span>
-            <span style={{ fontSize: 13, color: "var(--text2)" }}>ккал за порцию</span>
+            <span style={{ fontSize: 13, color: "var(--text2)" }}>{countMode && count !== 1 ? "ккал всего" : "ккал за порцию"}</span>
           </div>
         )}
         <div style={{ height: 16 }} />
@@ -340,6 +389,34 @@ async function keepTemplate(mealId: number, name: string): Promise<{ note: strin
     // Не дошло до сервера или не пришёл ответ: досылаем при следующем запуске.
     return { note: "Приём сохранён. В «Мои блюда» добавим при следующем открытии приложения", done: false };
   }
+}
+
+const MAX_LABEL_PORTIONS = 50; // как на сервере (maxPortions)
+
+/** Количество порций из поля: больше нуля и не больше 50; иначе null. */
+function labelCount(raw: string): number | null {
+  const v = parseFloat((raw ?? "").replace(",", "."));
+  return Number.isFinite(v) && v > 0 && v <= MAX_LABEL_PORTIONS ? Math.round(v * 100) / 100 : null;
+}
+
+/** Строка приёма «в порциях»: количество — число порций, КБЖУ — значения на порцию × число.
+ *  Не прочитанные на этикетке Б/Ж/У — неизвестные (macros_unknown), а не ноль; калории —
+ *  как напечатаны (kcal_by_user: сервер не пересчитывает их по неполным БЖУ). */
+function portionDish(name: string, n: ScanNutrition, count: number) {
+  const r = (v: number) => Math.round(v * 10) / 10;
+  const unknown = (["protein", "fat", "carb"] as const).filter((k) => n[`${k}_g` as "protein_g" | "fat_g" | "carb_g"] == null);
+  return {
+    name,
+    grams: count,
+    unit: "portion" as const,
+    kcal: r((n.kcal ?? 0) * count),
+    protein_g: r((n.protein_g ?? 0) * count),
+    fat_g: r((n.fat_g ?? 0) * count),
+    carb_g: r((n.carb_g ?? 0) * count),
+    confidence: 1,
+    kcal_by_user: true,
+    ...(unknown.length ? { macros_unknown: [...unknown] } : {}),
+  };
 }
 
 function fmtAmount(v: number): string {

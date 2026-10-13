@@ -59,7 +59,9 @@ describe("App — главная «Калорий»", () => {
     profile = base;
     stubTelegram();
     render(<App />);
-    expect(await screen.findByText("СЕГОДНЯ")).toBeTruthy();
+    // Главная поднимается после авторизации и трёх запросов; при параллельном прогоне всех
+    // тестов на нагруженной машине это дольше стандартной секунды ожидания.
+    expect(await screen.findByText("СЕГОДНЯ", {}, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText("780")).toBeTruthy();
     await waitFor(() => expect(getMeals).toHaveBeenCalledWith(today()));
     // Остаток бесплатных разборов — отдельная строка, не путается с калориями дня.

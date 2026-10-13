@@ -430,7 +430,7 @@ export interface DishPatch {
   /** Неизвестные Б/Ж/У сохранённого блюда — возвращаем при правке, иначе «не знаю» станет нулём. */
   macros_unknown?: MacroKey[];
   /** Количество в миллилитрах — возвращаем при правке, иначе мл стали бы граммами. */
-  unit?: "ml";
+  unit?: "ml" | "portion";
   /** Примитивы блюда (штучные + ложечные добавки) — КБЖУ считает сервер по константам
    *  поверх базы. Флаг assumed переживает правку (модель предположила добавку). */
   pieces?: { kind: string; count: number; assumed?: boolean }[];
@@ -508,7 +508,7 @@ export interface MealTemplate {
   total: MealMacros;
   grams: number;
   /** В чём порция: мл, граммы или компоненты в разных единицах (тогда без подписи). */
-  unit?: "g" | "ml" | "mixed";
+  unit?: "g" | "ml" | "portion" | "mixed";
   last_used_at?: string;
 }
 

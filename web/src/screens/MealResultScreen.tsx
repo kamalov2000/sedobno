@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle, amountUnit } from "../meal";
+import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle, amountUnit, amountStep } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import SaveAsMyDish from "../components/SaveAsMyDish";
@@ -488,7 +488,7 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
             ...(d.proteinPer100 != null ? { protein_per_100: d.proteinPer100 } : {}),
             ...(d.fatPer100 != null ? { fat_per_100: d.fatPer100 } : {}),
             ...(d.carbPer100 != null ? { carb_per_100: d.carbPer100 } : {}),
-            ...(d.unit === "ml" ? { unit: "ml" as const } : {}),
+            ...(d.unit ? { unit: d.unit } : {}),
             ...pieces,
           }
         : {
@@ -504,7 +504,7 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
             // ручного блюда отдала бы его число на «сверку» с неполными БЖУ.
             ...(d.kcal_by_user ? { kcal_by_user: true } : {}),
             ...(d.macros_unknown?.length ? { macros_unknown: d.macros_unknown } : {}),
-            ...(d.unit === "ml" ? { unit: "ml" as const } : {}),
+            ...(d.unit ? { unit: d.unit } : {}),
             ...pieces,
           };
     });
@@ -1138,6 +1138,8 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, on
   // двигается 1:1 с базой.
   const piecesG = pieceGrams(dish.pieces);
   const fullGrams = effectiveDishGrams(dish);
+  const u = amountUnit(dish);
+  const stepBy = amountStep(u);
   const p100 = per100(effectiveDishKcal(dish), fullGrams);
 
   return (
@@ -1191,21 +1193,22 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, on
       )}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "6px 10px", marginTop: 10 }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden", height: 44 }}>
-          <button type="button" onPointerDown={() => start(-GRAM_STEP)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label="Меньше грамм" style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
+          <button type="button" onPointerDown={() => start(-stepBy)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label={u === "порц." ? "Меньше на ½ порции" : "Меньше грамм"} style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
             <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
           <div style={{ display: "flex", alignItems: "baseline", gap: 2, padding: "0 6px", minWidth: 58, justifyContent: "center" }}>
             <input
               className="cal-g"
               type="number"
-              value={Math.round(fullGrams)}
-              onChange={(e) => onSet(parseInt(e.target.value, 10) - piecesG)}
-              aria-label="Граммовка"
+              value={u === "порц." ? Math.round(fullGrams * 100) / 100 : Math.round(fullGrams)}
+              step={u === "порц." ? 0.5 : 1}
+              onChange={(e) => onSet((u === "порц." ? parseFloat(e.target.value) : parseInt(e.target.value, 10)) - piecesG)}
+              aria-label={u === "порц." ? "Количество порций" : "Граммовка"}
               style={{ width: 42, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
             />
             <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)" }}>{amountUnit(dish)}</span>
           </div>
-          <button type="button" onPointerDown={() => start(GRAM_STEP)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label="Больше грамм" style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
+          <button type="button" onPointerDown={() => start(stepBy)} onPointerUp={stop} onPointerLeave={stop} onPointerCancel={stop} aria-label={u === "порц." ? "Больше на ½ порции" : "Больше грамм"} style={{ width: 46, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", touchAction: "none" }}>
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
         </div>
@@ -1216,7 +1219,9 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, on
               Заменить
             </button>
           )}
-          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 {amountUnit(dish)}</span>
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>
+            {u === "порц." ? `${fullGrams > 0 ? Math.round(effectiveDishKcal(dish) / fullGrams) : "—"} ккал/порц.` : `${p100} ккал/100 ${u}`}
+          </span>
         </span>
       </div>
       {/* Сервер не смог достоверно оценить калорийность (вес есть, ккал вышли нулевые) —

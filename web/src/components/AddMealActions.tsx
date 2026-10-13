@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { FoodRefItem, MealDiaryItem, MealItem } from "../types";
 import type { MealTemplate } from "../api";
 import { addMealTemplate as addMealTemplateApi, deleteMeal as deleteMealApi, createManualMeal as createManualMealApi, getFoodReference, appEvent } from "../api";
-import { guessMealType, macroSummary, macroWords, macroGapNote } from "../meal";
+import { guessMealType, macroSummary, macroWords, macroGapNote, amountStep, amountText, amountChanged } from "../meal";
 import { searchFoods, templateHit, recentHit, knownMacros, referenceDish, sameDishes, SOURCE_LABEL, type SearchHit } from "../foodSearch";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import { haptic, notify } from "../telegram";
@@ -128,7 +128,7 @@ export default function AddMealActions({
       if (hit.template) {
         const t = hit.template;
         // Порция не менялась — не шлём граммы: в дневник уйдут ровно числа шаблона.
-        const custom = Math.abs(grams - t.grams) >= 0.5 ? { grams } : {};
+        const custom = amountChanged(hit.unit, grams, t.grams) ? { grams } : {};
         // Повтор после сбоя — с ТЕМ ЖЕ ключом, даже если порцию поправили: сервер обновит уже
         // записанное, а не создаст второе.
         writePending({ key, body: { dishes: [], meal_type: mealType }, at: Date.now(), template: t.id, ...custom });
@@ -187,7 +187,7 @@ export default function AddMealActions({
     }
     const was = picked === hit.key;
     setPicked(was ? null : hit.key);
-    setGramsRaw(String(Math.round(hit.amount)));
+    setGramsRaw(amountText(hit.amount, hit.unit));
   };
 
   const row = (hit: SearchHit, showSource: boolean) => (
@@ -346,7 +346,7 @@ export default function AddMealActions({
 // Всё, что человек должен видеть до добавления, видно без раскрытия.
 function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit; showSource: boolean; open: boolean; onToggle: () => void; children: ReactNode }) {
   const kcal = Math.round(hit.kcal);
-  const amount = Math.round(hit.amount);
+  const amount = amountText(hit.amount, hit.unit);
   const portion = hit.unit ? `${amount} ${hit.unit}` : "";
   const macros = knownMacros(hit.macros);
   // Перенос — только между частями: «Ж 9» и «300 г» не разрываются (крупный шрифт, 320 px).
@@ -399,7 +399,6 @@ function ManualLink({ name, onManual, quiet = false }: { name: string; onManual:
   );
 }
 
-const GRAM_STEP = 10;
 /** Запрос «устоялся» — столько без набора; тогда и считаем, нашлось ли. */
 const SETTLE_MS = 1000;
 const MAX_PORTION = 5000;
@@ -416,26 +415,28 @@ export function parsePortion(raw: string): number | null {
 function PortionPreview({ hit, gramsRaw, onGrams }: { hit: SearchHit; gramsRaw: string; onGrams: (v: string) => void }) {
   const g = parsePortion(gramsRaw);
   const factor = g != null && hit.amount > 0 ? g / hit.amount : 1;
-  const changed = g != null && Math.abs(g - hit.amount) >= 0.5;
+  const changed = g != null && amountChanged(hit.unit, g, hit.amount);
   const kcal = Math.round(hit.kcal * factor);
   const dishes: MealItem[] = hit.template ? hit.template.dishes : hit.reference ? [referenceDish(hit.reference, hit.amount)] : [];
   const m = macroSummary(dishes, factor);
   const allUnknown = m.protein.state === "unknown" && m.fat.state === "unknown" && m.carb.state === "unknown";
   const complete = [m.protein, m.fat, m.carb].every((x) => x.state === "known");
   const note = macroGapNote({ protein: m.protein.state, fat: m.fat.state, carb: m.carb.state }, "компонентах");
+  const u = hit.unit;
+  // Порции — шаг ½ и дробное количество; граммы и мл — по 10, целые.
+  const stepBy = amountStep(u);
   const step = (d: number) => {
     const cur = parsePortion(gramsRaw) ?? 0;
-    onGrams(String(Math.max(0, Math.round(cur + d))));
+    onGrams(amountText(Math.max(0, cur + d), u));
   };
-  const u = hit.unit;
-  const uWord = u === "мл" ? "миллилитров" : "грамм";
+  const uWord = u === "мл" ? "миллилитров" : u === "порц." ? "порции" : "грамм";
   const btn = { width: 40, height: "100%", background: "var(--bg-soft)", border: "none", color: "var(--text)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } as const;
   const multi = dishes.length > 1;
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 10px" }}>
         <div style={{ flex: "none", display: "flex", alignItems: "center", border: "1px solid", borderColor: g == null ? "var(--danger, #d64545)" : "var(--border)", borderRadius: 10, overflow: "hidden", height: 40 }}>
-          <button type="button" aria-label={`Меньше на 10 ${uWord}`} onClick={() => step(-GRAM_STEP)} style={btn}>
+          <button type="button" aria-label={`Меньше на ${amountText(stepBy, u)} ${uWord}`} onClick={() => step(-stepBy)} style={btn}>
             <i className="ti ti-minus" aria-hidden="true" style={{ fontSize: 15 }} />
           </button>
           <input
@@ -448,7 +449,7 @@ function PortionPreview({ hit, gramsRaw, onGrams }: { hit: SearchHit; gramsRaw: 
             style={{ width: 56, border: "none", background: "none", textAlign: "center", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", fontVariantNumeric: "tabular-nums", padding: 0, outline: "none" }}
           />
           <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 11, color: "var(--text3)", paddingRight: 6 }}>{u}</span>
-          <button type="button" aria-label={`Больше на 10 ${uWord}`} onClick={() => step(GRAM_STEP)} style={btn}>
+          <button type="button" aria-label={`Больше на ${amountText(stepBy, u)} ${uWord}`} onClick={() => step(stepBy)} style={btn}>
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 15 }} />
           </button>
         </div>

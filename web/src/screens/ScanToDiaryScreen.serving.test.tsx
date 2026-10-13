@@ -27,28 +27,57 @@ const noop = () => {};
 const base = { status: "ok" as const, score: 100, flags: [], ingredients: [], scans_left: 29, scan_number: 1, product_name: "Протеин ваниль" };
 const saveBtn = () => screen.getByText("Добавить в дневник").closest("button") as HTMLButtonElement;
 
-describe("Этикетка только на порцию, вес порции не напечатан", () => {
-  // На порцию: 120 ккал, Б 24, Ж 1,5, У 2,1; веса порции нет.
-  const protein: ScanResult = { ...base, nutrition: { basis: "portion", kcal: 120, protein_g: 24, fat_g: 1.5, carb_g: 2.1, net_amount: 900, net_unit: "g" } };
+describe("Этикетка только на порцию, вес порции не напечатан — учёт порциями", () => {
+  // На порцию: 210 ккал, Б 4, Ж 9; углеводы не прочитались; веса порции нет.
+  const bar: ScanResult = { ...base, product_name: "Батончик", nutrition: { basis: "portion", kcal: 210, protein_g: 4, fat_g: 9, net_amount: 120, net_unit: "g" } };
+  const ok = () => createManualMeal.mockResolvedValue({ status: "ok", id: 9, dishes: [], meals_left: 30 });
 
-  it("значения показаны как «на порцию», не как на 100 г; без веса порции записать нельзя — и это объяснено", () => {
-    render(<ScanToDiaryScreen result={protein} onBack={noop} onSaved={noop} />);
-    expect(screen.getByText(/По этикетке на порцию: 120 ккал · Б 24/)).toBeTruthy();
-    expect(screen.queryByText(/на 100 г: 120/)).toBeNull();
-    expect(screen.getByText(/Без веса порции нельзя посчитать/)).toBeTruthy();
-    expect(saveBtn().disabled).toBe(true);
-    // «Вся упаковка» не предлагается: пересчитывать не из чего.
+  it("значения — «на порцию», не на 100 г; по умолчанию «1 порция», граммы неизвестны, и это сказано", () => {
+    render(<ScanToDiaryScreen result={bar} onBack={noop} onSaved={noop} />);
+    expect(screen.getByText(/По этикетке на порцию: 210 ккал · Б 4 · Ж 9 · У —/)).toBeTruthy();
+    expect(screen.queryByText(/на 100 г: 210/)).toBeNull();
+    expect(screen.getByText("1 порция").closest("button")!.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(/Граммы останутся неизвестными — в дневнике будет «1 порц.»/)).toBeTruthy();
+    // «Вся упаковка» не предлагается: нетто в граммах, а значения на порцию.
     expect(screen.queryByText("Вся упаковка")).toBeNull();
+    expect(saveBtn().disabled).toBe(false);
   });
 
-  it("вписал вес порции 30 г — пересчёт на 100 г виден, «Одна порция» выбрана, в дневник уходят значения на 100 г", async () => {
-    createManualMeal.mockResolvedValue({ status: "ok", id: 9, dishes: [], meals_left: 30 });
+  for (const [label, n, kcal] of [["1 порция", 1, 210], ["½ порции", 0.5, 105], ["2 порции", 2, 420]] as const) {
+    it(`${label}: в дневник уходит ${n} порц. и ${kcal} ккал; неизвестные углеводы — не ноль`, async () => {
+      ok();
+      render(<ScanToDiaryScreen result={bar} onBack={noop} onSaved={noop} />);
+      fireEvent.click(screen.getByText(label));
+      expect(screen.getByText(String(kcal))).toBeTruthy(); // итог до сохранения
+      fireEvent.click(saveBtn());
+      await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
+      const d = createManualMeal.mock.calls[0][0].dishes[0] as unknown as Record<string, unknown>;
+      expect(d).toMatchObject({ grams: n, unit: "portion", kcal, protein_g: 4 * n, fat_g: 9 * n, kcal_by_user: true, macros_unknown: ["carb"] });
+      expect(d.kcal_per_100).toBeUndefined();
+    });
+  }
+
+  it("своё количество порций: 1,5 → 315 ккал; ноль и мусор не записываются", async () => {
+    ok();
+    render(<ScanToDiaryScreen result={bar} onBack={noop} onSaved={noop} />);
+    fireEvent.click(screen.getByText("Своё количество порций"));
+    const field = screen.getByLabelText("Количество порций");
+    fireEvent.change(field, { target: { value: "0" } });
+    expect(saveBtn().disabled).toBe(true);
+    fireEvent.change(field, { target: { value: "1,5" } });
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
+    expect(createManualMeal.mock.calls[0][0].dishes[0]).toMatchObject({ grams: 1.5, unit: "portion", kcal: 315 });
+  });
+
+  it("знаю вес порции — 30 г: пересчёт на 100 г виден, в дневник уходят значения на 100 г", async () => {
+    ok();
+    const protein: ScanResult = { ...base, nutrition: { basis: "portion", kcal: 120, protein_g: 24, fat_g: 1.5, carb_g: 2.1, net_amount: 900, net_unit: "g" } };
     render(<ScanToDiaryScreen result={protein} onBack={noop} onSaved={noop} />);
+    fireEvent.click(screen.getByText("Знаю вес порции — посчитать в граммах"));
     fireEvent.change(screen.getByLabelText("Вес одной порции"), { target: { value: "30" } });
     expect(screen.getByText(/На 100 г по вашему весу порции: 400 ккал · Б 80 · Ж 5 · У 7/)).toBeTruthy();
     expect(screen.getByText("Одна порция").closest("button")!.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("120")).toBeTruthy(); // ккал за порцию — как на упаковке
-    // Нетто 900 г — теперь «вся упаковка» посчитаема.
     expect(screen.getByText("Вся упаковка")).toBeTruthy();
     fireEvent.click(saveBtn());
     await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
@@ -57,17 +86,18 @@ describe("Этикетка только на порцию, вес порции �
     expect(d.unit).toBeUndefined();
   });
 
-  it("порция в мл — единица мл сохраняется", async () => {
-    createManualMeal.mockResolvedValue({ status: "ok", id: 9, dishes: [], meals_left: 30 });
+  it("порция в мл по весу — единица мл сохраняется", async () => {
+    ok();
     const drink: ScanResult = { ...base, product_name: "Напиток", nutrition: { basis: "portion", kcal: 105, carb_g: 26 } };
     render(<ScanToDiaryScreen result={drink} onBack={noop} onSaved={noop} />);
+    fireEvent.click(screen.getByText("Знаю вес порции — посчитать в граммах"));
     fireEvent.click(screen.getByText("мл"));
     fireEvent.change(screen.getByLabelText("Вес одной порции"), { target: { value: "250" } });
     fireEvent.click(saveBtn());
     await waitFor(() => expect(createManualMeal).toHaveBeenCalledTimes(1));
     const d = createManualMeal.mock.calls[0][0].dishes[0];
     expect(d).toMatchObject({ grams: 250, kcal_per_100: 42, carb_per_100: 10.4, unit: "ml" });
-    expect(d.protein_per_100).toBeUndefined(); // не прочитано — не ноль
+    expect(d.protein_per_100).toBeUndefined();
   });
 });
 

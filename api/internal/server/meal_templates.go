@@ -14,6 +14,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -77,24 +78,44 @@ func templateName(v string) (string, bool) {
 
 // portionUnit — единица порции шаблона по его компонентам (неподтверждённые не в счёт).
 func portionUnit(dishes []llm.MealItem) string {
-	ml, g := 0, 0
+	ml, g, pt := 0, 0, 0
 	for _, d := range dishes {
 		if d.Assumed {
 			continue
 		}
-		if d.Unit == "ml" {
+		switch d.Unit {
+		case "ml":
 			ml++
-		} else {
+		case meal.UnitPortion:
+			pt++
+		default:
 			g++
 		}
 	}
+	kinds := 0
+	for _, n := range []int{ml, g, pt} {
+		if n > 0 {
+			kinds++
+		}
+	}
 	switch {
-	case ml > 0 && g > 0:
+	case kinds > 1:
 		return "mixed"
 	case ml > 0:
 		return "ml"
+	case pt > 0:
+		return meal.UnitPortion
 	}
 	return "g"
+}
+
+// portionChanged — порция отличается от записанной. Граммы и мл сравниваем с точностью до
+// полуграмма; порции — до сотой: «½ порции» от «1 порции» отличается на 0,5, а не на шум.
+func portionChanged(unit string, want, have float64) bool {
+	if unit == meal.UnitPortion {
+		return math.Abs(want-have) >= 0.01
+	}
+	return math.Abs(want-have) >= 0.5
 }
 
 func templateIDFromURL(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -269,14 +290,18 @@ func (s *Server) handleMealTemplateAdd(w http.ResponseWriter, r *http.Request) {
 			localDate = day
 		}
 	}
+	item := toTemplateItem(t)
 	if req.Grams != nil && (math.IsNaN(*req.Grams) || *req.Grams <= 0 || *req.Grams > maxPortionGrams) {
 		writeError(w, http.StatusBadRequest, "bad_grams", "Укажите вес больше нуля — до 5000 г")
 		return
 	}
-	item := toTemplateItem(t)
+	if req.Grams != nil && item.Unit == meal.UnitPortion && *req.Grams > maxPortions {
+		writeError(w, http.StatusBadRequest, "bad_grams", fmt.Sprintf("Количество порций — больше нуля и до %d", maxPortions))
+		return
+	}
 	total := item.Total
 	items := []byte(t.Items)
-	if req.Grams != nil && math.Abs(*req.Grams-item.Grams) >= 0.5 {
+	if req.Grams != nil && portionChanged(item.Unit, *req.Grams, item.Grams) {
 		if item.Grams <= 0 {
 			writeError(w, http.StatusUnprocessableEntity, "no_portion", "У этого блюда не записан вес — порцию не изменить")
 			return

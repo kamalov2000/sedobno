@@ -216,3 +216,43 @@ describe("AddMealActions — мои блюда", () => {
     expect(screen.getByText(/откройте его в дневнике → «Сохранить как моё блюдо»/)).toBeTruthy();
   });
 });
+
+// Продукт с этикетки «на порцию» без веса (13.10.2026): своё блюдо в порциях — повтор на ½,
+// 1½ порции, шаг ½, граммы не появляются, неизвестные БЖУ — не ноль.
+describe("AddMealActions — своё блюдо в порциях", () => {
+  const bar: MealTemplate = {
+    id: 12, name: "Мой батончик", grams: 1, unit: "portion",
+    dishes: [{ name: "Батончик", grams: 1, unit: "portion", kcal: 210, protein_g: 4, fat_g: 9, carb_g: 0, confidence: 1, kcal_by_user: true, macros_unknown: ["carb"] }],
+    total: { kcal: 210, protein_g: 4, fat_g: 9, carb_g: 0 },
+  };
+
+  it("видно «1 порц.»; ±½ порции; ½ порции → 105 ккал, Белок 2 г; в добавление уходит 0,5 порции", async () => {
+    const addTemplate = vi.fn(async (_id: number, _b: AddBody & { grams?: number }) => okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[bar]} addTemplate={addTemplate} />);
+    fireEvent.click(screen.getByLabelText("Найти"));
+    fireEvent.click(screen.getByLabelText("Мой батончик: 1 порц., 210 ккал"));
+    const field = screen.getByLabelText("Порция, порции") as HTMLInputElement;
+    expect(field.value).toBe("1");
+    fireEvent.click(screen.getByLabelText("Меньше на 0,5 порции"));
+    expect(field.value).toBe("0,5");
+    expect(screen.getByText("105 ккал")).toBeTruthy();
+    expect(screen.getByText(/Белок: 2 г · Жиры: 4,5 г|Белок: 2 г · Жиры: 5 г/)).toBeTruthy();
+    expect(screen.getByText(/Углеводы: не указаны/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await waitFor(() => expect(addTemplate).toHaveBeenCalledTimes(1));
+    expect(addTemplate.mock.calls[0][1]).toMatchObject({ grams: 0.5 });
+  });
+
+  it("1½ порции и без изменения: 1 порция уходит без grams — ровно числа сохранённого продукта", async () => {
+    const addTemplate = vi.fn(async (_id: number, _b: AddBody & { grams?: number }) => okResult);
+    render(<AddMealActions onText={noop} onManual={noop} templates={[bar]} addTemplate={addTemplate} />);
+    fireEvent.click(screen.getByLabelText("Найти"));
+    fireEvent.click(screen.getByLabelText("Мой батончик: 1 порц., 210 ккал"));
+    fireEvent.click(screen.getByLabelText("Больше на 0,5 порции"));
+    expect(screen.getByText("315 ккал")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Меньше на 0,5 порции"));
+    fireEvent.click(screen.getByText("Добавить в дневник"));
+    await waitFor(() => expect(addTemplate).toHaveBeenCalledTimes(1));
+    expect(addTemplate.mock.calls[0][1].grams).toBeUndefined();
+  });
+});

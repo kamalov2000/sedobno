@@ -30,6 +30,9 @@ const (
 	minManualGrams   = 1
 	maxManualGrams   = 3000
 	maxMacroPer100   = 100 // грамм макронутриента на 100 г продукта
+	// maxPortions — потолок количества у строки «в порциях» (unit "portion"): 50 порций за
+	// один приём — уже опечатка.
+	maxPortions = 50
 )
 
 // dishInput — элемент массива dishes в PATCH /api/meals/{id}.
@@ -114,6 +117,18 @@ func parseDishes(in []dishInput) ([]llm.MealItem, string) {
 			Unit:          cleanUnit(d.Unit),
 		}
 
+		// Строка «в порциях» (13.10.2026): этикетка даёт КБЖУ на порцию без её веса. Количество
+		// — число порций, значения — абсолютные на это количество; граммов нет вовсе. Значения
+		// «на 100 г» для такой строки бессмысленны — их не принимаем.
+		if item.Unit == meal.UnitPortion {
+			if d.KcalPer100 != nil || d.DishKind == meal.DishKindEggs {
+				return nil, fmt.Sprintf("блюдо %d: в порциях задаются калории порции, а не значения на 100 г", i+1)
+			}
+			if d.Grams <= 0 || d.Grams > maxPortions {
+				return nil, fmt.Sprintf("блюдо %d: количество порций — больше нуля и до %d", i+1, maxPortions)
+			}
+		}
+
 		switch {
 		case d.DishKind == meal.DishKindEggs:
 			// Яичное блюдо: несём только счётчики штук; КБЖУ клиента игнорируем — его
@@ -187,8 +202,11 @@ func manualToPortion(name string, idx int, d dishInput) (llm.MealItem, string) {
 
 // cleanUnit — единица количества блюда: "ml" или пусто (граммы). Прочее не принимаем.
 func cleanUnit(v string) string {
-	if v == "ml" {
+	switch v {
+	case "ml":
 		return "ml"
+	case meal.UnitPortion:
+		return meal.UnitPortion
 	}
 	return ""
 }

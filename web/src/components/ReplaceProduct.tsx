@@ -3,6 +3,7 @@ import type { FoodRefItem, MealDiaryItem } from "../types";
 import type { MealTemplate } from "../api";
 import { replacementHits, hitPer100, SOURCE_LABEL, type SearchHit } from "../foodSearch";
 import { haptic } from "../telegram";
+import { amountText } from "../meal";
 
 // «Заменить продукт» (решение владельца 13.10.2026). Переименование меняет только подпись;
 // замена пересчитывает строку по выбранному продукту при ТОМ ЖЕ количестве. До выбора
@@ -13,7 +14,7 @@ interface Props {
   /** Текущая строка: что заменяем и в каком количестве. */
   name: string;
   amount: number;
-  unit: "г" | "мл";
+  unit: "г" | "мл" | "порц.";
   kcal: number;
   templates?: MealTemplate[];
   recent?: MealDiaryItem[];
@@ -32,7 +33,7 @@ export default function ReplaceProduct({ name, amount, unit, kcal, templates, re
   return (
     <div role="group" aria-label="Заменить продукт" style={{ border: "1px solid var(--cal-border)", background: "var(--cal-soft)", borderRadius: 14, padding: 12 }}>
       <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.4, marginBottom: 8 }}>
-        Заменить «{name}» — количество останется {fmt(amount)} {unit}
+        Заменить «{name}» — количество останется {amountText(amount, unit)} {unit}
       </div>
       <input
         type="text"
@@ -52,7 +53,7 @@ export default function ReplaceProduct({ name, amount, unit, kcal, templates, re
               key={h.key}
               role="listitem"
               type="button"
-              aria-label={`Заменить на ${h.name}: ${fmt(amount)} ${unit}, ${fmt(next)} ккал`}
+              aria-label={`Заменить на ${h.name}: ${amountText(amount, unit)} ${unit}, ${fmt(next)} ккал`}
               onClick={() => {
                 haptic("light");
                 onPick(h);
@@ -62,7 +63,7 @@ export default function ReplaceProduct({ name, amount, unit, kcal, templates, re
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: "block", fontSize: 13.5, overflowWrap: "anywhere" }}>{h.name}</span>
                 <span style={{ display: "block", fontSize: 11.5, color: "var(--text3)", marginTop: 1 }}>
-                  {SOURCE_LABEL[h.source]} · {fmt(amount)}&nbsp;{unit} · {fmt(next)}&nbsp;ккал{per.unknown.length ? " · БЖУ указаны не все" : ""}
+                  {SOURCE_LABEL[h.source]} · {amountText(amount, unit)}&nbsp;{unit} · {fmt(next)}&nbsp;ккал{per.unknown.length ? " · БЖУ указаны не все" : ""}
                 </span>
               </span>
               <span style={{ flex: "none", fontSize: 11.5, color: "var(--text3)", whiteSpace: "nowrap" }}>было {fmt(kcal)}</span>
@@ -82,7 +83,7 @@ export default function ReplaceProduct({ name, amount, unit, kcal, templates, re
           onClick={() => onManual(q)}
           style={{ flex: "1 1 auto", minHeight: 38, padding: "0 12px", borderRadius: 10, border: "1px solid var(--cal-border)", background: "none", color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13, cursor: q ? "pointer" : "default" }}
         >
-          Вписать калорийность «{q || "…"}» на 100 {unit}
+          {unit === "порц." ? `Вписать калорийность «${q || "…"}» на порцию` : `Вписать калорийность «${q || "…"}» на 100 ${unit}`}
         </button>
         <button
           type="button"

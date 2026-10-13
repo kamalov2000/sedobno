@@ -25,8 +25,8 @@ export interface SearchHit {
   /** Порция, с которой позиция откроется: шаблон — как сохранён, недавнее — как было,
    *  справочник — 100 г (значения в нём на 100 г). */
   amount: number;
-  /** «г», «мл» или пусто — компоненты в разных единицах. */
-  unit: "г" | "мл" | "";
+  /** «г», «мл», «порц.» или пусто — компоненты в разных единицах. */
+  unit: "г" | "мл" | "порц." | "";
   kcal: number;
   macros: Record<MacroKey, MacroState>;
   template?: MealTemplate;
@@ -62,15 +62,15 @@ export function referenceDish(r: FoodRefItem, grams: number): MealItem {
 }
 
 /** Порция приёма целиком: сумма живых (не предположенных) блюд и общая единица. */
-export function portionOf(dishes: MealItem[]): { amount: number; unit: "г" | "мл" | "" } {
+export function portionOf(dishes: MealItem[]): { amount: number; unit: "г" | "мл" | "порц." | "" } {
   const live = dishes.filter((d) => !d.assumed);
-  const units = new Set(live.map((d) => (d.unit === "ml" ? "мл" : "г")));
-  const unit = units.size === 1 ? ([...units][0] as "г" | "мл") : "";
+  const units = new Set(live.map((d) => (d.unit === "ml" ? "мл" : d.unit === "portion" ? "порц." : "г")));
+  const unit = units.size === 1 ? ([...units][0] as "г" | "мл" | "порц.") : "";
   return { amount: live.reduce((a, d) => a + (d.grams || 0), 0), unit };
 }
 
-export function templateUnit(t: MealTemplate): "г" | "мл" | "" {
-  return t.unit === "ml" ? "мл" : t.unit === "mixed" ? "" : "г";
+export function templateUnit(t: MealTemplate): "г" | "мл" | "порц." | "" {
+  return t.unit === "ml" ? "мл" : t.unit === "portion" ? "порц." : t.unit === "mixed" ? "" : "г";
 }
 
 /** Выдача по запросу. Пустой запрос — пусто: без запроса экран показывает свои разделы. */
@@ -172,7 +172,7 @@ export function hitPer100(hit: SearchHit): { kcal: number; protein?: number; fat
 export function replacementHits(
   query: string,
   src: { templates?: MealTemplate[]; recent?: MealDiaryItem[]; reference?: FoodRefItem[] },
-  unit: "г" | "мл",
+  unit: "г" | "мл" | "порц.",
 ): SearchHit[] {
   return searchFoods(query, src).filter((h) => {
     const single = h.reference || (h.template?.dishes.length ?? h.recent?.dishes.length ?? 0) === 1;

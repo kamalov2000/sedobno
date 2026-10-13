@@ -114,3 +114,21 @@ describe("Замена продукта — пересчёт строки при
     expect((screen.getAllByLabelText("Название блюда")[0] as HTMLInputElement).value).toBe("Курица жареная");
   });
 });
+
+describe("Строка в порциях в редакторе (13.10.2026)", () => {
+  const barRow: MealItem = { name: "Батончик", grams: 1, unit: "portion", kcal: 210, protein_g: 4, fat_g: 9, carb_g: 0, confidence: 1, kcal_by_user: true, macros_unknown: ["carb"] };
+
+  it("шаг ½ порции, «ккал/порц.», граммов нет; в сохранение уходят порции и неизвестные углеводы", async () => {
+    renderMeal([barRow]);
+    expect(screen.getByText("210 ккал/порц.")).toBeTruthy();
+    expect(screen.queryByText(/ккал\/100/)).toBeNull();
+    fireEvent.pointerDown(screen.getByLabelText("Больше на ½ порции"));
+    fireEvent.pointerUp(screen.getByLabelText("Больше на ½ порции"));
+    expect((screen.getByLabelText("Количество порций") as HTMLInputElement).value).toBe("1.5");
+    expect(screen.getByText("315 ккал")).toBeTruthy();
+    fireEvent.click(screen.getByText("В дневник"));
+    await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));
+    const d = (patchMeal.mock.calls[0][1] as { dishes: Record<string, unknown>[] }).dishes[0];
+    expect(d).toMatchObject({ grams: 1.5, unit: "portion", kcal: 315, macros_unknown: ["carb"], kcal_by_user: true });
+  });
+});

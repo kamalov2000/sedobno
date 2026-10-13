@@ -194,9 +194,26 @@ export function mealTitle(item: MealDiaryItem): string {
   return item.dishes.map((d) => d.name.trim()).filter(Boolean).join(", ");
 }
 
-/** Подпись количества блюда: «мл» для объёма, иначе «г». */
-export function amountUnit(d: { unit?: string }): "г" | "мл" {
-  return d.unit === "ml" ? "мл" : "г";
+/** Подпись количества блюда: «мл» для объёма, «порц.» для строки в порциях (этикетка на
+ *  порцию без её веса, 13.10.2026), иначе «г». */
+export type AmountUnit = "г" | "мл" | "порц.";
+export function amountUnit(d: { unit?: string }): AmountUnit {
+  return d.unit === "ml" ? "мл" : d.unit === "portion" ? "порц." : "г";
+}
+
+/** Шаг ± количества: граммы и мл — по 10, порции — по половине. */
+export function amountStep(u: string): number {
+  return u === "порц." ? 0.5 : 10;
+}
+
+/** Количество для поля и подписи: порции — с дробью («0,5»), граммы и мл — целые. */
+export function amountText(v: number, u: string): string {
+  return u === "порц." ? String(Math.round(v * 100) / 100).replace(".", ",") : String(Math.round(v));
+}
+
+/** Количество изменилось: порции — от сотой, граммы и мл — от полуграмма (как на сервере). */
+export function amountChanged(u: string, a: number, b: number): boolean {
+  return Math.abs(a - b) >= (u === "порц." ? 0.01 : 0.5);
 }
 
 /** Неизвестен ли макрос у блюда. Отметка macros_unknown ставится ручным вводом с 08.10.2026;
