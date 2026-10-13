@@ -34,7 +34,16 @@ export default function ScalePreview({ title, rows, totalBefore, totalAfter, onA
             <span style={{ overflowWrap: "anywhere" }}>{r.after.name}</span>
             <span style={{ color: "var(--text2)", fontFamily: "'PT Mono',monospace", fontSize: 11.5 }}>
               {" · "}
-              {r.before ? `${amount(r.before)} → ${amount(r.after)} · ${kcal(r.before)} → ${kcal(r.after)} ккал` : `+ ${amount(r.after)} · ${kcal(r.after)} ккал`}
+              {/* Части «было → станет» не разрываются переносом: «240 → / 120» читается плохо. */}
+              {r.before ? (
+                <>
+                  <span style={{ whiteSpace: "nowrap" }}>{`${amount(r.before)} → ${amount(r.after)}`}</span>
+                  {" · "}
+                  <span style={{ whiteSpace: "nowrap" }}>{`${kcal(r.before)} → ${kcal(r.after)} ккал`}</span>
+                </>
+              ) : (
+                <span style={{ whiteSpace: "nowrap" }}>{`+ ${amount(r.after)} · ${kcal(r.after)} ккал`}</span>
+              )}
             </span>
           </div>
         ))}

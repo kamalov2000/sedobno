@@ -91,6 +91,16 @@ describe("Добавить к этому приёму", () => {
     expect(body.dishes.slice(1)).toMatchObject([{ name: "Тост", grams: 20, kcal: 50 }, { name: "Сыр", grams: 10, kcal: 35 }]);
   });
 
+  it("открытый приём не предлагается в «недавних» — сам в себя не добавить", () => {
+    cleanup();
+    const self: MealDiaryItem = { id: 9, eaten_at: "2026-10-13T12:00:00Z", created_at: "2026-10-13T12:00:00Z", status: "ok", source: "photo", edited: false, revision: 1, dishes: [plate], total: { kcal: 500, protein_g: 40, fat_g: 12, carb_g: 55 } };
+    render(<MealResultScreen result={diaryItemToResult(self, -1)} saved={self} foodReference={FOOD_REF} templates={[]} recent={[self, breakfast]} isSubscribed onDone={noop} onRetake={noop} />);
+    fireEvent.click(screen.getByText("Из моих блюд и справочника"));
+    const panel = screen.getByRole("group", { name: "Добавить к приёму" });
+    expect(within(panel).queryByLabelText(/^Курица с рисом:/)).toBeNull();
+    expect(within(panel).getByLabelText("Тост, Сыр: 60 г, 170 ккал")).toBeTruthy();
+  });
+
   it("продукт в мл остаётся в мл", async () => {
     const panel = open();
     fireEvent.click(within(panel).getByLabelText("Кефир: 250 мл, 105 ккал"));

@@ -971,7 +971,7 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
             </button>
           )}
           {!emptied && addingSearch && (
-            <AddToMeal templates={templates} recent={recent} reference={foodRef} mealKcal={total.kcal} onAdd={addFromSearch} onClose={() => setAddingSearch(false)} />
+            <AddToMeal templates={templates} recent={recent} reference={foodRef} mealKcal={total.kcal} excludeMealId={id} onAdd={addFromSearch} onClose={() => setAddingSearch(false)} />
           )}
           {/* Подпись под кнопкой объясняет, зачем она и что в неё писать: без примера
               «добавьте словами» читается как «впишите цифры». */}

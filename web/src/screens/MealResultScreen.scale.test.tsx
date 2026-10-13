@@ -38,8 +38,9 @@ describe("Весь приём ×½", () => {
     open([rice, pie, juice]);
     fireEvent.click(screen.getByLabelText("Весь приём: ×½"));
     const panel = screen.getByRole("group", { name: "Весь приём ×½" });
-    expect(within(panel).getByText(/200 г → 100 г · 260 → 130 ккал/)).toBeTruthy();
-    expect(within(panel).getByText(/250 мл → 125 мл/)).toBeTruthy();
+    expect(within(panel).getByText("200 г → 100 г")).toBeTruthy();
+    expect(within(panel).getByText("260 → 130 ккал")).toBeTruthy();
+    expect(within(panel).getByText("250 мл → 125 мл")).toBeTruthy();
     expect(within(panel).getByText(/675 → 338 ккал|675 → 337 ккал/)).toBeTruthy();
     expect(within(panel).getByText(/Неизвестные БЖУ останутся неизвестными/)).toBeTruthy();
     expect(patchMeal).not.toHaveBeenCalled();
@@ -85,7 +86,8 @@ describe("Одна строка ×2 / ×1½", () => {
     open([rice, pie]);
     fireEvent.click(screen.getAllByLabelText("Порция: ×2")[0]);
     const panel = screen.getByRole("group", { name: "«Рис» ×2" });
-    expect(within(panel).getByText(/200 г → 400 г · 260 → 520 ккал/)).toBeTruthy();
+    expect(within(panel).getByText("200 г → 400 г")).toBeTruthy();
+    expect(within(panel).getByText("260 → 520 ккал")).toBeTruthy();
     expect(within(panel).queryByText(/Пирог/)).toBeNull();
     fireEvent.click(screen.getByText("Применить"));
     fireEvent.click(screen.getByText("Сохранить изменения"));
@@ -98,7 +100,9 @@ describe("Одна строка ×2 / ×1½", () => {
     const bar: MealItem = { name: "Батончик", grams: 1, unit: "portion", kcal: 210, protein_g: 4, fat_g: 9, carb_g: 0, confidence: 1, kcal_by_user: true, macros_unknown: ["carb"] };
     open([bar]);
     fireEvent.click(screen.getByLabelText("Порция: ×½"));
-    expect(screen.getByText(/1 порц. → 0,5 порц. · 210 → 105 ккал/)).toBeTruthy();
+    const row = within(screen.getByRole("group", { name: "«Батончик» ×½" })).getByRole("listitem");
+    expect(within(row).getByText("1 порц. → 0,5 порц.")).toBeTruthy();
+    expect(within(row).getByText("210 → 105 ккал")).toBeTruthy();
     fireEvent.click(screen.getByText("Применить"));
     fireEvent.click(screen.getByText("Сохранить изменения"));
     await waitFor(() => expect(patchMeal).toHaveBeenCalledTimes(1));

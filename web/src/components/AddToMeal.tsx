@@ -18,11 +18,14 @@ interface Props {
   reference: FoodRefItem[];
   /** Калорийность приёма сейчас — для строки «Итог приёма: X → Y». */
   mealKcal: number;
+  /** Открытый сейчас приём: в «недавних» его не предлагаем — добавить приём сам в себя. */
+  excludeMealId?: number;
   onAdd: (hit: SearchHit, amount: number) => void;
   onClose: () => void;
 }
 
-export default function AddToMeal({ templates, recent, reference, mealKcal, onAdd, onClose }: Props) {
+export default function AddToMeal({ templates, recent: recentAll, reference, mealKcal, excludeMealId, onAdd, onClose }: Props) {
+  const recent = (recentAll ?? []).filter((it) => it.id !== excludeMealId);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [gramsRaw, setGramsRaw] = useState("");
