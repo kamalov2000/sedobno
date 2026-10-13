@@ -284,27 +284,30 @@ RETURNING ` + mealCols
 // повтор после потерянного ответа узнаётся и отвечает текущей записью без ошибки.
 // Одним UPDATE с условием на версию — без гонки между проверкой и записью.
 func (s *Store) UpdateMealAt(ctx context.Context, id, userID int64, items []byte,
-	kcal, protein, fat, carb *float64, eatenAt *time.Time, mealType *string, expected *int, editKey string) (Meal, error) {
+	kcal, protein, fat, carb *float64, eatenAt *time.Time, mealType *string, expected *int, editKey string) (m Meal, applied bool, err error) {
 	const q = `
 UPDATE meals SET items = $3, kcal = $4, protein_g = $5, fat_g = $6, carb_g = $7,
     eaten_at = COALESCE($8, eaten_at), meal_type = COALESCE($9, meal_type), edited = true,
     revision = revision + 1, last_edit_key = NULLIF($11, '')
 WHERE id = $1 AND user_id = $2 AND revision = COALESCE($10::int, 1)
 RETURNING ` + mealCols
-	m, err := scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt, mealType, expected, editKey))
-	if err == nil || !errors.Is(err, pgx.ErrNoRows) {
-		return m, err
+	m, err = scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt, mealType, expected, editKey))
+	if err == nil {
+		return m, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return m, false, err
 	}
 	// Версия не совпала (или записи нет). Повтор уже применённой правки — не конфликт.
 	var lastKey *string
 	cur, gerr := scanMealWithKey(s.pool.QueryRow(ctx, `SELECT `+mealCols+`, last_edit_key FROM meals WHERE id = $1 AND user_id = $2`, id, userID), &lastKey)
 	if gerr != nil {
-		return Meal{}, gerr
+		return Meal{}, false, gerr
 	}
 	if editKey != "" && lastKey != nil && *lastKey == editKey {
-		return cur, nil
+		return cur, false, nil // уже применена прошлой попыткой — не применяем второй раз
 	}
-	return cur, ErrStaleRevision
+	return cur, false, ErrStaleRevision
 }
 
 // scanMealWithKey — scanMeal плюс last_edit_key последним столбцом.

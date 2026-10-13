@@ -651,7 +651,7 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		kcal, protein, fat, carb = &patch.Macros.Kcal, &patch.Macros.ProteinG, &patch.Macros.FatG, &patch.Macros.CarbG
 	}
 
-	updated, err := s.store.UpdateMealAt(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType, req.Revision, req.EditKey)
+	updated, applied, err := s.store.UpdateMealAt(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType, req.Revision, req.EditKey)
 	if errors.Is(err, store.ErrStaleRevision) {
 		// Запись уже изменили в другом окне — не перезаписываем. Отдаём текущую: клиент
 		// покажет, что правки не сохранены, и предложит открыть приём заново.
@@ -694,7 +694,10 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		evProps["kind"] = req.EditKind
 	}
-	_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edited", evProps)
+	// Повтор уже применённой правки (потерянный ответ) — второй раз не считаем.
+	if applied {
+		_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edited", evProps)
+	}
 	writeJSON(w, http.StatusOK, toDiaryItem(updated))
 }
 

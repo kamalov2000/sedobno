@@ -75,6 +75,10 @@ func TestMealRevision_ЗащитаВерсии(t *testing.T) {
 	if n := r.count(t, `SELECT count(*) FROM events WHERE name='meal_edited' AND props->>'kind'='scale'`); n != 1 {
 		t.Errorf("meal_edited kind=scale: %d", n)
 	}
+	// Правок применено две (окно А и старый клиент на версии 1); повтор А не считается.
+	if n := r.count(t, `SELECT count(*) FROM events WHERE name='meal_edited'`); n != 2 {
+		t.Errorf("meal_edited: %d, ждали 2 — повтор той же правки не считается второй правкой", n)
+	}
 	if n := r.count(t, `SELECT count(*) FROM events WHERE name='meal_edit_conflict'`); n != 2 {
 		t.Errorf("конфликтов: %d, ждали 2", n)
 	}
