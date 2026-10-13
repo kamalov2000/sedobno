@@ -92,7 +92,13 @@ type Meal struct {
 	Edited     bool
 	Confidence *float64
 	MealType   *string // NULL → nil (тип приёма не указан)
+	// Revision — номер версии записи (миграция 0031): растёт на каждой правке.
+	Revision int
 }
+
+// ErrStaleRevision — правка основана на устаревшей версии приёма: запись уже изменили (в
+// другом окне или устройстве). Ничего не записано.
+var ErrStaleRevision = errors.New("приём изменён после того, как его открыли")
 
 // MealDaily — дневной агрегат из view meal_daily (граница дня — Europe/Moscow).
 type MealDaily struct {
@@ -107,14 +113,14 @@ type MealDaily struct {
 // mealCols — единый список колонок для чтения приёма (numeric → float8 для скана в
 // *float64; NULL приходит как nil).
 const mealCols = `id, user_id, created_at, eaten_at, status, source, items,
-	kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8, edited, confidence::float8, meal_type`
+	kcal::float8, protein_g::float8, fat_g::float8, carb_g::float8, edited, confidence::float8, meal_type, revision`
 
 // scanMeal читает одну строку приёма из pgx.Row/Rows в порядке mealCols.
 func scanMeal(row pgx.Row) (Meal, error) {
 	var m Meal
 	var items []byte
 	err := row.Scan(&m.ID, &m.UserID, &m.CreatedAt, &m.EatenAt, &m.Status, &m.Source,
-		&items, &m.Kcal, &m.ProteinG, &m.FatG, &m.CarbG, &m.Edited, &m.Confidence, &m.MealType)
+		&items, &m.Kcal, &m.ProteinG, &m.FatG, &m.CarbG, &m.Edited, &m.Confidence, &m.MealType, &m.Revision)
 	m.Items = items
 	return m, err
 }
@@ -142,7 +148,8 @@ VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''
 ON CONFLICT (user_id, client_key) WHERE client_key IS NOT NULL DO UPDATE
    SET items = EXCLUDED.items, kcal = EXCLUDED.kcal, protein_g = EXCLUDED.protein_g,
        fat_g = EXCLUDED.fat_g, carb_g = EXCLUDED.carb_g, source = EXCLUDED.source,
-       meal_type = COALESCE(EXCLUDED.meal_type, meals.meal_type)
+       meal_type = COALESCE(EXCLUDED.meal_type, meals.meal_type),
+       revision = meals.revision + 1
 RETURNING id, (xmax = 0)`
 	err = s.pool.QueryRow(ctx, q, m.UserID, m.EatenAt, m.Status, m.Source, m.Items,
 		m.Kcal, m.ProteinG, m.FatG, m.CarbG, m.Confidence, m.MealType, m.Provider, m.LatencyMs, m.CostRUB,
@@ -255,14 +262,59 @@ func (s *Store) GetMeal(ctx context.Context, id int64) (Meal, error) {
 // UpdateMeal правит приём: заменяет блюда, суммы КБЖУ и (опц.) время приёма, ставит
 // edited=true. Владение проверяется в WHERE (id И user_id) — правка чужого приёма
 // вернёт pgx.ErrNoRows. eatenAt nil → время приёма не меняется (COALESCE).
+//
+// Без проверки версии — только для внутренних нужд и тестов хранилища; правка с экрана
+// (PATCH /api/meals/{id}) идёт через UpdateMealAt. Версию повышает и этот путь: иначе
+// защита не увидела бы такое изменение.
 func (s *Store) UpdateMeal(ctx context.Context, id, userID int64, items []byte,
 	kcal, protein, fat, carb *float64, eatenAt *time.Time, mealType *string) (Meal, error) {
 	const q = `
 UPDATE meals SET items = $3, kcal = $4, protein_g = $5, fat_g = $6, carb_g = $7,
-    eaten_at = COALESCE($8, eaten_at), meal_type = COALESCE($9, meal_type), edited = true
+    eaten_at = COALESCE($8, eaten_at), meal_type = COALESCE($9, meal_type), edited = true,
+    revision = revision + 1
 WHERE id = $1 AND user_id = $2
 RETURNING ` + mealCols
 	return scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt, mealType))
+}
+
+// UpdateMealAt — правка с защитой версии (backlog п.18, 13.10.2026). expected — версия,
+// которую видел клиент; nil — старый клиент без версии: ему можно править только запись
+// версии 1 (её ни разу не меняли, перезаписывать нечего). Версия не совпала — ничего не
+// пишем и возвращаем ErrStaleRevision вместе с текущей записью. editKey — ключ правки: её
+// повтор после потерянного ответа узнаётся и отвечает текущей записью без ошибки.
+// Одним UPDATE с условием на версию — без гонки между проверкой и записью.
+func (s *Store) UpdateMealAt(ctx context.Context, id, userID int64, items []byte,
+	kcal, protein, fat, carb *float64, eatenAt *time.Time, mealType *string, expected *int, editKey string) (Meal, error) {
+	const q = `
+UPDATE meals SET items = $3, kcal = $4, protein_g = $5, fat_g = $6, carb_g = $7,
+    eaten_at = COALESCE($8, eaten_at), meal_type = COALESCE($9, meal_type), edited = true,
+    revision = revision + 1, last_edit_key = NULLIF($11, '')
+WHERE id = $1 AND user_id = $2 AND revision = COALESCE($10::int, 1)
+RETURNING ` + mealCols
+	m, err := scanMeal(s.pool.QueryRow(ctx, q, id, userID, items, kcal, protein, fat, carb, eatenAt, mealType, expected, editKey))
+	if err == nil || !errors.Is(err, pgx.ErrNoRows) {
+		return m, err
+	}
+	// Версия не совпала (или записи нет). Повтор уже применённой правки — не конфликт.
+	var lastKey *string
+	cur, gerr := scanMealWithKey(s.pool.QueryRow(ctx, `SELECT `+mealCols+`, last_edit_key FROM meals WHERE id = $1 AND user_id = $2`, id, userID), &lastKey)
+	if gerr != nil {
+		return Meal{}, gerr
+	}
+	if editKey != "" && lastKey != nil && *lastKey == editKey {
+		return cur, nil
+	}
+	return cur, ErrStaleRevision
+}
+
+// scanMealWithKey — scanMeal плюс last_edit_key последним столбцом.
+func scanMealWithKey(row pgx.Row, key **string) (Meal, error) {
+	var m Meal
+	var items []byte
+	err := row.Scan(&m.ID, &m.UserID, &m.CreatedAt, &m.EatenAt, &m.Status, &m.Source,
+		&items, &m.Kcal, &m.ProteinG, &m.FatG, &m.CarbG, &m.Edited, &m.Confidence, &m.MealType, &m.Revision, key)
+	m.Items = items
+	return m, err
 }
 
 // DeleteMeal удаляет приём с проверкой владения. false — приёма нет или он чужой.

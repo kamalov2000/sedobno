@@ -344,7 +344,7 @@ export default function AddMealActions({
 
 // Строка выдачи: название и калории, ниже — источник, порция с единицей и известные БЖУ.
 // Всё, что человек должен видеть до добавления, видно без раскрытия.
-function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit; showSource: boolean; open: boolean; onToggle: () => void; children: ReactNode }) {
+export function HitRow({ hit, showSource, open, onToggle, children, expandRecent = false }: { hit: SearchHit; showSource: boolean; open: boolean; onToggle: () => void; children: ReactNode; expandRecent?: boolean }) {
   const kcal = Math.round(hit.kcal);
   const amount = amountText(hit.amount, hit.unit);
   const portion = hit.unit ? `${amount} ${hit.unit}` : "";
@@ -356,8 +356,9 @@ function HitRow({ hit, showSource, open, onToggle, children }: { hit: SearchHit;
     .join(" · ");
   const icon = hit.source === "mine" ? "ti-bookmark" : hit.source === "recent" ? "ti-repeat" : "ti-book-2";
   // Имена для чтения с экрана — как раньше у «Повторить»: недавний открывает экран повтора.
-  const label = hit.recent ? `Повторить: ${hit.name}, ${kcal} ккал` : `${hit.name}: ${portion || "порция"}, ${kcal} ккал`;
-  const expandable = !hit.recent;
+  // Внутри приёма (expandRecent) недавний тоже раскрывает порцию, а не уводит на экран повтора.
+  const label = hit.recent && !expandRecent ? `Повторить: ${hit.name}, ${kcal} ккал` : `${hit.name}: ${portion || "порция"}, ${kcal} ккал`;
+  const expandable = !hit.recent || expandRecent;
   return (
     <div role="listitem" style={{ borderRadius: 11, border: "1px solid", borderColor: open ? "var(--cal-border)" : "var(--border)", background: "var(--bg)" }}>
       <button
@@ -412,12 +413,12 @@ export function parsePortion(raw: string): number | null {
 // Порция перед добавлением: вес вводится напрямую или кнопками ±10 г, калории и БЖУ
 // пересчитываются сразу. Неизвестные БЖУ — неизвестные, не ноль; известные лишь у части
 // компонентов — словами «не менее» с пояснением (решение владельца 09.10.2026).
-function PortionPreview({ hit, gramsRaw, onGrams }: { hit: SearchHit; gramsRaw: string; onGrams: (v: string) => void }) {
+export function PortionPreview({ hit, gramsRaw, onGrams, mealKcal }: { hit: SearchHit; gramsRaw: string; onGrams: (v: string) => void; mealKcal?: number }) {
   const g = parsePortion(gramsRaw);
   const factor = g != null && hit.amount > 0 ? g / hit.amount : 1;
   const changed = g != null && amountChanged(hit.unit, g, hit.amount);
   const kcal = Math.round(hit.kcal * factor);
-  const dishes: MealItem[] = hit.template ? hit.template.dishes : hit.reference ? [referenceDish(hit.reference, hit.amount)] : [];
+  const dishes: MealItem[] = hit.template ? hit.template.dishes : hit.reference ? [referenceDish(hit.reference, hit.amount)] : hit.recent ? hit.recent.dishes : [];
   const m = macroSummary(dishes, factor);
   const allUnknown = m.protein.state === "unknown" && m.fat.state === "unknown" && m.carb.state === "unknown";
   const complete = [m.protein, m.fat, m.carb].every((x) => x.state === "known");
@@ -480,6 +481,12 @@ function PortionPreview({ hit, gramsRaw, onGrams }: { hit: SearchHit; gramsRaw: 
       {hit.reference && (
         <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.45, marginTop: 4 }}>
           Справочник: {hit.reference.kcal_per_100} ккал на 100 г — средние значения, у вашего продукта они могут отличаться.
+        </div>
+      )}
+      {/* Внутри приёма: каким станет итог, если добавить (до сохранения). */}
+      {mealKcal != null && g != null && (
+        <div style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6 }}>
+          {`Итог приёма: ${Math.round(mealKcal)} → ${Math.round(mealKcal + kcal)} ккал`}
         </div>
       )}
     </div>

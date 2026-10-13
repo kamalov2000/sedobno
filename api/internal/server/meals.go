@@ -95,6 +95,8 @@ type mealDiaryItem struct {
 	// (приём сохранён до 11.09.2026). Экран правки обязан спросить про них до сохранения:
 	// иначе пересчёт по нынешнему правилу молча уменьшил бы итог. Пусто — обычный приём.
 	AssumedInTotal []meal.AssumedAddon `json:"assumed_in_total,omitempty"`
+	// Revision — версия записи (защита версии, п.18): правка присылает её обратно.
+	Revision int `json:"revision,omitempty"`
 }
 
 // validMealTypes — допустимые типы приёма (проставляются пользователем в дневник).
@@ -572,6 +574,10 @@ func (s *Server) finishMealOK(ctx context.Context, w http.ResponseWriter, u stor
 
 // handleMealUpdate — PATCH /api/meals/{id}. Правка приёма: замена блюд (пересчёт сумм
 // сервером) и/или времени приёма. Владение проверяется по user_id.
+// editKinds — виды правки приёма для замера (п.18): масштаб ×½/×1½/×2, добавление из поиска,
+// замена продукта, ручная правка, правка словами.
+var editKinds = map[string]struct{}{"scale": {}, "add": {}, "replace": {}, "manual": {}, "text": {}}
+
 func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 	claims, ok := claimsFrom(r.Context())
 	if !ok {
@@ -595,6 +601,14 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		// Пусто — решения не было: старый клиент или человек закрыл вопрос. Тогда добавки
 		// остаются предположенными, но из итога НЕ выпадают (backlog п.11).
 		Assumed string `json:"assumed"`
+		// Revision — версия приёма, которую видел клиент (защита версии, п.18, 13.10.2026).
+		// Не совпала — 409, ничего не записано. Нет поля (старый клиент) — правка допустима
+		// только для версии 1: запись ни разу не меняли, перезаписывать нечего.
+		Revision *int `json:"revision"`
+		// EditKey — ключ этой правки: повтор после потерянного ответа — успех, а не конфликт.
+		EditKey string `json:"edit_key"`
+		// EditKind — что за правка (замер п.18): scale | add | replace | manual | text.
+		EditKind string `json:"edit_kind"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "некорректное тело запроса")
@@ -612,6 +626,10 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if !meal.ValidAssumedDecision(req.Assumed) {
 		writeError(w, http.StatusBadRequest, "bad_request", "assumed: keep|remove")
+		return
+	}
+	if req.EditKey != "" && !validClientKey(req.EditKey) {
+		writeError(w, http.StatusBadRequest, "bad_request", "edit_key: 8–64 символа: латиница, цифры, дефис")
 		return
 	}
 
@@ -633,7 +651,18 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		kcal, protein, fat, carb = &patch.Macros.Kcal, &patch.Macros.ProteinG, &patch.Macros.FatG, &patch.Macros.CarbG
 	}
 
-	updated, err := s.store.UpdateMeal(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType)
+	updated, err := s.store.UpdateMealAt(ctx, id, claims.UserID, itemsJSON, kcal, protein, fat, carb, req.EatenAt, req.MealType, req.Revision, req.EditKey)
+	if errors.Is(err, store.ErrStaleRevision) {
+		// Запись уже изменили в другом окне — не перезаписываем. Отдаём текущую: клиент
+		// покажет, что правки не сохранены, и предложит открыть приём заново.
+		_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edit_conflict", map[string]any{"old_client": req.Revision == nil})
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":   "stale_revision",
+			"message": "Приём уже изменён в другом окне. Ваши правки не сохранены — откройте приём заново.",
+			"item":    toDiaryItem(updated),
+		})
+		return
+	}
 	if err != nil {
 		s.log.Error("meal: правка приёма", "err", err, "user", claims.UserID, "meal", id)
 		writeError(w, http.StatusInternalServerError, "internal", "не удалось сохранить правку")
@@ -656,6 +685,14 @@ func (s *Server) handleMealUpdate(w http.ResponseWriter, r *http.Request) {
 		if req.EatenAt != nil {
 			evProps["eaten_at_changed"] = true
 		}
+	}
+	// Вид правки — в событие всегда (замер п.18: сколько правят масштабом, добавлением,
+	// заменой); значение только из белого списка.
+	if _, ok := editKinds[req.EditKind]; ok {
+		if evProps == nil {
+			evProps = map[string]any{}
+		}
+		evProps["kind"] = req.EditKind
 	}
 	_ = s.store.InsertEvent(ctx, &claims.UserID, "meal_edited", evProps)
 	writeJSON(w, http.StatusOK, toDiaryItem(updated))
@@ -1012,7 +1049,7 @@ func toDiaryItem(m store.Meal) mealDiaryItem {
 	item := mealDiaryItem{
 		ID: m.ID, EatenAt: m.EatenAt, CreatedAt: m.CreatedAt, Status: m.Status,
 		Source: m.Source, Edited: m.Edited, Confidence: m.Confidence,
-		Dishes: []llm.MealItem{},
+		Dishes: []llm.MealItem{}, Revision: m.Revision,
 	}
 	if m.MealType != nil {
 		item.MealType = *m.MealType

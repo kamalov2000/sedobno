@@ -34,11 +34,21 @@ let token: string | null = null;
 /** Ошибка API с HTTP-статусом и человекочитаемым сообщением (бэк отдаёт русские тексты). */
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Тело ответа, если оно нужно экрану (409 stale_revision несёт текущую запись). */
+  data?: unknown;
+  constructor(status: number, message: string, data?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.data = data;
   }
+}
+
+/** Ответ 409 на правку: приём уже изменён в другом окне; item — его текущая версия. */
+export interface StaleRevision {
+  error: "stale_revision";
+  message: string;
+  item: MealDiaryItem;
 }
 
 async function readMessage(res: Response): Promise<string> {
@@ -444,6 +454,12 @@ export interface MealPatch {
    *  подтверждёнными), remove — удалить (итог уменьшится осознанно). Не передано — сервер
    *  продолжает их считать: молча уменьшать сохранённый итог нельзя. */
   assumed?: "keep" | "remove";
+  /** Версия, которую видел экран (защита версии, 13.10.2026): устарела — 409. */
+  revision?: number;
+  /** Ключ этой правки: повтор после потерянного ответа — успех, а не конфликт. */
+  edit_key?: string;
+  /** Вид правки для замера: scale | add | replace | manual | text. */
+  edit_kind?: "scale" | "add" | "replace" | "manual" | "text";
 }
 
 /** PATCH /api/meals/{id} — правка приёма (сервер пересчитывает суммы). */
@@ -453,6 +469,10 @@ export async function patchMeal(id: number, body: MealPatch): Promise<MealDiaryI
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 409) {
+    const data = await res.clone().json().catch(() => undefined);
+    throw new ApiError(409, await readMessage(res), data);
+  }
   if (!res.ok) throw new ApiError(res.status, await readMessage(res));
   return res.json();
 }

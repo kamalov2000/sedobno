@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MealResult, MealItem, MealType, MealDiaryItem, FoodRefItem } from "../types";
-import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle, amountUnit, amountStep } from "../meal";
+import { scaleDish, zeroGrams, round1, totalOf, per100, pluralComponents, guessMealType, isEggDish, withEggCount, effectiveDishKcal, effectiveDishGrams, pieceGrams, withPieceCount, displayPieces, pieceCountLabel, PIECE_LABELS, PIECE_EMOJI, PIECE_MAX, MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, LOW_CONFIDENCE, MEAL_TEXT_EXAMPLES, mealTitle, amountUnit, amountStep, scaleRow } from "../meal";
 import EggCounter from "../components/EggCounter";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
 import SaveAsMyDish from "../components/SaveAsMyDish";
 import ModelTake from "../components/ModelTake";
 import DishTextInput from "../components/DishTextInput";
 import { patchMeal, deleteMeal, createManualMeal, getFoodReference, analyzeMealText, uploadShareCard, shareEvent, ApiError } from "../api";
-import type { DishPatch } from "../api";
+import type { DishPatch, MealPatch, StaleRevision } from "../api";
 import { haptic, notify, canShareToStory, shareToStory, openTelegramLink, openExternal, tg } from "../telegram";
 import { renderMealStory, mealStoryData, storyCaptions, downloadBlob } from "../mealStoryCard";
 import { useRolledNumber } from "../useRoll";
 import MacroSegments from "../components/MacroSegments";
 import ReplaceProduct from "../components/ReplaceProduct";
+import ScalePreview, { ScaleChips, factorLabel, type PreviewRow } from "../components/ScalePreview";
+import AddToMeal from "../components/AddToMeal";
 import { hitPer100, type SearchHit } from "../foodSearch";
 import type { MealTemplate } from "../api";
 
@@ -328,6 +330,57 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
   // ЖЕ количестве и становится строкой «на 100 × количество» (как подстановка из
   // справочника при ручном вводе). Штучные добавки старого продукта к новому не относятся.
   const [replacing, setReplacing] = useState<number | null>(null);
+
+  // ×½ / ×1½ / ×2 (решение владельца 13.10.2026) — для всего приёма или одной строки, с
+  // просмотром до применения. Считает код, без модели. Ручная строка остаётся «на 100 ×
+  // количество» (manualAt), распознанная — через scaleRow (штучное → граммы).
+  const [scale, setScale] = useState<{ scope: "all" | number; factor: number } | null>(null);
+  const scaledDraft = (d: Draft, f: number): Draft =>
+    d.manual ? manualAt(d, d.unit === "portion" ? Math.round(d.grams * f * 100) / 100 : round1(d.grams * f)) : { ...(scaleRow(d, f) as Draft), touched: true };
+  const scaledDishes = scale ? dishes.map((d, i) => (scale.scope === "all" || scale.scope === i ? scaledDraft(d, scale.factor) : d)) : null;
+  const scaleRows: PreviewRow[] = scale && scaledDishes
+    ? dishes.flatMap((d, i) => (scale.scope === "all" || scale.scope === i ? [{ before: d, after: scaledDishes[i] }] : []))
+    : [];
+  const applyScale = () => {
+    if (!scaledDishes) return;
+    setDishes(scaledDishes);
+    editKind.current = "scale";
+    setScale(null);
+  };
+  // «Добавить к этому приёму» из существующего поиска (13.10.2026): своё блюдо и недавний —
+  // их блюда в выбранной порции (scaleRow: та же пропорция для всех), продукт справочника —
+  // строка «на 100 × количество». Уже проверенные строки приёма не трогаются.
+  const [addingSearch, setAddingSearch] = useState(false);
+  const addFromSearch = (hit: SearchHit, amount: number) => {
+    let rows: Draft[];
+    if (hit.reference) {
+      const r = hit.reference;
+      rows = [
+        manualAt(
+          {
+            name: r.name, grams: amount, kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, confidence: 1,
+            manual: true, touched: true, per100Raw: String(r.kcal_per_100),
+            proteinPer100: r.protein_g, fatPer100: r.fat_g, carbPer100: r.carb_g,
+            macroRaw: { p: String(r.protein_g), f: String(r.fat_g), c: String(r.carb_g) }, macrosFromRef: true,
+          },
+          amount,
+        ),
+      ];
+    } else {
+      const src = (hit.template?.dishes ?? hit.recent?.dishes ?? []).filter((d) => !d.assumed);
+      const f = hit.amount > 0 ? amount / hit.amount : 1;
+      rows = src.map((d) => ({ ...(scaleRow(d, f) as Draft), touched: true }));
+    }
+    haptic("light");
+    setDishes((ds) => [...ds, ...rows]);
+    editKind.current = "add";
+    setAddingSearch(false);
+  };
+
+  const scalePreview = (title: string) =>
+    scale && scaledDishes ? (
+      <ScalePreview title={title} rows={scaleRows} totalBefore={total.kcal} totalAfter={totalOf(scaledDishes).kcal} onApply={applyScale} onCancel={() => setScale(null)} />
+    ) : null;
   const replaceDish = (i: number, hit: SearchHit) => {
     const per = hitPer100(hit);
     if (!per) return;
@@ -521,7 +574,7 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
     if (busy || blocked || id == null) return;
     setBusy(true);
     try {
-      await patchMeal(id, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}), assumed });
+      await patchSaved({ dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}), assumed });
       notify("success");
       onDone();
     } catch {
@@ -541,6 +594,40 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
   // кадре видел бы его ещё false. Ссылка закрывает окно сразу.
   const saving = useRef(false);
   const [saveError, setSaveError] = useState(false);
+
+  // Защита версии (13.10.2026): правка сохранённого приёма отправляет версию, которую видел
+  // экран, и ключ этой правки. Приём успели изменить в другом окне — сервер отвечает 409 и
+  // ничего не записывает; экран говорит, что правки не сохранены, и даёт показать актуальную
+  // версию. Повтор после потерянного ответа — с тем же ключом: успех, а не конфликт.
+  const revision = useRef<number | undefined>(saved?.revision);
+  const editKey = useRef("");
+  const editKind = useRef<NonNullable<MealPatch["edit_kind"]>>("manual");
+  const [stale, setStale] = useState<StaleRevision | null>(null);
+  const patchSaved = async (body: MealPatch) => {
+    if (!editKey.current) editKey.current = newSaveKey();
+    try {
+      await patchMeal(id!, {
+        ...body,
+        ...(revision.current != null ? { revision: revision.current } : {}),
+        edit_key: editKey.current,
+        edit_kind: editKind.current,
+      });
+      editKey.current = "";
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && (err.data as StaleRevision | undefined)?.error === "stale_revision") {
+        setStale(err.data as StaleRevision);
+      }
+      throw err;
+    }
+  };
+  const showCurrent = () => {
+    if (!stale) return;
+    setDishes(stale.item.dishes);
+    revision.current = stale.item.revision;
+    editKey.current = "";
+    setStale(null);
+    setSaveError(false);
+  };
 
   const onSave = async () => {
     if (busy || blocked || saving.current) return;
@@ -576,7 +663,7 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
         // ложно давало «не изменилось» — и правка молча терялась (успех показывался, а в
         // дневнике оставалось старое). Лишний PATCH без реальных изменений безвреден
         // (сервер идемпотентно перезапишет те же числа), потеря правки — нет.
-        await patchMeal(id!, { dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
+        await patchSaved({ dishes: toPatch(dishes), ...(mealType ? { meal_type: mealType } : {}) });
       }
       notify("success");
       onDone();
@@ -796,6 +883,14 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
         </div>
         )}
 
+        {/* Весь приём ×½ / ×1½ / ×2 — с просмотром до применения. */}
+        {dishes.length > 0 && !emptied && (
+          <div style={{ marginTop: 12 }}>
+            <ScaleChips label="Весь приём:" onPick={(f) => setScale({ scope: "all", factor: f })} />
+            {scale?.scope === "all" && <div style={{ marginTop: 8 }}>{scalePreview(`Весь приём ${factorLabel(scale.factor)}`)}</div>}
+          </div>
+        )}
+
         {/* Карточки блюд */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
           {dishes.map((d, i) => (
@@ -816,8 +911,9 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
                   onRemove={() => removeDish(i)}
                 />
               ) : (
-                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} onConfirm={() => confirmDish(i)} onReplace={d.assumed ? undefined : () => setReplacing(replacing === i ? null : i)} />
+                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} onConfirm={() => confirmDish(i)} onReplace={d.assumed ? undefined : () => setReplacing(replacing === i ? null : i)} onScale={d.assumed ? undefined : (f) => setScale({ scope: i, factor: f })} />
               )}
+              {scale?.scope === i && scalePreview(`«${d.name}» ${factorLabel(scale.factor)}`)}
               {replacing === i && !d.manual && !isEggDish(d) && (
                 <ReplaceProduct
                   name={d.name}
@@ -859,6 +955,23 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
               <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
               Добавить блюдо
             </button>
+          )}
+          {/* Из своих блюд, недавних и справочника — тот же поиск, что «Найти» (13.10.2026). */}
+          {!emptied && !adding && !addingSearch && (
+            <button
+              type="button"
+              onClick={() => {
+                haptic("light");
+                setAddingSearch(true);
+              }}
+              style={{ width: "100%", height: 44, background: "none", border: "1px dashed var(--border)", color: "var(--text2)", borderRadius: 12, fontFamily: "'Golos Text',sans-serif", fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}
+            >
+              <i className="ti ti-search" aria-hidden="true" style={{ fontSize: 16 }} />
+              Из моих блюд и справочника
+            </button>
+          )}
+          {!emptied && addingSearch && (
+            <AddToMeal templates={templates} recent={recent} reference={foodRef} mealKcal={total.kcal} onAdd={addFromSearch} onClose={() => setAddingSearch(false)} />
           )}
           {/* Подпись под кнопкой объясняет, зачем она и что в неё писать: без примера
               «добавьте словами» читается как «впишите цифры». */}
@@ -939,7 +1052,17 @@ export default function MealResultScreen({ result, templates, recent, isSubscrib
             еду словами, а в дневник у него лёг один приём: он жал «Отправить»/«В историю»
             и уходил, потеряв восемь расчётов. Потом написал, что в приложении его часов
             «нужно писать — и всё хорошо и понятно». Он прав: у нас был невидимый шаг. */}
-        {saveError && (
+        {stale ? (
+          <div role="alert" style={{ marginBottom: 8, padding: "9px 11px", borderRadius: 10, background: "var(--bg-soft)", border: "1px solid var(--cal-border)", fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
+              <i className="ti ti-git-compare" aria-hidden="true" style={{ fontSize: 15, flex: "none", marginTop: 1 }} />
+              <span>Приём уже изменён в другом окне. Ваши правки не сохранены — чтобы не затереть ту правку.</span>
+            </div>
+            <button type="button" onClick={showCurrent} style={{ marginTop: 8, minHeight: 34, padding: "0 12px", borderRadius: 9, border: "1px solid var(--cal-border)", background: "var(--bg)", color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 13, cursor: "pointer" }}>
+              Показать актуальную версию
+            </button>
+          </div>
+        ) : saveError && (
           <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 8, padding: "9px 11px", borderRadius: 10, background: "var(--bg-soft)", border: "1px solid var(--border)", fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
             <i className="ti ti-wifi-off" aria-hidden="true" style={{ fontSize: 15, flex: "none", marginTop: 1 }} />
             <span>Не удалось подтвердить сохранение. Проверьте связь и нажмите кнопку ещё раз — всё введённое на месте, повтор не создаст второй записи.</span>
@@ -1112,7 +1235,7 @@ function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { valu
 // разборе модели: у приёма, вписанного руками, распознавания не было, и говорить о нём
 // нечего. «Изменено вами» перебивает распознанное — это и есть то, что человек хочет
 // видеть, вернувшись к приёму через неделю.
-function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, onReplace }: { dish: Draft; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void; onConfirm?: () => void; onReplace?: () => void }) {
+function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, onReplace, onScale }: { dish: Draft; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void; onConfirm?: () => void; onReplace?: () => void; onScale?: (factor: number) => void }) {
   // Подпись изменена, а числа — прежнего продукта (13.10.2026): говорим это прямо, иначе
   // «индейка» с калориями курицы выглядит пересчитанной.
   const renamedFrom = dish.origName && dish.name.trim() !== dish.origName.trim() ? dish.origName : null;
@@ -1230,6 +1353,11 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, on
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, fontSize: 11.5, color: "var(--cal-num)", lineHeight: 1.4 }}>
           <i className="ti ti-alert-triangle" aria-hidden="true" style={{ fontSize: 13, flex: "none" }} />
           {reviewHint(dish)}
+        </div>
+      )}
+      {onScale && (
+        <div style={{ marginTop: 8 }}>
+          <ScaleChips label="Порция:" compact onPick={onScale} />
         </div>
       )}
     </div>

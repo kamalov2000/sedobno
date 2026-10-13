@@ -629,3 +629,33 @@ export function labelNetUsable(n: ScanNutrition | undefined): boolean {
   if (!n.net_unit) return true;
   return labelPortionUnit(n.basis) === (n.net_unit === "ml" ? "мл" : "г");
 }
+
+/** Строка приёма ×factor (решение владельца 13.10.2026: ×½, ×1½, ×2 и добавление своей
+ *  порцией). Количество и КБЖУ — в одной пропорции; единица прежняя; отметка неизвестных БЖУ
+ *  сохраняется (неизвестное не становится нулём). Штучные позиции (яйца, ложки масла)
+ *  переходят в граммы — дробных яиц не бывает; то же правило, что meal.ScalePortion на
+ *  сервере. Предположенные добавки («≈») в итог не входили — и после пересчёта не входят. */
+export function scaleRow(d: MealItem, factor: number): MealItem {
+  const f = Math.max(0, factor);
+  const amount = (v: number) => (d.unit === "portion" ? Math.round(v * 100) / 100 : round1(v));
+  if (isEggDish(d) || (d.pieces ?? []).some((p) => !p.assumed && p.count > 0)) {
+    const pm = pieceMacros(d.pieces);
+    const flat: MealItem = {
+      ...d,
+      grams: amount(effectiveDishGrams(d) * f),
+      kcal: round1((d.kcal + pm.kcal) * f),
+      protein_g: round1((d.protein_g + pm.protein_g) * f),
+      fat_g: round1((d.fat_g + pm.fat_g) * f),
+      carb_g: round1((d.carb_g + pm.carb_g) * f),
+      ...(d.alcohol_g ? { alcohol_g: round1(d.alcohol_g * f) } : {}),
+      scale_base: undefined,
+    };
+    delete flat.pieces;
+    delete flat.dish_kind;
+    delete flat.yolks;
+    delete flat.whites;
+    return flat;
+  }
+  const scaled = scaleDish(d, d.grams * f);
+  return { ...scaled, grams: amount(d.grams * f) };
+}
