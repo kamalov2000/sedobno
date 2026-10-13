@@ -93,6 +93,11 @@ type scanNutritionView struct {
 	CarbG     *float64 `json:"carb_g,omitempty"`
 	NetAmount *float64 `json:"net_amount,omitempty"`
 	NetUnit   string   `json:"net_unit,omitempty"`
+	// Порция (13.10.2026): basis "portion" — значения на порцию, размер ServingAmount
+	// может быть неизвестен; FromServing — значения пересчитаны с порции на 100 г/мл.
+	ServingAmount *float64 `json:"serving_amount,omitempty"`
+	ServingUnit   string   `json:"serving_unit,omitempty"`
+	FromServing   bool     `json:"from_serving,omitempty"`
 }
 
 type scanResponse struct {
@@ -473,6 +478,7 @@ func nutritionView(n *llm.Nutrition) *scanNutritionView {
 	return &scanNutritionView{
 		Basis: n.Basis, Kcal: n.Kcal, ProteinG: n.ProteinG, FatG: n.FatG, CarbG: n.CarbG,
 		NetAmount: n.NetAmount, NetUnit: n.NetUnit,
+		ServingAmount: n.ServingAmount, ServingUnit: n.ServingUnit, FromServing: n.FromServing,
 	}
 }
 

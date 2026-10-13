@@ -3,7 +3,7 @@ import type { ScanResult, MealType } from "../types";
 import { createManualMeal, createMealTemplate, ApiError } from "../api";
 import { haptic, notify } from "../telegram";
 import { writePending, clearPending, newSaveKey } from "../pendingSave";
-import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, productDisplayName, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
+import { MEAL_TYPES, MEAL_TYPE_ICONS, MEAL_TYPE_LABELS, productDisplayName, labelPortionGrams, labelPortionMacros, labelPortionUnit, labelPortionValid, labelPer100, labelNetUsable, LABEL_MIN_GRAMS, LABEL_MAX_GRAMS, type LabelPortion } from "../meal";
 
 // Экран «Скан → дневник» (backlog п.1). Сканер и калории были двумя разъединёнными
 // треками — юзер отсканировал продукт в магазине, но добавить его в дневник было
@@ -25,12 +25,21 @@ interface Props {
 }
 
 export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
-  const nutrition = result.nutrition;
-  const unit = labelPortionUnit(nutrition?.basis);
-  const netAmount = nutrition?.net_amount;
+  const label = result.nutrition;
+  // Этикетка «только на порцию» без веса порции (13.10.2026): значения на 100 считаем по
+  // весу, который человек впишет с упаковки; до этого считать не из чего — и не считаем.
+  const perPortion = label?.basis === "portion";
+  const [servingRaw, setServingRaw] = useState("");
+  const [servingUnit, setServingUnit] = useState<"g" | "ml">(label?.net_unit === "ml" ? "ml" : "g");
+  const nutrition = labelPer100(label, servingRaw, servingUnit) ?? undefined;
+  const unit = nutrition ? labelPortionUnit(nutrition.basis) : servingUnit === "ml" ? "мл" : "г";
+  const netAmount = nutrition && labelNetUsable(nutrition) ? nutrition.net_amount : undefined;
+  // Порция по этикетке: напечатана (сервер пересчитал с неё) или вписана человеком.
+  const servingAmount = nutrition?.from_serving ? nutrition.serving_amount : undefined;
 
   const [name, setName] = useState(() => productDisplayName(result.product_name));
-  const [portion, setPortion] = useState<LabelPortion>(netAmount ? "full" : "custom");
+  const [portionChoice, setPortion] = useState<LabelPortion | null>(null);
+  const portion: LabelPortion = portionChoice ?? (servingAmount ? "serving" : netAmount ? "full" : "custom");
   const [customRaw, setCustomRaw] = useState("100");
   const [mealType, setMealType] = useState<MealType | null>(null);
   const [busy, setBusy] = useState(false);
@@ -46,12 +55,12 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
   const saveKey = useRef<string | null>(null);
   const saving = useRef(false);
 
-  const grams = labelPortionGrams(netAmount, portion, customRaw);
+  const grams = labelPortionGrams(netAmount, portion, customRaw, servingAmount);
   const gramsValid = labelPortionValid(grams);
   const nameValid = name.trim().length > 0;
   const portionMacros = labelPortionMacros(nutrition, grams);
   const kcalPreview = portionMacros ? Math.round(portionMacros.kcal) : null;
-  const blocked = !nameValid || !gramsValid || busy;
+  const blocked = !nameValid || !gramsValid || busy || !nutrition;
 
   const save = async () => {
     // saving — защита от двойного нажатия до перерисовки (busy ещё не успел выставиться).
@@ -123,8 +132,57 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
         {/* Что именно прочитано — человек подтверждает это глазами, прежде чем записать
             приём и тем более сохранить продукт на будущее. Не прочиталось — «—», не ноль. */}
         <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.5, marginTop: -8, marginBottom: 18, padding: "9px 12px", background: "var(--bg-soft)", borderRadius: 10 }}>
-          По этикетке на 100 {unit}: {per100(nutrition?.kcal)} ккал · Б {per100(nutrition?.protein_g)} · Ж {per100(nutrition?.fat_g)} · У {per100(nutrition?.carb_g)}
+          {perPortion ? (
+            <>По этикетке на порцию: {per100(label?.kcal)} ккал · Б {per100(label?.protein_g)} · Ж {per100(label?.fat_g)} · У {per100(label?.carb_g)}</>
+          ) : (
+            <>По этикетке на 100 {unit}: {per100(nutrition?.kcal)} ккал · Б {per100(nutrition?.protein_g)} · Ж {per100(nutrition?.fat_g)} · У {per100(nutrition?.carb_g)}</>
+          )}
+          {label?.from_serving && label.serving_amount != null && (
+            <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 2 }}>
+              Пересчитано с порции {fmtAmount(label.serving_amount)} {unit}, как напечатано на упаковке
+            </div>
+          )}
+          {perPortion && nutrition && (
+            <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 2 }}>
+              На 100 {unit} по вашему весу порции: {per100(nutrition.kcal)} ккал · Б {per100(nutrition.protein_g)} · Ж {per100(nutrition.fat_g)} · У {per100(nutrition.carb_g)}
+            </div>
+          )}
         </div>
+
+        {perPortion && (
+          <div style={{ marginTop: -6, marginBottom: 18 }}>
+            <label style={{ display: "block", fontSize: 12.5, color: "var(--text2)", marginBottom: 6 }}>
+              Вес одной порции — на упаковке он не прочитался
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={servingRaw}
+                onChange={(e) => setServingRaw(e.target.value.replace(/[^0-9.,]/g, "").slice(0, 6))}
+                aria-label="Вес одной порции"
+                placeholder="например, 30"
+                style={{ width: 110, height: 44, border: "1px solid", borderColor: nutrition ? "var(--border)" : "var(--cal-border)", borderRadius: 10, background: "var(--bg-soft)", fontFamily: "'PT Mono',monospace", fontSize: 16, color: "var(--text)", textAlign: "center", outline: "none" }}
+              />
+              {(["g", "ml"] as const).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={servingUnit === u}
+                  onClick={() => setServingUnit(u)}
+                  style={{ height: 44, minWidth: 48, borderRadius: 10, border: "1px solid", borderColor: servingUnit === u ? "var(--cal-border)" : "var(--border)", background: servingUnit === u ? "var(--cal-soft)" : "none", fontFamily: "'Golos Text',sans-serif", fontSize: 14, color: "var(--text)", cursor: "pointer" }}
+                >
+                  {u === "g" ? "г" : "мл"}
+                </button>
+              ))}
+            </div>
+            {!nutrition && (
+              <div role="status" style={{ fontSize: 12.5, color: "var(--text)", marginTop: 6, lineHeight: 1.4 }}>
+                Без веса порции нельзя посчитать вашу порцию: значения на упаковке даны на порцию, а не на 100 г.
+              </div>
+            )}
+          </div>
+        )}
 
         <label style={{ display: "block", fontSize: 12.5, color: "var(--text2)", marginBottom: 6 }}>Название продукта</label>
         <input
@@ -143,6 +201,14 @@ export default function ScanToDiaryScreen({ result, onBack, onSaved }: Props) {
 
         <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 20, marginBottom: 8 }}>Порция</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {servingAmount != null && (
+            <PortionOption
+              active={portion === "serving"}
+              label="Одна порция"
+              hint={`${fmtAmount(servingAmount)} ${unit}`}
+              onClick={() => setPortion("serving")}
+            />
+          )}
           {netAmount != null && (
             <PortionOption
               active={portion === "full"}

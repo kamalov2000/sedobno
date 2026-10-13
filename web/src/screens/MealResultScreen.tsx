@@ -12,6 +12,9 @@ import { haptic, notify, canShareToStory, shareToStory, openTelegramLink, openEx
 import { renderMealStory, mealStoryData, storyCaptions, downloadBlob } from "../mealStoryCard";
 import { useRolledNumber } from "../useRoll";
 import MacroSegments from "../components/MacroSegments";
+import ReplaceProduct from "../components/ReplaceProduct";
+import { hitPer100, type SearchHit } from "../foodSearch";
+import type { MealTemplate } from "../api";
 
 // Блок 1 · Экран результата разбора порции (финальный дизайн). Карточка-герой на
 // кремово-янтарной подложке, сегментированная полоска Б/Ж/У, чипы приёмов, карточки блюд
@@ -19,6 +22,9 @@ import MacroSegments from "../components/MacroSegments";
 
 interface Props {
   result: MealResult; // status ok: id, dishes, total
+  /** Свои блюда и недавние — источники «Заменить продукт» вместе со справочником. */
+  templates?: MealTemplate[];
+  recent?: MealDiaryItem[];
   isSubscribed: boolean;
   mealsLeft?: number; // остаток разборов из актуального /me (единый источник правды)
   /** Знаменатель чипа квоты — free_meal_limit из /me, как и на главном. Лимит живёт в Go,
@@ -102,6 +108,9 @@ type Draft = MealItem & {
   /** БЖУ подставлены справочником, а не введены: правка ккал/100 их сбрасывает (они были
    *  про тот продукт). Введённые человеком не сбрасываются — это его числа. */
   macrosFromRef?: boolean;
+  /** Название, с которым строку посчитали (13.10.2026): переименование меняет только
+   *  подпись, и пока она отличается от этого названия, карточка об этом говорит. */
+  origName?: string;
 };
 
 const MAX_MACRO_PER100 = 100; // граммов макронутриента на 100 г — выше физически некуда
@@ -172,7 +181,7 @@ function blankManual(): Draft {
   };
 }
 
-export default function MealResultScreen({ result, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, manualName, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false, onTemplateSaved }: Props) {
+export default function MealResultScreen({ result, templates, recent, isSubscribed, mealsLeft, mealLimit, onDone, onRetake, manual = false, manualName, saved, foodReference, origin, onOpenWizard, onQuotaSpent, alreadyInDiary = false, canShare = false, photo, draft = false, onTemplateSaved }: Props) {
   const isSaved = saved != null;
   // APP-09. У сохранённого приёма тип уже выбран; у свежего — предлагаем по времени.
   // Предположение, а не решение: чип остаётся обычным, его можно снять или сменить.
@@ -312,7 +321,55 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
   // подпись. Числа правятся степперами, отдельно и осознанно; молча пересчитать их
   // вслед за именем значило бы придумать данные, которых пользователь не давал.
   const setName = (i: number, name: string) => {
-    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name, touched: true } : d)));
+    setDishes((ds) => ds.map((d, idx) => (idx === i ? { ...d, name, touched: true, origName: d.origName ?? d.name } : d)));
+  };
+
+  // «Заменить продукт» (13.10.2026): строка пересчитывается по выбранному продукту при ТОМ
+  // ЖЕ количестве и становится строкой «на 100 × количество» (как подстановка из
+  // справочника при ручном вводе). Штучные добавки старого продукта к новому не относятся.
+  const [replacing, setReplacing] = useState<number | null>(null);
+  const replaceDish = (i: number, hit: SearchHit) => {
+    const per = hitPer100(hit);
+    if (!per) return;
+    const r1 = (v?: number) => (v == null ? undefined : round1(v));
+    setDishes((ds) =>
+      ds.map((d, idx) => {
+        if (idx !== i) return d;
+        const amount = effectiveDishGrams(d);
+        const next = manualAt(
+          {
+            ...d,
+            manual: true,
+            touched: true,
+            name: hit.name,
+            origName: undefined,
+            pieces: undefined,
+            per100Raw: String(round1(per.kcal)),
+            proteinPer100: r1(per.protein),
+            fatPer100: r1(per.fat),
+            carbPer100: r1(per.carb),
+            macroRaw: { p: per.protein != null ? String(round1(per.protein)) : "", f: per.fat != null ? String(round1(per.fat)) : "", c: per.carb != null ? String(round1(per.carb)) : "" },
+            macrosFromRef: true,
+            macros_unknown: per.unknown.length ? per.unknown : undefined,
+            kcal_by_user: undefined,
+          },
+          amount,
+        );
+        return next;
+      }),
+    );
+    setReplacing(null);
+  };
+  // Нет в списке — то же количество, калорийность на 100 человек впишет сам.
+  const replaceManually = (i: number, name: string) => {
+    setDishes((ds) =>
+      ds.map((d, idx) =>
+        idx === i
+          ? manualAt({ ...d, manual: true, touched: true, name, origName: undefined, pieces: undefined, per100Raw: "", proteinPer100: undefined, fatPer100: undefined, carbPer100: undefined, macroRaw: undefined, macrosFromRef: false, macros_unknown: undefined }, effectiveDishGrams(d))
+          : d,
+      ),
+    );
+    setReplacing(null);
   };
 
   // Позиция под вопросом (напиток в ёмкости рядом): тап по «Учесть» означает «да, я это
@@ -759,7 +816,21 @@ export default function MealResultScreen({ result, isSubscribed, mealsLeft, meal
                   onRemove={() => removeDish(i)}
                 />
               ) : (
-                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} onConfirm={() => confirmDish(i)} />
+                <DishCard dish={d} origin={fromModel ? (d.touched ? "edited" : "recognized") : undefined} onName={(v) => setName(i, v)} onStep={(delta) => stepGrams(i, delta)} onSet={(g) => setGrams(i, g)} onRemove={() => removeDish(i)} onConfirm={() => confirmDish(i)} onReplace={d.assumed ? undefined : () => setReplacing(replacing === i ? null : i)} />
+              )}
+              {replacing === i && !d.manual && !isEggDish(d) && (
+                <ReplaceProduct
+                  name={d.name}
+                  amount={effectiveDishGrams(d)}
+                  unit={amountUnit(d)}
+                  kcal={effectiveDishKcal(d)}
+                  templates={templates}
+                  recent={recent}
+                  reference={foodRef}
+                  onPick={(hit) => replaceDish(i, hit)}
+                  onManual={(name) => replaceManually(i, name)}
+                  onCancel={() => setReplacing(null)}
+                />
               )}
               {/* Примитивы блюда чипсами: штучные (яйца ×4) и ложечные добавки (масло 1 ч.л.).
                   Их КБЖУ считает сервер, тотал обновляется на лету. Ряд рисуется у КАЖДОГО
@@ -1041,7 +1112,10 @@ function DishNameInput({ value, onChange, placeholder, onFocus, onBlur }: { valu
 // разборе модели: у приёма, вписанного руками, распознавания не было, и говорить о нём
 // нечего. «Изменено вами» перебивает распознанное — это и есть то, что человек хочет
 // видеть, вернувшись к приёму через неделю.
-function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: { dish: MealItem; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void; onConfirm?: () => void }) {
+function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm, onReplace }: { dish: Draft; origin?: "recognized" | "edited"; onName: (v: string) => void; onStep: (delta: number) => void; onSet: (grams: number) => void; onRemove: () => void; onConfirm?: () => void; onReplace?: () => void }) {
+  // Подпись изменена, а числа — прежнего продукта (13.10.2026): говорим это прямо, иначе
+  // «индейка» с калориями курицы выглядит пересчитанной.
+  const renamedFrom = dish.origName && dish.name.trim() !== dish.origName.trim() ? dish.origName : null;
   const timer = useRef<number | null>(null);
   const iv = useRef<number | null>(null);
   const stop = () => {
@@ -1083,6 +1157,20 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
           <i className="ti ti-x" aria-hidden="true" style={{ fontSize: 16 }} />
         </button>
       </div>
+      {renamedFrom && (
+        <div role="note" style={{ fontSize: 12, color: "var(--text2)", lineHeight: 1.4, marginTop: 6 }}>
+          Это только подпись: калории посчитаны для «{renamedFrom}».
+          {onReplace && (
+            <>
+              {" "}
+              <button type="button" onClick={onReplace} style={{ background: "none", border: "none", padding: 0, color: "var(--cal-num)", fontFamily: "inherit", fontSize: "inherit", cursor: "pointer", textDecoration: "underline" }}>
+                Заменить продукт
+              </button>
+              {" "}— пересчитаем при том же весе.
+            </>
+          )}
+        </div>
+      )}
       {/* Позиция под вопросом: банка рядом с тарелкой — это или 150 ккал, или ноль. Считать
           молча нельзя (припишем выпитое), выбрасывать молча тоже (спрячем законные калории).
           Показываем и оставляем решение человеку (backlog п.10). */}
@@ -1121,7 +1209,15 @@ function DishCard({ dish, origin, onName, onStep, onSet, onRemove, onConfirm }: 
             <i className="ti ti-plus" aria-hidden="true" style={{ fontSize: 16 }} />
           </button>
         </div>
-        <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 {amountUnit(dish)}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {onReplace && !renamedFrom && (
+            <button type="button" onClick={onReplace} aria-label={`Заменить продукт: ${dish.name}`} style={{ background: "none", border: "none", padding: "4px 0", color: "var(--cal-num)", fontFamily: "'Golos Text',sans-serif", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+              <i className="ti ti-arrows-exchange" aria-hidden="true" style={{ fontSize: 14 }} />
+              Заменить
+            </button>
+          )}
+          <span style={{ fontFamily: "'PT Mono',monospace", fontSize: 10.5, color: "var(--text3)" }}>{p100} ккал/100 {amountUnit(dish)}</span>
+        </span>
       </div>
       {/* Сервер не смог достоверно оценить калорийность (вес есть, ккал вышли нулевые) —
           зовём проверить, а не показываем ложный ноль как факт. Поправка веса пересчитает. */}

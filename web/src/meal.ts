@@ -546,7 +546,7 @@ export function guessMealType(now: Date): MealType {
 // экрана «Скан → дневник»; вынесен сюда, потому что тем же путём пойдут калории по таблице
 // без состава (п.13), и два места считали бы одно и то же по-разному.
 
-export type LabelPortion = "full" | "half" | "custom";
+export type LabelPortion = "full" | "half" | "serving" | "custom";
 
 /** Границы ручной граммовки — те же, что у бэка (dish_input.go): дальше он всё равно завернёт. */
 export const LABEL_MIN_GRAMS = 1;
@@ -555,9 +555,10 @@ export const LABEL_MAX_GRAMS = 3000;
 /** Сколько граммов (или мл) в выбранной порции. Нет нетто — «вся упаковка» и «половина»
  *  посчитать не из чего, остаётся своя граммовка. Нечисло — ноль, а не NaN: ноль экран
  *  покажет как «не выбрано», NaN утёк бы в запрос. */
-export function labelPortionGrams(netAmount: number | undefined, portion: LabelPortion, customRaw: string): number {
+export function labelPortionGrams(netAmount: number | undefined, portion: LabelPortion, customRaw: string, servingAmount?: number): number {
   if (portion === "full" && netAmount) return netAmount;
   if (portion === "half" && netAmount) return netAmount / 2;
+  if (portion === "serving" && servingAmount) return servingAmount;
   const n = parseFloat((customRaw ?? "").replace(",", "."));
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
@@ -584,4 +585,30 @@ export function labelPortionMacros(n: ScanNutrition | undefined, grams: number):
 /** Единица порции по basis таблицы: «100ml» — миллилитры, иначе граммы. */
 export function labelPortionUnit(basis?: string): "г" | "мл" {
   return basis === "100ml" ? "мл" : "г";
+}
+
+/** Этикетка «только на порцию» (13.10.2026): значения на 100 г/мл по весу порции, который
+ *  человек вписал с упаковки. Таблица уже на 100 — возвращается как есть. Вес не вписан или
+ *  неправдоподобен — null: считать не из чего, и ничего не пересчитываем молча. */
+export function labelPer100(n: ScanNutrition | undefined, servingRaw: string, servingUnit: "g" | "ml"): ScanNutrition | null {
+  if (!n) return null;
+  if (n.basis !== "portion") return n;
+  const s = parseFloat((servingRaw ?? "").replace(",", "."));
+  if (!Number.isFinite(s) || s < LABEL_MIN_GRAMS || s > LABEL_MAX_GRAMS) return null;
+  const k = 100 / s;
+  const sc = (v?: number) => (v == null ? undefined : round1(v * k));
+  return {
+    ...n,
+    basis: servingUnit === "ml" ? "100ml" : "100g",
+    kcal: sc(n.kcal), protein_g: sc(n.protein_g), fat_g: sc(n.fat_g), carb_g: sc(n.carb_g),
+    serving_amount: s, serving_unit: servingUnit, from_serving: true,
+  };
+}
+
+/** Нетто упаковки годится для «вся упаковка / половина», только если оно в той же единице,
+ *  что и таблица: граммы с миллилитрами без плотности не смешиваем. */
+export function labelNetUsable(n: ScanNutrition | undefined): boolean {
+  if (!n || n.net_amount == null || n.net_amount <= 0) return false;
+  if (!n.net_unit) return true;
+  return labelPortionUnit(n.basis) === (n.net_unit === "ml" ? "мл" : "г");
 }

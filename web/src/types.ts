@@ -131,16 +131,22 @@ export interface ScanIngredient {
   basis?: string; // основание оценки: разрешён ли, ДСП с источником (EFSA/JECFA)
 }
 
-/** Пищевая ценность (КБЖУ) — блок после состава. Числа на 100 г/мл (basis).
+/** Пищевая ценность (КБЖУ) — блок после состава. Числа на 100 г/мл (basis) или — у
+ *  этикетки без колонки «на 100» — на порцию (basis "portion", 13.10.2026).
  *  net_amount/net_unit — нетто всей упаковки: считаем «на упаковку» из них. */
 export interface ScanNutrition {
-  basis?: "100g" | "100ml" | string;
+  basis?: "100g" | "100ml" | "portion" | string;
   kcal?: number;
   protein_g?: number;
   fat_g?: number;
   carb_g?: number;
   net_amount?: number;
   net_unit?: "g" | "ml" | string;
+  /** Размер порции, как напечатан (у basis "portion" может отсутствовать). */
+  serving_amount?: number;
+  serving_unit?: "g" | "ml" | string;
+  /** Значения пересчитаны сервером с порции serving_amount на 100 г/мл. */
+  from_serving?: boolean;
 }
 
 /** Причина label_not_found: по ней экран ошибки выбирает подсказку.

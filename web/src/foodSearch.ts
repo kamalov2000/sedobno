@@ -145,3 +145,37 @@ function shape(dishes: MealItem[]): string {
 export function sameDishes(a: MealItem[], b: MealItem[]): boolean {
   return shape(a) === shape(b);
 }
+
+/** Значения позиции на 100 г/мл — для «Заменить продукт» (13.10.2026): строка приёма
+ *  пересчитывается по новому продукту при ТОМ ЖЕ количестве. Неизвестные и известные лишь
+ *  у части компонентов БЖУ остаются неизвестными (unknown), а не нулём. null — посчитать
+ *  нельзя (нет порции или несколько компонентов в разных единицах). */
+export function hitPer100(hit: SearchHit): { kcal: number; protein?: number; fat?: number; carb?: number; unknown: MacroKey[] } | null {
+  if (!(hit.amount > 0) || !hit.unit) return null;
+  if (hit.reference) {
+    const r = hit.reference;
+    return { kcal: r.kcal_per_100, protein: r.protein_g, fat: r.fat_g, carb: r.carb_g, unknown: [] };
+  }
+  const k = 100 / hit.amount;
+  const out: { kcal: number; protein?: number; fat?: number; carb?: number; unknown: MacroKey[] } = { kcal: hit.kcal * k, unknown: [] };
+  for (const key of ["protein", "fat", "carb"] as MacroKey[]) {
+    const m = hit.macros[key];
+    if (m.state === "known") out[key] = m.value * k;
+    else out.unknown.push(key);
+  }
+  return out;
+}
+
+/** Кандидаты на замену строки: тот же поиск, но только один продукт (не готовый набор из
+ *  нескольких блюд) и только в той же единице — граммы с миллилитрами без плотности не
+ *  смешиваем. */
+export function replacementHits(
+  query: string,
+  src: { templates?: MealTemplate[]; recent?: MealDiaryItem[]; reference?: FoodRefItem[] },
+  unit: "г" | "мл",
+): SearchHit[] {
+  return searchFoods(query, src).filter((h) => {
+    const single = h.reference || (h.template?.dishes.length ?? h.recent?.dishes.length ?? 0) === 1;
+    return single && h.unit === unit && hitPer100(h) != null;
+  });
+}

@@ -96,3 +96,48 @@ func agrees(kcal, computed float64) bool {
 }
 
 func round1(v float64) float64 { return math.Round(v*10) / 10 }
+
+// Этикетка «только на порцию» (решение владельца 13.10.2026). Числа на порцию нельзя
+// хранить и показывать как числа на 100 г: порция 30 г протеина с 24 г белка — это не
+// «24 г белка на 100 г». Модель различает основание и переписывает числа как напечатаны;
+// пересчёт делает код, и только когда размер порции напечатан в г или мл. Иначе значения
+// остаются «на порцию» (Basis "portion"): экран спросит вес порции, ложного пересчёта нет.
+const maxServingAmount = 2000 // больше 2 кг/л на «порцию» — не порция, а ошибка чтения
+
+// normalizeServingBasis приводит синонимы основания к "portion" и, если размер порции
+// известен, пересчитывает значения на 100 г/мл. true — пересчитано.
+func normalizeServingBasis(n *llm.Nutrition) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Basis {
+	case "portion", "serving", "per_serving", "per_portion":
+		n.Basis = "portion"
+	default:
+		return false
+	}
+	if n.ServingAmount == nil || *n.ServingAmount <= 0 || *n.ServingAmount > maxServingAmount {
+		return false
+	}
+	var basis string
+	switch n.ServingUnit {
+	case "g":
+		basis = "100g"
+	case "ml":
+		basis = "100ml"
+	default:
+		return false
+	}
+	k := 100 / *n.ServingAmount
+	scale := func(p *float64) *float64 {
+		if p == nil {
+			return nil
+		}
+		v := round1(*p * k)
+		return &v
+	}
+	n.Kcal, n.ProteinG, n.FatG, n.CarbG = scale(n.Kcal), scale(n.ProteinG), scale(n.FatG), scale(n.CarbG)
+	n.Basis = basis
+	n.FromServing = true
+	return true
+}

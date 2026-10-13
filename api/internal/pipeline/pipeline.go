@@ -667,6 +667,11 @@ func (p *Pipeline) Run(ctx context.Context, images []llm.Image) (*Result, error)
 	// модель реально прочитала на этикетке («640»), а не уже пересчитанное нами число.
 	// Здесь же чиним кДж, попавшие в поле ккал, и разошедшиеся с макросами значения —
 	// иначе карточка скана и дневник показывают разные цифры за один продукт.
+	// «Только на порцию» → на 100 г/мл, если размер порции напечатан. Тоже ПОСЛЕ гейта (он
+	// сверяет напечатанные числа) и ДО проверки единиц: потолок калорийности строится на 100 г.
+	if normalizeServingBasis(res.Nutrition) {
+		p.log.Info("nutrition: значения пересчитаны с порции на 100", "serving", *res.Nutrition.ServingAmount, "unit", res.Nutrition.ServingUnit)
+	}
 	if fix := reconcileNutritionUnits(res.Nutrition); fix != fixNone {
 		p.log.Warn("nutrition: калорийность с этикетки исправлена", "fix", fix)
 	}

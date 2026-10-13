@@ -1116,6 +1116,8 @@ export default function App() {
       )}
       {view === "meal_result" && mealResult && (
         <MealResultScreen
+          templates={templates}
+          recent={recentPool}
           result={mealResult}
           draft={mealResult.draft}
           isSubscribed={me?.is_subscribed ?? false}
@@ -1194,6 +1196,8 @@ export default function App() {
           и второй их экземпляр разъехался бы с первым на первой же правке. */}
       {view === "meal_manual" && (
         <MealResultScreen
+          templates={templates}
+          recent={recentPool}
           result={textMeal ?? repeatMeal ?? { status: "ok", dishes: [], meals_left: me?.meals_left ?? -1 }}
           isSubscribed={me?.is_subscribed ?? false}
           onQuotaSpent={applyMealsLeft}

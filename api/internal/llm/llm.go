@@ -94,13 +94,21 @@ type Nutrition struct {
 	// прочитать). Отделено от Present (значения прочитаны): visible && !HasValues —
 	// сигнал «таблица есть, но не разобрал» → повод точечно перечитать сильной моделью.
 	Visible   bool     `json:"visible,omitempty"`
-	Basis     string   `json:"basis,omitempty"`      // "100g" | "100ml" — на что даны значения
+	Basis     string   `json:"basis,omitempty"`      // "100g" | "100ml" | "portion" — на что даны значения
 	Kcal      *float64 `json:"kcal,omitempty"`       // калорийность, ккал на 100 г/мл
 	ProteinG  *float64 `json:"protein_g,omitempty"`  // белки, г на 100 г/мл
 	FatG      *float64 `json:"fat_g,omitempty"`      // жиры, г на 100 г/мл
 	CarbG     *float64 `json:"carb_g,omitempty"`     // углеводы, г на 100 г/мл
 	NetAmount *float64 `json:"net_amount,omitempty"` // нетто всей упаковки (в net_unit)
 	NetUnit   string   `json:"net_unit,omitempty"`   // "g" | "ml"
+	// ServingAmount/ServingUnit — размер порции, как напечатан рядом с таблицей «на порцию»
+	// (13.10.2026). Нужен, чтобы этикетку без колонки «на 100 г» пересчитать честно, а не
+	// выдать числа на порцию за числа на 100 г.
+	ServingAmount *float64 `json:"serving_amount,omitempty"`
+	ServingUnit   string   `json:"serving_unit,omitempty"`
+	// FromServing — значения пересчитаны НАМИ с порции ServingAmount на 100 г/мл (Basis уже
+	// "100g"/"100ml"); показываем это человеку как основание. Модель это поле не заполняет.
+	FromServing bool `json:"from_serving,omitempty"`
 }
 
 // HasValues сообщает, есть ли хоть одно осмысленное число пищевой ценности

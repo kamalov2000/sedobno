@@ -31,6 +31,7 @@ interface Macro {
 
 export default function NutritionCard({ nutrition }: { nutrition: ScanNutrition }) {
   const unit = baseUnit(nutrition.basis);
+  const perPortion = nutrition.basis === "portion";
   const macros: Macro[] = [
     { label: "ККАЛ", value: nutrition.kcal, kcal: true },
     { label: "БЕЛКИ", value: nutrition.protein_g },
@@ -67,8 +68,20 @@ export default function NutritionCard({ nutrition }: { nutrition: ScanNutrition 
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <span style={sectionLabel}>ПИЩЕВАЯ ЦЕННОСТЬ</span>
-        <span style={{ ...sectionLabel, color: "var(--text2)" }}>НА 100 {unit === "мл" ? "МЛ" : "Г"}</span>
+        <span style={{ ...sectionLabel, color: "var(--text2)" }}>{perPortion ? "НА ПОРЦИЮ" : `НА 100 ${unit === "мл" ? "МЛ" : "Г"}`}</span>
       </div>
+      {/* Основание видно человеку (13.10.2026): этикетка без колонки «на 100» — числа на
+          порцию; пересчитали с напечатанной порции — так и пишем. */}
+      {nutrition.from_serving && nutrition.serving_amount != null && (
+        <div style={{ fontSize: 12, color: "var(--text2)", marginTop: -6, marginBottom: 10 }}>
+          Пересчитано с порции {fmt(nutrition.serving_amount)} {unit}, как напечатано на упаковке
+        </div>
+      )}
+      {perPortion && (
+        <div style={{ fontSize: 12, color: "var(--text2)", marginTop: -6, marginBottom: 10 }}>
+          Колонки «на 100 г» на упаковке нет{nutrition.serving_amount == null ? ", а вес порции не прочитался" : ""}
+        </div>
+      )}
 
       {/* КБЖУ на 100 г/мл — четыре плитки. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
