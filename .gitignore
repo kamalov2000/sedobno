@@ -22,3 +22,13 @@ dist/
 
 # прочее
 .DS_Store
+
+# рабочие материалы владельца — не для публичного репозитория
+.claude/
+CLAUDE.md
+CLAUDE_CODE_PROMPT.md
+backlog.md
+marketing.md
+REVIEW_TOP50.md
+REVIEW_BASIS.md
+docs/tariff.md
